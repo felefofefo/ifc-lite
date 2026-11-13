@@ -23,6 +23,7 @@ function opaque(c: [number, number, number, number] | undefined): [number, numbe
 type Rgba = [number, number, number, number];
 type CapPaints = {
   scale: number;
+  patOffsets?: ReadonlyMap<string, number>;
   fallbackStyle?: (polygon: DrawingPolygon) => { fillColor: string; fillOpacity: number };
   resolve?: (polygon: DrawingPolygon, fallbackColor: () => string) => readonly DXFHatchLayer[] | undefined;
 };
@@ -33,14 +34,16 @@ function capColor(color: string): Rgba {
   return [(rgb >> 16) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255, parsed?.alpha ?? 1];
 }
 
-export function publicationCapPaint(paints: readonly DXFHatchLayer[], scale = 100): Pick<CutPolygon2D, 'color' | 'hatch'> {
+export function publicationCapPaint(paints: readonly DXFHatchLayer[], scale = 100, patOffsets?: ReadonlyMap<string, number>): Pick<CutPolygon2D, 'color' | 'hatch'> {
   const solidIndex = paints.reduce((last, paint, index) => paint.pattern === 'solid' ? index : last, -1);
   const solid = paints[solidIndex];
-  const pattern = paints.slice(solidIndex + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch');
+  const pattern = paints.slice(solidIndex + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch'
+    || (p.pattern === 'custom' && p.patternKey !== undefined && patOffsets?.has(p.patternKey)));
+  const customOffset = pattern?.patternKey && patOffsets?.get(pattern.patternKey);
   return {
     color: solid ? capColor(solid.color) : [0, 0, 0, 0],
     hatch: pattern ? {
-      patternId: pattern.pattern === 'cross-hatch' ? 2 : 1,
+      patternId: customOffset ? customOffset + 8 : pattern.pattern === 'cross-hatch' ? 2 : 1,
       modelSpace: true,
       spacingPx: pattern.spacing,
       widthPx: (pattern.lineWeight ?? 0.13) * scale / 1000,
@@ -65,7 +68,7 @@ export function capOverlayInput(cut: Cut, showHiddenLines: boolean, fillMode: 'u
   const layerPolygons: CutPolygon2D[] = cut.cutPolygons.map((cp) => {
     const fallback = preview?.fallbackStyle?.(cp);
     const paints = preview?.resolve?.(cp, () => fallback?.fillColor ?? getFillColorForType(cp.ifcType));
-    let styled = paints && preview ? publicationCapPaint(paints, preview.scale) : undefined;
+    let styled = paints && preview ? publicationCapPaint(paints, preview.scale, preview.patOffsets) : undefined;
     if (!styled && fallback) {
       const color = capColor(fallback.fillColor);
       color[3] *= fallback.fillOpacity;

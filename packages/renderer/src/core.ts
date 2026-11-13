@@ -15,3 +15,4 @@
  */
 
 export * from './renderer.js';
+export { packPatPatterns } from './pat-pattern-data.js';

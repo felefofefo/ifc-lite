@@ -17,6 +17,7 @@ type Face = {
   near: number;
   far: number;
   depth: (p: Point2D) => number;
+  occludes?: boolean;
   source?: Omit<DrawingPolygon, 'polygon'>;
 };
 
@@ -45,7 +46,7 @@ function face(vertices: RasterVertex[], source?: Face['source']): Face | undefin
     box: { left: Math.min(...vertices.map(p => p.x)), right: Math.max(...vertices.map(p => p.x)),
       bottom: Math.min(...vertices.map(p => p.y)), top: Math.max(...vertices.map(p => p.y)) },
     near: Math.min(...vertices.map(p => p.depth)), far: Math.max(...vertices.map(p => p.depth)),
-    depth, source,
+    depth, source, occludes: !source || (source.sourceColor?.[3] ?? 1) >= 0.99,
   };
 }
 
@@ -174,6 +175,7 @@ export function buildProjectionPolygons(
     for (const i of nearby) {
       if (i === index) continue;
       const other = faces[i];
+      if (!other.occludes && (other.source?.entityId !== target.source?.entityId || other.source?.modelIndex !== target.source?.modelIndex)) continue;
       if (other.near > target.far + TOLERANCE || !overlaps(target.box, other.box)) continue;
       const bias = i < index ? TOLERANCE : -TOLERANCE;
       const nearer = other.far < target.near - TOLERANCE ? other.ring
@@ -184,5 +186,5 @@ export function buildProjectionPolygons(
     }
     for (const outer of visible) polygons.push({ ...target.source, polygon: { outer, holes: [] } });
   });
-  return polygons;
+  return polygons.reverse();
 }

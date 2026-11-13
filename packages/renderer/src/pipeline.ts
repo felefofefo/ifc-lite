@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { PAT_BUFFER_WORDS } from './pat-pattern-data.js';
 import { EntityColorTable, type SurfacePatternEntry } from './entity-color-table.js';
 import { sectionExclusions, withSectionExclusions } from './section-exclusions.js';
 /**
@@ -54,6 +55,7 @@ export class RenderPipeline {
     private overlayPipeline: GPURenderPipeline | null = null;  // deprecated equal-depth overlay (#6076); built only if getOverlayPipeline() is called
     private makeOverlayPipeline!: () => GPURenderPipeline;
     private readonly emptyEntityColorTable: GPUBuffer;  // header-only table bound until a scene writes one (#6076)
+    readonly patPatternBuffer: GPUBuffer;
     private readonly surfacePatternTable = new EntityColorTable();
     private entityColorTableBuffer: GPUBuffer;
     private texturedPipeline: GPURenderPipeline;  // Pipeline for textured meshes (#961): UV lane + albedo texture/sampler
@@ -110,13 +112,10 @@ export class RenderPipeline {
         this.device = device.getDevice();
         this.colorFormat = device.getFormat();
 
-        // Check MSAA support and adjust sample count
-        // 4x MSAA provides good anti-aliasing for thin geometry
         const maxSampleCount = (this.device.limits as unknown as Record<string, number>)?.maxSampleCount ?? 4;
         this.sampleCount = Math.min(4, maxSampleCount);
         this.visibility = new OpaqueVisibilityPass(this.device, this.sampleCount, () => sectionExclusions(this.device).bindGroup);
 
-        // Create depth texture with MSAA support
         this.depthTexture = this.device.createTexture({
             size: { width, height },
             format: this.depthFormat,
@@ -187,6 +186,7 @@ export class RenderPipeline {
                 },
                 { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
                 { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // selectionColorUniform (#5484)
+                { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
                 { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
                 { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } }, // entity colour table (#6076)
             ],
@@ -222,6 +222,9 @@ export class RenderPipeline {
         this.currentShadowView = this.dummyShadowView;
         this.emptyEntityColorTable = this.device.createBuffer({ label: 'entity-color-table-empty', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.entityColorTableBuffer = this.emptyEntityColorTable;
+        this.patPatternBuffer = this.device.createBuffer({
+            label: 'pat-pattern-library', size: PAT_BUFFER_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
         sectionExclusions(this.device).retain();
         this.environmentBindGroup = this.buildEnvironmentBindGroup();
         this.updateEnvironment();
@@ -665,6 +668,7 @@ export class RenderPipeline {
                 { binding: 3, resource: { buffer: this.shadowUniformBuffer } },
                 { binding: 4, resource: { buffer: this.selectionColorUniform.buffer } },
                 { binding: 5, resource: { buffer: this.entityColorTableBuffer } },
+                { binding: 7, resource: { buffer: this.patPatternBuffer } },
                 { binding: 6, resource: { buffer: this.surfacePatternTable.getBuffer() ?? this.emptyEntityColorTable } },
             ],
         });
@@ -684,12 +688,7 @@ export class RenderPipeline {
         this.environmentBindGroup = this.buildEnvironmentBindGroup();
     }
 
-    /**
-     * Point the environment bind group at the active shadow depth map (#2670).
-     * Pass `null` to fall back to the 1×1 dummy (shadows off). Rebuilds the bind
-     * group only when the view actually changes, so a steady enabled/disabled
-     * state costs nothing per frame.
-     */
+    /** Rebind the shadow depth view only when its identity changes. */
     setShadowDepthView(view: GPUTextureView | null): void {
         const next = view ?? this.dummyShadowView;
         if (next === this.currentShadowView) return;
@@ -945,6 +944,7 @@ export class RenderPipeline {
         this.shadowUniformBuffer.destroy();
         this.selectionColorUniform.destroy();
         this.dummyShadowTexture.destroy();
+        this.patPatternBuffer.destroy();
         this.surfacePatternTable.releaseGpu();
         this.emptyEntityColorTable.destroy();
         sectionExclusions(this.device).release();

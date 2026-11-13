@@ -18,6 +18,7 @@
  * out of these sources and fails if either drifts from the slot table.
  */
 
+import { patPatternWgsl } from './pat-pattern.wgsl.js';
 import { overlayDepthLiftWgsl } from './depth-nudge.wgsl.js';
 import { MAX_CAP_CLIP_PLANES, extraClipWgslFor } from '../extra-clip-planes.js';
 
@@ -140,6 +141,7 @@ export function sectionUniformSlotStride(device: GPUDevice): number {
  * the uniform ones, so each material layer can carry its own cut pattern.
  */
 export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
+        ${patPatternWgsl(1, 1)}
         ${capClipWgsl}
         struct Uniforms {
           viewProj:       mat4x4<f32>,
@@ -236,13 +238,7 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           if (patternId == 6u) {                         // brick
             let bandH = spacing;
             let band = floor(p.y / bandH);
-            // Signed parity. p is @builtin(position) today, so it is a
-            // framebuffer coordinate and never negative — but u32() of a
-            // negative float is an out-of-range conversion in WGSL, and the
-            // moment this hatch is fed anything but fragCoord (a world- or
-            // drawing-space variant) the running bond would break across
-            // y = 0 in a backend-dependent way. i32(-1) & 1 is 1, so the
-            // parity alternates correctly in both directions.
+            // Signed parity keeps brick bands continuous across y = 0.
             let offset = select(0.0, bandH, (i32(band) & 1) == 1);
             let horiz = lineMask(p.y, bandH, width);
             let vertPos = p.x + offset * 0.5;
@@ -289,7 +285,10 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           if ((mask & 64u) != 0u) {
             let spacingM = max(params.y, 0.000001);
             let widthM = max(params.w, 0.000001);
-            if (patternId == 1u || patternId == 2u) {
+            if (patternId > 7u) {
+              let flipY = vec2<f32>(1.0, -1.0);
+              h = patCoverage(patternId - 8u, input.cutPosition * flipY, cutDx * flipY, cutDy * flipY, spacingM, widthM);
+            } else if (patternId == 1u || patternId == 2u) {
               let pixel = max(abs(rotate(cutDx, angle).x) + abs(rotate(cutDy, angle).x), 0.000001);
               h = modelHatchLine(rotate(input.cutPosition, angle).x, spacingM, widthM, pixel);
               if (patternId == 2u) {

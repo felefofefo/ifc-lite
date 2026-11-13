@@ -7,7 +7,7 @@ import type { IfcDataStore } from '@ifc-lite/parser';
 import type { EntityRef, FederatedModel } from '@/store/types';
 import { backgroundHatchPattern, hasHatchPaint, isMaterialHatchPattern, materialNameForCut, type FillPaint, type MaterialHatches, type MaterialHatchStyle } from '@/lib/drawing/material-hatches';
 
-import type { ImportedPattern } from '@/lib/drawing/pattern-library';
+import { patternRepeatScale, type ImportedPattern } from '@/lib/drawing/pattern-library';
 
 export function drawingPublicationHatchStyle(
   assignments: MaterialHatches | undefined,
@@ -19,7 +19,7 @@ export function drawingPublicationHatchStyle(
   resolveEntityRef: (entityId: number) => EntityRef,
   patterns: readonly ImportedPattern[] = [],
 ) {
-  const imported = new Map(patterns.map(p => [p.id, p.lines]));
+  const imported = new Map(patterns.map(p => [p.id, p]));
   const cutRules = rules.filter(({ enabled, style }) => enabled &&
     (style.publicationPattern || isMaterialHatchPattern(style.hatchPattern) || isMaterialHatchPattern(style.hatchBackgroundPattern)
       || style.hatchColor !== undefined || style.backgroundColor !== undefined || style.fillColor !== undefined
@@ -87,8 +87,8 @@ export function drawingPublicationHatchStyle(
       if (!pattern || pattern === 'none') return [];
       const paint = { color: color ?? '#666666', spacing: spacing * scale / 1000, lineWeight };
       if (pattern === 'solid' || pattern === 'diagonal' || pattern === 'cross-hatch') return [{ ...paint, pattern }];
-      const families = imported.get(pattern);
-      return families ? [{ ...paint, pattern: 'custom', spacing: scale / 1000, families }] : [];
+      const definition = imported.get(pattern);
+      return definition ? [{ ...paint, pattern: 'custom', spacing: patternRepeatScale(definition) * scale / 1000, families: definition.lines, patternKey: definition.id }] : [];
     });
   };
 }

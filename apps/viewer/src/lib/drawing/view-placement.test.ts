@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { planCutPosition, supportsDrawingProjection, verticalViewPlane, verticalProjectionDepth } from './view-placement.js';
+import { dragVerticalViewTrace, planCutPosition, supportsDrawingProjection, verticalViewPlane, verticalProjectionDepth } from './view-placement.js';
 
 const bounds = { min: { x: 0, y: -1, z: 0 }, max: { x: 10, y: 8, z: 10 } };
 test('uses the correct viewing side and upright drawing basis for an oblique plan line', () => {
@@ -29,4 +29,15 @@ test('projection is available for vertical planes, including oblique plans, with
   assert.equal(supportsDrawingProjection({}), true);
   assert.equal(supportsDrawingProjection({ custom: { normal: [0.8, 0, -0.6] } }), true);
   assert.equal(supportsDrawingProjection({ custom: { normal: [0.8, 0.6, 0] } }), false);
+});
+
+test('dragging a trace translates both points or adjusts just the grabbed endpoint', () => {
+  const trace = [{ x: 1, y: 2 }, { x: 4, y: 6 }] as const;
+  const delta = { x: -2, y: 3 };
+  const translated = dragVerticalViewTrace(trace, 'line', delta)!;
+  assert.deepEqual(translated, [{ x: -1, y: 5 }, { x: 2, y: 9 }]);
+  assert.deepEqual(verticalViewPlane(...translated, false, false)?.normal, verticalViewPlane(...trace, false, false)?.normal);
+  assert.deepEqual(dragVerticalViewTrace(trace, 'start', delta), [{ x: -1, y: 5 }, trace[1]]);
+  assert.deepEqual(dragVerticalViewTrace(trace, 'end', delta), [trace[0], { x: 2, y: 9 }]);
+  assert.equal(dragVerticalViewTrace(trace, 'end', { x: -3, y: -4 }), null);
 });

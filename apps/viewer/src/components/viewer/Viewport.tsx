@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import { usePatPatterns3D } from '@/hooks/useDrawingPatterns';
 import { useSurfacePatterns3D } from '@/hooks/useSurfacePatterns3D';
 import { loadedInstancedModelIndices } from '@/lib/visibility/model-hidden-entities.js';
 import { useAppearanceReferences } from './useAppearanceReferences.js';
@@ -1408,8 +1409,10 @@ export function Viewport({
     hasMeshes: (geometry?.length ?? 0) > 0,
   });
 
-  useSurfacePatterns3D(rendererRef, isInitialized && !cesiumActive, geometry);
+  const pat = usePatPatterns3D();
+  useSurfacePatterns3D(rendererRef, isInitialized && !cesiumActive, geometry, pat);
   useRenderUpdates({
+    patOffsets: pat.offsets,
     rendererRef,
     isInitialized,
     theme,
@@ -1439,9 +1442,6 @@ export function Viewport({
     showHiddenLines,
   });
 
-  // Hide WebGPU canvas immediately when Cesium is active.
-  // The model will be rendered by Cesium (as GLB) for correct positioning.
-  // Canvas stays in the DOM for picking/interaction.
 
   // Colorful mode: transparent WebGPU clear colour + CSS gradient on the
   // canvas element.  The gradient is the *CSS background* of the <canvas>;

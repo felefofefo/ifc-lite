@@ -104,15 +104,15 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
           return <section key={entry} className="space-y-0.5">
             <h3 className="px-1 pb-0.5 pt-2 text-xs font-medium text-muted-foreground">{t(`section2d.views.group.${entry}`)}</h3>
             {group.map((cut) => (
-              <div key={cut.id} className={`rounded-md border p-1 ${active === cut.id ? 'border-primary/50 bg-accent' : 'border-transparent hover:bg-muted'}`}>
-                <button type="button" className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left text-xs"
+              <div key={cut.id} className={`flex min-h-10 items-stretch rounded-md border ${active === cut.id ? 'border-primary/50 bg-accent' : 'border-transparent hover:bg-muted'}`}>
+                <button type="button" className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded px-2 py-2 text-left text-xs focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                   aria-current={active === cut.id ? 'true' : undefined} onClick={() => edit(() => { setScaleDraft(undefined); applySavedSectionCut(cut.id); })}>
                   <span className="truncate" title={cut.name}>{cut.code ? `${cut.code} · ${cut.name}` : cut.name}</span>
                   {cut.publicationScale && <span className="shrink-0 tabular-nums text-muted-foreground">
                     {`1:${formatScaleFactorLabel(cut.publicationScale)}`}
                   </span>}
                 </button>
-                <div className="flex justify-end gap-0.5">
+                <div className="flex shrink-0 items-center gap-0.5 pr-1">
                   {active === cut.id && <Button size="icon-xs" variant="ghost" disabled={!canUpdate || (activeIs3D && !validScale)} title={t('section2d.views.update')}
                     aria-label={t('section2d.views.update')} onClick={() => edit(() => updateSavedSectionCut(cut.id, scale))}>
                     <Save className="h-3.5 w-3.5" />

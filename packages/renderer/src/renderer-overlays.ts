@@ -143,9 +143,9 @@ export class RendererOverlays {
      * Create the overlay GPU objects. Called from `Renderer.init()` once the
      * device and the main pipeline (for its sample count) exist.
      */
-    init(device: GPUDevice, format: GPUTextureFormat, sampleCount: number): void {
+    init(device: GPUDevice, format: GPUTextureFormat, sampleCount: number, patPatterns?: GPUBuffer): void {
         this.sectionPlaneRenderer = new SectionPlaneRenderer(device, format, sampleCount);
-        this.section2DOverlayRenderer = new Section2DOverlayRenderer(device, format, sampleCount);
+        this.section2DOverlayRenderer = new Section2DOverlayRenderer(device, format, sampleCount, patPatterns);
         // Re-apply any theme set before this (re)creation so it isn't lost.
         this.themeApplier.reapply(this.sectionPlaneRenderer, this.section2DOverlayRenderer);
         this.symbolic.init(device, format, sampleCount);

@@ -1,7 +1,10 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import { patPatternWgsl } from './pat-pattern.wgsl.js';
+
 export const surfacePatternsWgsl = `
+${patPatternWgsl(1, 7)}
 @binding(6) @group(1) var<storage, read> surfacePatterns: array<u32>;
 
 fn surfacePatternAlpha(position: f32, footprint: f32, spacing: f32) -> f32 {
@@ -24,18 +27,28 @@ fn surfacePatternColor(base: vec4<f32>, id: u32, p: vec3<f32>, n: vec3<f32>, dx:
       let index = surfacePatterns[3] + 4u * slot;
       let fg = u32(bitcast<f32>(surfacePatterns[index]));
       let bg = u32(bitcast<f32>(surfacePatterns[index + 1u]));
-      let spacing = max(0.0001, bitcast<f32>(surfacePatterns[index + 2u]));
+      let spacing = max(0.0000001, bitcast<f32>(surfacePatterns[index + 2u]));
       let kind = bitcast<f32>(surfacePatterns[index + 3u]);
       let normal = abs(n);
       var u = vec3<f32>(1.0, 0.0, 0.0);
       var v = vec3<f32>(0.0, 1.0, 0.0);
       if (normal.y >= max(normal.x, normal.z)) { v = vec3<f32>(0.0, 0.0, 1.0); }
       else if (normal.x > normal.z) { u = vec3<f32>(0.0, 0.0, 1.0); }
+      let background = select(base.rgb, unpack4x8unorm(max(bg, 1u) - 1u).bgr, bg != 0u);
+      if (kind > 2.0) {
+        let offset = u32(kind) - 3u;
+        if (offset + 1u >= arrayLength(&patData)) { return vec4<f32>(background, base.a); }
+        let point = vec2<f32>(dot(p, u), dot(p, v));
+        let px = vec2<f32>(dot(dx, u), dot(dx, v));
+        let py = vec2<f32>(dot(dy, u), dot(dy, v));
+        let width = spacing * 0.13 / max(0.01, patData[offset + 1u]);
+        let alpha = patCoverage(offset, point, px, py, spacing, width);
+        return vec4<f32>(mix(background, unpack4x8unorm(max(fg, 1u) - 1u).bgr, alpha), base.a);
+      }
       let a = (u + v) * 0.70710678;
       let b = (u - v) * 0.70710678;
       let alphaA = surfacePatternAlpha(dot(p, a), max(0.000001, abs(dot(dx, a)) + abs(dot(dy, a))), spacing);
       let alphaB = surfacePatternAlpha(dot(p, b), max(0.000001, abs(dot(dx, b)) + abs(dot(dy, b))), spacing);
-      let background = select(base.rgb, unpack4x8unorm(max(bg, 1u) - 1u).bgr, bg != 0u);
       let alpha = select(alphaA, max(alphaA, alphaB), kind == 2.0);
       return vec4<f32>(mix(background, unpack4x8unorm(max(fg, 1u) - 1u).bgr, select(alpha, 0.0, kind == 0.0)), base.a);
     }

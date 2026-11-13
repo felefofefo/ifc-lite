@@ -61,6 +61,7 @@ export interface UseRenderUpdatesParams {
 
   // Drawing 2D
   drawing2D: Drawing2D | null;
+  patOffsets?: ReadonlyMap<string, number>;
   show3DOverlay: boolean;
   showHiddenLines: boolean;
 }
@@ -92,7 +93,8 @@ export function useRenderUpdates(params: UseRenderUpdatesParams): void {
     showHiddenLines,
   } = params;
   const fillMode = sectionPlane.capStyle?.fillMode;
-  const fillPreview = usePublicationFillPreview(true);
+  const preview = usePublicationFillPreview(true);
+  const fillPreview = useMemo(() => ({ ...preview, patOffsets: params.patOffsets }), [preview, params.patOffsets]);
   // Only the box (and whether it cuts) moves the face caps: dragging the active PLANE must not re-upload them.
   // The face caps fill like the plane that holds the box, which need not be the active one.
   const { boxCapPlanes, boxFillMode } = useMemo(

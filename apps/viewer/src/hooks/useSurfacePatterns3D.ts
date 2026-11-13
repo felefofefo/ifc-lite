@@ -6,6 +6,7 @@ import type { MeshData } from '@ifc-lite/geometry';
 import type { Renderer } from '@ifc-lite/renderer';
 import { useViewerStore } from '@/store';
 import { pdfColor } from '@/lib/export/pdf-color';
+import { usePatPatterns3D } from './useDrawingPatterns';
 import { usePublicationFillPreview } from './usePublicationFillPreview';
 
 const empty = { outer: [], holes: [] };
@@ -16,9 +17,12 @@ function packedColor(color: string | undefined): number {
   return rgb + 1;
 }
 
-export function useSurfacePatterns3D(renderer: RefObject<Renderer | null>, ready: boolean, geometry: MeshData[] | null) {
+export function useSurfacePatterns3D(renderer: RefObject<Renderer | null>, ready: boolean, geometry: MeshData[] | null, pat: ReturnType<typeof usePatPatterns3D>) {
   const enabled = useViewerStore(s => s.drawing2DDisplayOptions.showSurfacePatterns3D);
   const { resolve } = usePublicationFillPreview(true, true);
+  useEffect(() => {
+    if (ready) renderer.current?.setPatPatterns(pat.data);
+  }, [renderer, ready, pat.data]);
   useEffect(() => {
     if (!ready) return;
     const target = renderer.current;
@@ -33,11 +37,13 @@ export function useSurfacePatterns3D(renderer: RefObject<Renderer | null>, ready
       const paints = resolve({ polygon: empty, isCut: false, entityId: mesh.expressId,
         ifcType: mesh.ifcType ?? '', modelIndex: mesh.modelIndex ?? 0, materialId: mesh.materialId }, '#666666') ?? [];
       const solid = paints.findLastIndex(p => p.pattern === 'solid');
-      const hatch = paints.slice(solid + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch');
+      const hatch = paints.slice(solid + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch'
+        || (p.pattern === 'custom' && p.patternKey !== undefined && pat.offsets.has(p.patternKey)));
+      const customOffset = hatch?.patternKey && pat.offsets.get(hatch.patternKey);
       if (solid < 0 && !hatch) continue;
       patterns.push([mesh.expressId, materialId, [packedColor(hatch?.color), packedColor(paints[solid]?.color),
-        hatch?.spacing ?? 1, hatch?.pattern === 'cross-hatch' ? 2 : hatch ? 1 : 0]]);
+        hatch?.spacing ?? 1, customOffset ? customOffset + 3 : hatch?.pattern === 'cross-hatch' ? 2 : hatch ? 1 : 0]]);
     }
     target.setSurfacePatterns(patterns);
-  }, [renderer, ready, enabled, resolve, geometry]);
+  }, [renderer, ready, enabled, resolve, geometry, pat]);
 }

@@ -9,18 +9,7 @@
  * on the section plane in the WebGPU viewport. This provides an integrated view
  * where the architectural drawing appears directly on the section cut surface.
  *
- * SIZE (issue #2456): this module is deliberately over the ~400-line house rule.
- * Everything that could leave without dragging a GPU resource across a module
- * boundary has left — the WGSL to `shaders/section-2d-overlay.wgsl.ts`, the
- * 2D→3D lift and cap triangulation to `section-2d-lift.ts`, the per-family
- * vertex buffer to `section-2d-line-buffer.ts`, the cap pipeline descriptors
- * to `section-cap-pipelines.ts`. What is left is one nullable,
- * `init()`-created / `dispose()`-destroyed GPU object (pipelines, one
- * bind-group layout, one bind group, one uniform buffer holding a 160-byte
- * record per draw site) plus the published API over it: one
- * `setLineOverlay`/`hasLineOverlay`/`drawLineOverlay` trio covering every
- * standalone line channel and the section cut's own upload/draw. Splitting further gives
- * shared resources a second owner, which #2456 explicitly refuses.
+ * This object owns the shared GPU resources for cap and line rendering.
  */
 
 import { PIPELINE_CONSTANTS } from './constants.js';
@@ -128,7 +117,8 @@ export class Section2DOverlayRenderer {
   private clashBoxLines = new WorldLineBuffer(SECTION_2D_UNIFORM_SLOT_INDEX.clashBox);
   private clashBoxLineColor: readonly [number, number, number, number] = [1, 0, 1, 1];
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, sampleCount: number = 4) {
+  private emptyPatPatterns?: GPUBuffer;
+  constructor(device: GPUDevice, format: GPUTextureFormat, sampleCount: number = 4, private readonly patPatterns?: GPUBuffer) {
     this.device = device;
     this.format = format;
     this.sampleCount = sampleCount;
@@ -165,7 +155,7 @@ export class Section2DOverlayRenderer {
         binding: 0,
         visibility: GPUShaderStage.FRAGMENT,
         buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: CAP_CLIP_BYTES },
-      }],
+      }, { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } }],
     });
     const capPipelineLayout = this.device.createPipelineLayout({
       bindGroupLayouts: [this.bindGroupLayout, clipLayout],
@@ -265,9 +255,13 @@ export class Section2DOverlayRenderer {
       size: this.clipStride * (OVERLAY_CLIP_SLOT_EYE + 1),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    const patPatterns = this.patPatterns ?? (this.emptyPatPatterns = this.device.createBuffer({
+      size: 4, usage: GPUBufferUsage.STORAGE,
+    }));
     this.clipBindGroup = this.device.createBindGroup({
       layout: clipLayout,
-      entries: [{ binding: 0, resource: { buffer: this.clipBuffer, offset: 0, size: CAP_CLIP_BYTES } }],
+      entries: [{ binding: 0, resource: { buffer: this.clipBuffer, offset: 0, size: CAP_CLIP_BYTES } },
+        { binding: 1, resource: { buffer: patPatterns } }],
     });
 
     this.initialized = true;
@@ -562,6 +556,8 @@ export class Section2DOverlayRenderer {
    */
   dispose(): void {
     this.caps.dispose();
+    this.emptyPatPatterns?.destroy();
+    this.emptyPatPatterns = undefined;
     for (const channel of LINE_OVERLAY_CHANNELS) this.lineOverlays[channel].clear();
     this.clearClashBoxLines3D();
     if (this.uniformBuffer) {

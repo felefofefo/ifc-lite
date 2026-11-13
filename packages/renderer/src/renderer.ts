@@ -249,6 +249,12 @@ import { recoverRendererDevice, rendererDestroyedError, rendererDeviceLostError,
 
 export class Renderer {
     private device: WebGPUDevice;
+    setPatPatterns(data: Float32Array<ArrayBuffer>): void {
+        if (this.pipeline && data.byteLength <= this.pipeline.patPatternBuffer.size) {
+            this.device.getDevice().queue.writeBuffer(this.pipeline.patPatternBuffer, 0, data);
+            this.requestRender();
+        }
+    }
     setSurfacePatterns(patterns: readonly SurfacePatternEntry[]): void {
         this.pipeline?.setSurfacePatterns(patterns);
         this.requestRender();
@@ -663,22 +669,19 @@ export class Renderer {
         const width = Math.max(1, Math.min(measured?.width ?? this.canvas.width, maxDim));
         const height = Math.max(1, Math.min(measured?.height ?? this.canvas.height, maxDim));
 
-        // Set pixel dimensions if not already set, or if we clamped them down
         if (!this.canvas.width || !this.canvas.height || this.canvas.width !== width || this.canvas.height !== height) {
             this.canvas.width = width;
             this.canvas.height = height;
         }
 
         this.pipeline = new RenderPipeline(this.device, width, height);
-        // Re-apply any theme set before this (re)creation, or set by a prior
-        // init() before a device-loss re-init, so it isn't lost (#5484).
         this.pipeline.selectionColorUniform.update(this.overlayTheme.selection);
         this.picker = new Picker(this.device, width, height);
         this.depthProbe?.destroy(); this.depthProbe = FrameDepthProbe.forPipeline(this.device.getDevice(), this.pipeline);
         this.overlays.init(
             this.device.getDevice(),
             this.device.getFormat(),
-            this.pipeline.getSampleCount(),
+            this.pipeline.getSampleCount(), this.pipeline.patPatternBuffer,
         );
         this.referenceImages.init(this.device.getDevice(), this.device.getFormat(), this.pipeline.getSampleCount());
         // Null under `@ifc-lite/renderer/core`, which ships no point-cloud pipeline.

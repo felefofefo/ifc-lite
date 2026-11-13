@@ -192,3 +192,13 @@ describe('visible surface polygons', () => {
     }
   });
 });
+
+it('keeps the slab finish visible beneath a transparent volume in plan', async () => {
+  const concrete = { ...box([0, -0.4, 0], [4, -0.1, 4]), expressId: 1, ifcType: 'IfcSlab', materialId: 10 };
+  const finish = { ...box([0, -0.1, 0], [4, 0, 4]), expressId: 1, ifcType: 'IfcSlab', materialId: 11 };
+  const transparent = { ...box([0, 0.25, 0], [4, 0.75, 4]), expressId: 2, color: [1, 1, 1, 0.25] as MeshData['color'] };
+  const drawing = await new Drawing2DGenerator().generate([concrete, finish, transparent],
+    { plane: { axis: 'y', position: 1.2, flipped: false }, projectionDepth: 1.6, scale: 100, includeHiddenLines: false, creaseAngle: 30 },
+    { useGPU: false, includeProjectionPolygons: true });
+  expect(new Set(drawing.projectionPolygons.filter(p => p.entityId === 1).map(p => p.materialId))).toEqual(new Set([11]));
+});

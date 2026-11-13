@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import type { Point2D } from '@ifc-lite/drawing-2d';
+import type { MarkerTrace } from './view-markers.js';
 import type { CustomSectionPlane } from '@/store/section-types';
 import { sectionAxisRange, worldToPosition, type AxisBounds } from '../section/section-distance.js';
 
@@ -42,4 +43,14 @@ export function verticalProjectionDepth(bounds: AxisBounds, plane: Pick<CustomSe
   const depth = [bounds.min.x, bounds.max.x].flatMap(x => [bounds.min.z, bounds.max.z].map(z =>
     (plane.distance - nx * x - nz * z) * (flipped ? -1 : 1)));
   return Math.max(0.001, ...depth);
+}
+
+export function dragVerticalViewTrace(
+  [start, end]: MarkerTrace, grip: 'line' | 'start' | 'end', delta: Point2D,
+): MarkerTrace | null {
+  const offset = (point: Point2D) => ({ x: point.x + delta.x, y: point.y + delta.y });
+  const a = grip === 'end' ? start : offset(start);
+  const b = grip === 'start' ? end : offset(end);
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  return Number.isFinite(length) && length >= 1e-6 ? [a, b] : null;
 }

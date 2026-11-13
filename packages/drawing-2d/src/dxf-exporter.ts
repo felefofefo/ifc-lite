@@ -37,6 +37,7 @@ import { DxfWriter, type DxfLinetype } from './dxf/writer.js';
 export interface DXFHatchLayer {
   pattern: 'solid' | 'diagonal' | 'cross-hatch' | 'custom';
   families?: readonly PatternLine[];
+  patternKey?: string;
   spacing: number;
   color: string;
   lineWeight?: number;
