@@ -13,7 +13,7 @@
  */
 
 import { DrawingProjectionSettings } from './DrawingProjectionSettings';
-import { Box, BoxSelect, Cloud, Eye, FileText, Hexagon, Layers, Maximize2, MoreHorizontal, MousePointer2, Palette, Pin, PinOff, Printer, Ruler, ScanLine, Shapes, Tag, Trash2, Type, ZoomIn, ZoomOut } from 'lucide-react';
+import { Box, BoxSelect, Cloud, Eye, FileText, Hexagon, Layers, Maximize2, MoreHorizontal, MousePointer2, Palette, Pin, PinOff, Printer, Ruler, ScanLine, Shapes, Trash2, Type, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -36,6 +36,7 @@ const DRAWERS: ReadonlyArray<{ id: DrawingDrawer; icon: typeof Palette; labelKey
   { id: 'overrides', icon: Palette, labelKey: 'section2d.drawers.overrides' },
   { id: 'sheet', icon: FileText, labelKey: 'section2d.drawers.sheet' },
   { id: 'underlays', icon: Layers, labelKey: 'section2d.drawers.underlays' },
+  { id: 'visibility', icon: Eye, labelKey: 'section2d.drawers.visibility' },
   { id: 'scan', icon: ScanLine, labelKey: 'section2d.drawers.scan' },
 ];
 
@@ -59,7 +60,7 @@ export interface DrawingToolbarProps {
   onTogglePrintPreview: () => void;
   openDrawer: DrawingDrawer | null;
   /** Per drawer: its feature is active (preset applied, sheet on, underlays loaded, scan shown). */
-  drawerActivity: Record<DrawingDrawer, boolean>;
+  drawerActivity: Partial<Record<DrawingDrawer, boolean>>;
   onToggleDrawer: (drawer: DrawingDrawer) => void;
   zoomPercent: number;
   onZoomIn: () => void;
@@ -98,12 +99,6 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
           on={p.display.symbolic} showLabel={showLabels} onToggle={p.onToggleSymbolic}
         />
         <ToggleChip
-          icon={Tag} label={t('section2d.display.ifcAnnotations')}
-          tip={!p.ifcAnnotationsAvailable ? t('section2d.display.ifcAnnotationsUnavailable')
-            : p.display.ifcAnnotations ? t('section2d.ifcAnnotations.hideTitle') : t('section2d.ifcAnnotations.showTitle')}
-          on={p.display.ifcAnnotations} disabled={!p.ifcAnnotationsAvailable} showLabel={showLabels} onToggle={p.onToggleIfcAnnotations}
-        />
-        <ToggleChip
           icon={BoxSelect} label={t('section2d.display.projection')}
           tip={!p.projectionAvailable ? t('section2d.display.projectionUnavailable')
             : p.display.projection ? t('section2d.construction.hideTitle') : t('section2d.construction.showTitle')}
@@ -129,7 +124,7 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
               <DrawerToggle
                 key={id} icon={icon} label={t(labelKey)}
                 tip={p.drawerActivity[id] ? t('section2d.drawers.activeTip', { label: t(labelKey) }) : t(labelKey)}
-                open={p.openDrawer === id} active={p.drawerActivity[id]} showLabel={showLabels} onToggle={() => p.onToggleDrawer(id)}
+                open={p.openDrawer === id} active={!!p.drawerActivity[id]} showLabel={showLabels} onToggle={() => p.onToggleDrawer(id)}
               />
             ))}
           </fieldset>

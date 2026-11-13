@@ -23,7 +23,7 @@ function opaque(c: [number, number, number, number] | undefined): [number, numbe
 type Rgba = [number, number, number, number];
 type CapPaints = {
   scale: number;
-  fallbackColor?: (polygon: DrawingPolygon) => string;
+  fallbackStyle?: (polygon: DrawingPolygon) => { fillColor: string; fillOpacity: number };
   resolve?: (polygon: DrawingPolygon, fallbackColor: () => string) => readonly DXFHatchLayer[] | undefined;
 };
 
@@ -36,7 +36,7 @@ function capColor(color: string): Rgba {
 export function publicationCapPaint(paints: readonly DXFHatchLayer[], scale = 100): Pick<CutPolygon2D, 'color' | 'hatch'> {
   const solidIndex = paints.reduce((last, paint, index) => paint.pattern === 'solid' ? index : last, -1);
   const solid = paints[solidIndex];
-  const pattern = paints[solidIndex + 1];
+  const pattern = paints.slice(solidIndex + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch');
   return {
     color: solid ? capColor(solid.color) : [0, 0, 0, 0],
     hatch: pattern ? {
@@ -63,8 +63,14 @@ export function capOverlayInput(cut: Cut, showHiddenLines: boolean, fillMode: 'u
   // instead of see-through. Colourless → uniform opaque cap fill.
   const transparentEntities = new Set<number>();
   const layerPolygons: CutPolygon2D[] = cut.cutPolygons.map((cp) => {
-    const paints = preview?.resolve?.(cp, () => preview.fallbackColor?.(cp) ?? getFillColorForType(cp.ifcType));
-    const styled = paints && preview ? publicationCapPaint(paints, preview.scale) : undefined;
+    const fallback = preview?.fallbackStyle?.(cp);
+    const paints = preview?.resolve?.(cp, () => fallback?.fillColor ?? getFillColorForType(cp.ifcType));
+    let styled = paints && preview ? publicationCapPaint(paints, preview.scale) : undefined;
+    if (!styled && fallback) {
+      const color = capColor(fallback.fillColor);
+      color[3] *= fallback.fillOpacity;
+      styled = { color, hatch: { patternId: 0 } };
+    }
     if (styled?.color && styled.color[3] < 1) transparentEntities.add(cp.entityId);
     return {
       polygon: cp.polygon, ifcType: cp.ifcType, expressId: cp.entityId, modelIndex: cp.modelIndex,
@@ -73,9 +79,13 @@ export function capOverlayInput(cut: Cut, showHiddenLines: boolean, fillMode: 'u
     };
   });
   const basePolygons: CutPolygon2D[] = (cut.layerBaseCutPolygons ?? [])
-    .filter((cp) => !transparentEntities.has(cp.entityId)).map((cp) => ({
-      polygon: cp.polygon, ifcType: cp.ifcType, expressId: cp.entityId, modelIndex: cp.modelIndex,
-    }));
+    .filter((cp) => !transparentEntities.has(cp.entityId)).map((cp) => {
+      const fallback = preview?.fallbackStyle?.(cp);
+      return {
+        polygon: cp.polygon, ifcType: cp.ifcType, expressId: cp.entityId, modelIndex: cp.modelIndex,
+        ...(fallback ? { color: capColor(fallback.fillColor), hatch: { patternId: 0 } } : {}),
+      };
+    });
   const lines: DrawingLine2D[] = cut.lines
     .filter((line) => showHiddenLines || line.visibility !== 'hidden')
     .map((line) => ({ line: line.line, category: line.category }));

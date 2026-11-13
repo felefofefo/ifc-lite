@@ -31,6 +31,7 @@ export interface CutPolygonStyleContext {
   overrideEngine: GraphicOverrideEngine;
   stroke?: DXFExportOptions['strokeStyle'];
   fills?: (polygon: DrawingPolygon, fallbackColor: string) => readonly DXFHatchLayer[] | undefined;
+  darkPaper?: boolean;
   getElementProperties: (entityId: number) => ElementData['properties'];
 }
 
@@ -53,9 +54,9 @@ export function resolveCutPolygonStyle(
     : null;
   const pen = ctx.stroke?.(polygon, 'cut');
   const weight = pen?.lineWeight ?? override?.lineWeight;
-  const material = ctx.useIfcMaterials ? (polygon.color ?? ctx.entityColorMap.get(polygon.entityId)) : undefined;
+  const material = ctx.useIfcMaterials ? (polygon.color ?? polygon.sourceColor ?? ctx.entityColorMap.get(polygon.entityId)) : undefined;
   const fillColor = material ? rgbaToHex(material)
-    : override && !ctx.useIfcMaterials ? override.fillColor : getFillColorForType(polygon.ifcType);
+    : override && !ctx.useIfcMaterials ? override.fillColor : getFillColorForType(polygon.ifcType, ctx.darkPaper);
   const fillOpacity = material?.[3] ?? (override && !ctx.useIfcMaterials ? override.opacity : 1);
   return {
     fillColor, fillOpacity,

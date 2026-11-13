@@ -20,6 +20,7 @@ export interface DrawingRuntime {
   sourceCoordinateInfo: CoordinateInfo | undefined;
   generateDrawing: (isRegenerate?: boolean) => Promise<void>;
   isRegenerating: boolean;
+  viewFilterFailed?: boolean;
 }
 
 const NO_RUNTIME: DrawingRuntime = {

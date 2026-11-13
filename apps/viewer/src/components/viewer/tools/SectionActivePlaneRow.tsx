@@ -76,6 +76,7 @@ export function SectionActivePlaneRow({ compact = false }: { compact?: boolean }
   const offset = useSectionOffset();
   const distance = offset.distance;
   const fill = useSectionFill();
+  const followsDrawing = useViewerStore((s) => s.drawing2DDisplayOptions.show3DOverlay);
   const setShowGizmo = useViewerStore((s) => s.setSectionPlaneShowGizmo);
   const alignmentBusy = useAlignmentToolState(s => s.busy);
   // Test ids belong to the live bar only: the offscreen copies the tiers are measured from must not repeat them.
@@ -242,7 +243,8 @@ export function SectionActivePlaneRow({ compact = false }: { compact?: boolean }
         pressed={fill.on}
         aria-label={t('sectionPlanes.fill.label')}
         onPressedChange={fill.toggle}
-        title={t(fill.on ? 'sectionPlanes.fill.offTitle' : 'sectionPlanes.fill.title')}
+        title={t(followsDrawing ? fill.on ? 'sectionCap.hideSurfaces' : 'sectionCap.showSurfaces'
+          : fill.on ? 'sectionPlanes.fill.offTitle' : 'sectionPlanes.fill.title')}
         icon={<PaintBucket aria-hidden className="h-3.5 w-3.5" />}
       >
         {word('sectionPlanes.fill.label')}

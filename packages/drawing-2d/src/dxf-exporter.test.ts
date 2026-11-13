@@ -386,3 +386,12 @@ it('exports native solid cut hatches in R2007 with the mapped outer and inner lo
   expect(exportToDXF(drawing, { ...options, showHatching: false })).not.toContain('\n0\nHATCH\n');
   expect(exportToDXF(drawing)).not.toContain('\n0\nHATCH\n');
 });
+
+it('writes view marker codes as editable text on their own layer in transformed coordinates', () => {
+  const doc = parseDxf(exportToDXF(emptyDrawing(), {
+    version: 'R2007', coordinateTransform: ({ x, y }) => ({ x: x + 100, y: -y }),
+    labels: [{ layer: 'IFC-SECTION-MARKERS', color: '#000000', text: 'C-02', position: { x: 2, y: 3 }, height: 0.25 }],
+  }));
+  const label = doc.entities.find((e): e is DxfTextEntity => e.kind === 'text');
+  expect(label).toMatchObject({ layer: 'IFC-SECTION-MARKERS', text: 'C-02', x: 102, y: -3 });
+});

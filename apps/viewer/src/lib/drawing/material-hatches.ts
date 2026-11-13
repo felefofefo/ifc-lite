@@ -5,7 +5,7 @@
 import { collectMaterialLeaves, resolveAllMaterialDefIds, type IfcDataStore } from '@ifc-lite/parser';
 
 export const MATERIAL_HATCH_PATTERNS = ['solid', 'diagonal', 'cross-hatch', 'none'] as const;
-export type MaterialHatchPattern = typeof MATERIAL_HATCH_PATTERNS[number];
+export type MaterialHatchPattern = typeof MATERIAL_HATCH_PATTERNS[number] | `pat:${string}`;
 export interface FillPaint {
   pattern?: MaterialHatchPattern;
   color?: string;
@@ -27,11 +27,11 @@ export function hasHatchPaint(paints: HatchPaints | undefined): boolean {
 export type MaterialHatches = Readonly<Partial<Record<string, MaterialHatchStyle>>>;
 
 export function isMaterialHatchPattern(value: unknown): value is MaterialHatchPattern {
-  return MATERIAL_HATCH_PATTERNS.some((pattern) => pattern === value);
+  return (typeof value === 'string' && /^pat:.+/.test(value)) || MATERIAL_HATCH_PATTERNS.some((pattern) => pattern === value);
 }
 
 export function backgroundHatchPattern(value: unknown): 'solid' | 'none' | undefined {
-  return value === 'none' ? 'none' : isMaterialHatchPattern(value) ? 'solid' : undefined;
+  return value === 'none' ? 'none' : MATERIAL_HATCH_PATTERNS.some(pattern => pattern === value) ? 'solid' : undefined;
 }
 
 export function readMaterialHatches(raw: string | null): MaterialHatches {

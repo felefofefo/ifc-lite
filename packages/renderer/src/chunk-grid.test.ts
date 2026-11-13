@@ -117,3 +117,9 @@ describe('colorKey', () => {
     assert.notStrictEqual(colorKey(white, { metallic: 0, roughness: 0 }), colorKey(white));
   });
 });
+
+it('keeps differently assigned layers in separate batches even with identical IFC colors', () => {
+  const a = { ...mesh([1, 2, 3]), materialId: 20 };
+  const b = { ...a, materialId: 21 };
+  assert.notEqual(bucketBaseKeyFor(a, '0|0|0|1000', null), bucketBaseKeyFor(b, '0|0|0|1000', null));
+});

@@ -24,9 +24,13 @@ let lastHatch: SectionCapHatchId = DEFAULT_HATCH;
 export function resetRememberedHatch(): void { lastHatch = DEFAULT_HATCH; }
 
 export function useSectionFill(): { on: boolean; toggle: () => void } {
-  const on = useViewerStore((s) => s.sectionPlane.showCap && s.sectionPlane.capStyle.pattern === 'solid');
+  const on = useViewerStore((s) => s.sectionPlane.showCap && (s.drawing2DDisplayOptions.show3DOverlay || s.sectionPlane.capStyle.pattern === 'solid'));
   const toggle = useCallback(() => {
     const state = useViewerStore.getState();
+    if (state.drawing2DDisplayOptions.show3DOverlay) {
+      state.setSectionShowCap(!state.sectionPlane.showCap);
+      return;
+    }
     const { pattern } = state.sectionPlane.capStyle;
     if (state.sectionPlane.showCap && pattern === 'solid') {
       state.setSectionCapStyle({ pattern: lastHatch });

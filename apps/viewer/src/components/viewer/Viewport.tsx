@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import { useSurfacePatterns3D } from '@/hooks/useSurfacePatterns3D';
 import { loadedInstancedModelIndices } from '@/lib/visibility/model-hidden-entities.js';
 import { useAppearanceReferences } from './useAppearanceReferences.js';
 import { useAppearanceSourceGeometry } from './useAppearanceSourceGeometry.js';
@@ -145,10 +146,8 @@ export function Viewport({
   const selectedEntity = useViewerStore((s) => s.selectedEntity);
   const appliedEntityLevelOffsets = useViewerStore((s) => s.appliedEntityLevelOffsets);
 
-  // Sync selectedEntityId with model-aware selectedEntity for PropertiesPanel
   useModelSelection();
 
-  // Compute selectedModelIndex for renderer (multi-model selection highlighting)
   const selectedModelIndex = models.size > 1 && selectedEntity && modelIdToIndex
     ? modelIdToIndex.get(selectedEntity.modelId) ?? undefined
     : undefined;
@@ -1409,6 +1408,7 @@ export function Viewport({
     hasMeshes: (geometry?.length ?? 0) > 0,
   });
 
+  useSurfacePatterns3D(rendererRef, isInitialized && !cesiumActive, geometry);
   useRenderUpdates({
     rendererRef,
     isInitialized,

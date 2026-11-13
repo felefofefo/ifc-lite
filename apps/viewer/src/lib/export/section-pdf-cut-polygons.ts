@@ -11,7 +11,7 @@
  * (`drawCutPolygonsPdf`) runs inside the export job.
  */
 
-import { HatchGenerator } from '@ifc-lite/drawing-2d';
+import { HatchGenerator, patternSegments } from '@ifc-lite/drawing-2d';
 import type { jsPDF } from 'jspdf';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
 import { getFillColorForType } from '@/components/viewer/drawing/ifc-fill-colors';
@@ -165,7 +165,13 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: 
       if (shape.polygon.outer.some(({ x, y }) => Math.hypot(x, y) / spacing > 100_000)) {
         throw new RangeError('This PDF scale and hatch spacing generate too many lines.');
       }
-      const segments = hatch.generateHatch(shape, 100, {
+      const segments = paint.pattern === 'custom'
+        ? patternSegments({ outer: rings[0].map(p => ({ x: p.x, y: -p.y })), holes: rings.slice(1).map(r => r.map(p => ({ x: p.x, y: -p.y }))) },
+          paint.families ?? [], spacing).map(({ start, end }) => ({ line: {
+            start: { x: start.x - origin.x, y: -start.y - origin.y },
+            end: { x: end.x - origin.x, y: -end.y - origin.y },
+          } }))
+        : hatch.generateHatch(shape, 100, {
         type: paint.pattern, spacing, angle: 45, secondaryAngle: -45,
         origin: polygon.isCut ? undefined : { x: -origin.x, y: -origin.y },
       }).lines;

@@ -54,6 +54,7 @@ export const sectionToolEn = {
   'sectionTool.parked.showAria': 'Show the section cut',
   'sectionTool.parked.showTitle': 'Show the cut again',
   'sectionTool.gizmo.dragTitle': 'Drag to slide the cut along its normal',
+  'sectionCap.followsDrawing': 'Cut fills follow the drawing materials and graphic overrides.',
   'sectionCap.display': 'Display',
   'sectionCap.surfaces': 'Surfaces',
   'sectionCap.lines': 'Lines',

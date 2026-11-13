@@ -2,31 +2,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import type { Point2D } from '@ifc-lite/drawing-2d';
 import { Button } from '@/components/ui/button';
-import { useDialogs } from '@/components/ui/confirm-dialog';
+import { ViewIdentityDialog } from './ViewIdentityFields';
+import { nextViewCode } from '@/lib/drawing/view-markers';
 import { useTranslation } from '@/i18n';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { verticalViewPlane } from '@/lib/drawing/view-placement';
-import { createDrawingView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { createDrawingView, editSavedViewTrace, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 export type VerticalViewKind = 'section' | 'elevation';
 
-export function PlaceVerticalView({ kind, vm, close }: {
+export function PlaceVerticalView({ kind, vm, close, edit }: {
   kind: VerticalViewKind; vm: DrawingViewModel; close: () => void;
+  edit?: { id: string; start: Point2D; end: Point2D; reverse: boolean };
 }) {
   const { t } = useTranslation();
-  const { promptDialog } = useDialogs();
-  const [start, setStart] = useState<Point2D>();
+  const [start, setStart] = useState<Point2D | undefined>(edit?.start);
   const [cursor, setCursor] = useState<Point2D>();
-  const [end, setEnd] = useState<Point2D>();
-  const [reverse, setReverse] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [end, setEnd] = useState<Point2D | undefined>(edit?.end);
+  const [reverse, setReverse] = useState(edit?.reverse ?? false);
+  const [editMode, setEditMode] = useState<'move' | 'start' | 'end'>();
+  const [moveFrom, setMoveFrom] = useState<Point2D>();
   const [naming, setNaming] = useState(false);
-  const mounted = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { drawing, drawnPlane, viewTransform, sheetEnabled, activeSheet, isPinned, cachedSheetTransformRef } = vm;
   const project = useSavedSectionCuts(s => s.projectId);
 
@@ -53,7 +53,7 @@ export function PlaceVerticalView({ kind, vm, close }: {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rect.left - tx) / scale;
     const y = (event.clientY - rect.top - ty) / scale;
-    if (start && event.shiftKey) {
+    if (!edit && start && event.shiftKey) {
       return Math.abs(x - start.x) >= Math.abs(y - start.y) ? { x, y: start.y } : { x: start.x, y };
     }
     return { x, y };
@@ -68,18 +68,20 @@ export function PlaceVerticalView({ kind, vm, close }: {
     angle: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + (reverse ? -90 : 90),
   } : null;
 
-  async function save() {
-    const custom = start && end && verticalViewPlane(start, end, drawnPlane.flipped, reverse);
-    if (!custom || naming) return;
-    setNaming(true);
-    const name = (await promptDialog({ description: t('section2d.views.name'), defaultValue: t(`section2d.views.type.${kind}`) }))?.trim();
-    if (!mounted.current) return;
-    setNaming(false);
-    if (!name || useSavedSectionCuts.getState().projectId !== project) return;
-    try {
-      createDrawingView(name, kind, { axis: 'front', position: 50, custom });
-      close();
-    } catch { setFailed(true); }
+  const custom = start && end && verticalViewPlane(start, end, drawnPlane.flipped, reverse);
+  const world = (point: Point2D) => ({ x: drawnPlane.flipped ? -point.x : point.x, y: point.y });
+
+  function editPoint(next: Point2D) {
+    if (!editMode || !start || !end) return;
+    if (editMode === 'move' && !moveFrom) { setMoveFrom(next); return; }
+    const translate = (p: Point2D) => ({ x: p.x + next.x - moveFrom!.x, y: p.y + next.y - moveFrom!.y });
+    const a = editMode === 'start' ? next : editMode === 'move' ? translate(start) : start;
+    const b = editMode === 'end' ? next : editMode === 'move' ? translate(end) : end;
+    if (!verticalViewPlane(a, b, drawnPlane.flipped, reverse)) return;
+    setStart(a);
+    setEnd(b);
+    setMoveFrom(undefined);
+    setEditMode(undefined);
   }
 
   return <div className="pointer-events-none absolute inset-0 z-10">
@@ -91,7 +93,8 @@ export function PlaceVerticalView({ kind, vm, close }: {
       onClick={event => {
         if (naming || !(scale > 0)) return;
         const next = point(event);
-        if (!start || end) { setStart(next); setEnd(undefined); setCursor(next); setFailed(false); }
+        if (edit) { editPoint(next); return; }
+        if (!start || end) { setStart(next); setEnd(undefined); setCursor(next); }
         else if (verticalViewPlane(start, next, drawnPlane.flipped, reverse)) setEnd(next);
       }}>
       {a && <circle cx={a.x} cy={a.y} r="3" fill="currentColor" />}
@@ -101,11 +104,30 @@ export function PlaceVerticalView({ kind, vm, close }: {
     </svg>
     <div className="pointer-events-auto absolute bottom-3 left-1/2 flex max-w-[95%] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
-      <span aria-live="polite">{t(end ? 'section2d.create.confirmLine' : start ? 'section2d.create.second' : 'section2d.create.first')}</span>
+      <span aria-live="polite">{t(edit
+        ? editMode === 'move' ? moveFrom ? 'section2d.create.moveTo' : 'section2d.create.moveFrom'
+          : editMode ? 'section2d.create.adjustPoint' : 'section2d.create.editLine'
+        : end ? 'section2d.create.confirmLine' : start ? 'section2d.create.second' : 'section2d.create.first')}</span>
+      {edit && (['move', 'start', 'end'] as const).map(mode => (
+        <Button key={mode} size="sm" variant={editMode === mode ? 'secondary' : 'outline'}
+          onClick={() => { setEditMode(mode); setMoveFrom(undefined); }}>{t(`section2d.create.edit.${mode}`)}</Button>
+      ))}
       <Button size="sm" variant="outline" disabled={!start} onClick={() => setReverse(value => !value)}>{t('sectionPlanes.flip.label')}</Button>
       <Button size="sm" variant="ghost" onClick={close}>{t('section2d.create.cancel')}</Button>
-      <Button size="sm" disabled={!end || naming} onClick={() => void save()}>{t('section2d.views.save')}</Button>
-      {failed && <span role="alert" className="text-destructive">{t('section2d.views.saveError')}</span>}
+      <Button size="sm" disabled={!custom || naming} onClick={() => {
+        if (!edit) { setNaming(true); return; }
+        if (!start || !end || useSavedSectionCuts.getState().projectId !== project) return;
+        editSavedViewTrace(edit.id, [world(start), world(end)], drawnPlane.flipped !== reverse);
+        close();
+      }}>{t('section2d.views.save')}</Button>
+
     </div>
+    {naming && start && end && custom && <ViewIdentityDialog name={t(`section2d.views.type.${kind}`)}
+      code={nextViewCode(kind, useSavedSectionCuts.getState().cuts)} close={() => setNaming(false)}
+      save={(name, code) => {
+        if (useSavedSectionCuts.getState().projectId !== project) return;
+        createDrawingView(name, kind, { axis: 'front', position: 50, custom }, undefined, code, [world(start), world(end)]);
+        close();
+      }} />}
   </div>;
 }

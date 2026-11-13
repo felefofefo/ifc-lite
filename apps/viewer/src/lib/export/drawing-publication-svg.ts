@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
+import { patternSegments, type DrawingPolygon, type Point2D } from '@ifc-lite/drawing-2d';
 import { styleCutPolygons, type CutPolygonStyleContext } from '@/components/viewer/drawing/cut-polygon-style';
 
 export function svgDash(dash: readonly number[] | undefined, mmToTarget: (mm: number) => number): string {
@@ -17,6 +17,7 @@ export function publicationCutSvg(
   scale: number,
   mmToTarget: (mm: number) => number,
   legacyOutlineFactor = 1,
+  map?: (x: number, y: number) => Point2D,
 ): string {
   const patterns = new Map<string, { id: string; markup: string }>();
   let fills = '';
@@ -36,6 +37,15 @@ export function publicationCutSvg(
         const spacing = mmToTarget(paint.spacing * 1000 / scale);
         const width = mmToTarget(paint.lineWeight ?? 0.13);
         if (!(spacing > 0) || !Number.isFinite(spacing)) continue;
+        if (paint.pattern === 'custom') {
+          if (!map) continue;
+          const ring = (points: Point2D[]) => points.map(p => { const q = map(p.x, p.y); return { x: q.x, y: -q.y }; });
+          const segments = patternSegments({ outer: ring(polygon.polygon.outer), holes: polygon.polygon.holes.map(ring) }, paint.families ?? [], spacing);
+          const d = segments.map(({ start, end }) => `M${start.x} ${-start.y}L${end.x} ${-end.y}`).join('');
+          fills += `<path d="${d}" fill="none" stroke="${escape(paint.color)}" stroke-width="${width}" ${entity}/>
+`;
+          continue;
+        }
         for (const angle of paint.pattern === 'cross-hatch' ? [-45, 45] : [-45]) {
           const key = JSON.stringify([spacing, width, angle, paint.color]);
           let pattern = patterns.get(key);

@@ -2,9 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { drawingPublicationStrokeStyle } from '@/hooks/drawingPublicationStrokeStyle';
+import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
 import type { usePublicationFillPreview } from '@/hooks/usePublicationFillPreview';
-import { drawPublicationCanvasFills } from './drawing/publication-canvas-fills';
+import { drawPublicationCanvasFills, drawPublicationSurfaces } from './drawing/publication-canvas-fills';
 import { drawDxfUnderlaysScreenSpace } from './drawing-underlays';
 import { drawReferenceImages } from './drawing-reference-images';
 import { useReferenceImagesForDrawing } from '@/hooks/useReferenceImagesForDrawing';
@@ -28,7 +30,7 @@ import { type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useDrawingElementPropertiesLookup } from '@/hooks/useDrawingElementPropertiesLookup';
 import { markActiveDrawingCanvasRendered, registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
-import { getFillColorForType } from './drawing/ifc-fill-colors';
+import { resolveCutPolygonStyle } from './drawing/cut-polygon-style';
 import { resolveDrawingPaperTheme, type DrawingPaperTheme } from './drawing/paper-theme';
 
 // ─── IFC annotation overlay helpers (issue #812) ─────────────────────────────
@@ -187,6 +189,8 @@ interface Drawing2DCanvasProps {
   overridesEnabled: boolean;
   entityColorMap: Map<number, [number, number, number, number]>;
   useIfcMaterials: boolean;
+  lineweights?: LineweightRow;
+  printPreview?: boolean;
   fillPreview?: ReturnType<typeof usePublicationFillPreview>;
   // Measure tool props
   measureMode?: boolean;
@@ -247,7 +251,7 @@ export function Drawing2DCanvas({
   overrideEngine,
   overridesEnabled,
   entityColorMap,
-  useIfcMaterials, fillPreview,
+  useIfcMaterials, fillPreview, lineweights, printPreview,
   measureMode = false,
   measureStart = null,
   measureCurrent = null,
@@ -311,19 +315,12 @@ export function Drawing2DCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const cutFill = (polygon: DrawingPolygon, dark = false) => {
-      const material = useIfcMaterials ? polygon.color ?? entityColorMap.get(polygon.entityId) : undefined;
-      if (material) {
-        const rgb = material.slice(0, 3).map((value) => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
-        return { fillColor: `#${rgb}`, opacity: material[3] };
-      }
-      if (!useIfcMaterials && overridesEnabled) {
-        const { style } = overrideEngine.applyOverrides({
-          expressId: polygon.entityId, ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
-        });
-        return { fillColor: style.fillColor, opacity: style.opacity };
-      }
-      return { fillColor: getFillColorForType(polygon.ifcType, dark), opacity: 1 };
+    const pen = lineweights ? drawingPublicationStrokeStyle(lineweights, { overrideEngine, overridesEnabled, getElementProperties }) : undefined;
+    const cutFill = (polygon: DrawingPolygon, darkPaper = false) => {
+      const { fillColor, fillOpacity } = resolveCutPolygonStyle(polygon, {
+        useIfcMaterials, entityColorMap, overridesEnabled, overrideEngine, getElementProperties, darkPaper,
+      });
+      return { fillColor, opacity: fillOpacity };
     };
 
     // Set canvas size using tracked dimensions
@@ -673,15 +670,16 @@ export function Drawing2DCanvas({
         );
 
         // Surface fills sit beneath the cut and its outlines.
-        for (const polygon of [...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons]) {
-          const { fillColor, opacity } = polygon.isCut ? cutFill(polygon) : { fillColor: '#666666', opacity: 0 };
+        if (fillPreview?.resolve) drawPublicationSurfaces(ctx, drawing.projectionPolygons ?? [], fillPreview.resolve,
+          modelToScreen, Math.abs(drawingTransform.scaleFactor * transform.scale), transform.scale);
+        for (const polygon of drawing.cutPolygons) {
+          const { fillColor, opacity } = cutFill(polygon);
           const paints = fillPreview?.resolve?.(polygon, fillColor);
           if (paints) {
             drawPublicationCanvasFills(ctx, polygon, paints, modelToScreen,
               Math.abs(drawingTransform.scaleFactor * transform.scale), transform.scale);
             continue;
           }
-          if (!polygon.isCut) continue;
         ctx.globalAlpha = opacity;
           ctx.fillStyle = fillColor;
           ctx.beginPath();
@@ -713,10 +711,11 @@ export function Drawing2DCanvas({
 
         // Stroke polygon outlines
         for (const polygon of drawing.cutPolygons) {
+          const stroke = pen?.(polygon, 'cut');
           let strokeColor = '#000000';
           let lineWeight = 0.5;
 
-          if (overridesEnabled) {
+          if (!stroke && overridesEnabled) {
             const elementData: ElementData = {
               expressId: polygon.entityId,
               ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
@@ -726,8 +725,10 @@ export function Drawing2DCanvas({
             lineWeight = result.style.lineWeight;
           }
 
-          ctx.strokeStyle = strokeColor;
-          ctx.lineWidth = Math.max(0.5, mmToScreen(lineWeight) * 0.3);
+          if (stroke && !(stroke.lineWeight > 0)) continue;
+          ctx.strokeStyle = stroke?.color ?? strokeColor;
+          ctx.lineWidth = stroke ? mmToScreen(stroke.lineWeight) : Math.max(0.5, mmToScreen(lineWeight) * 0.3);
+          ctx.setLineDash(stroke?.dash?.map(d => mmToScreen(d)) ?? []);
           ctx.beginPath();
 
           if (polygon.polygon.outer.length > 0) {
@@ -791,9 +792,11 @@ export function Drawing2DCanvas({
             lineWidth *= 0.7;
           }
 
-          ctx.strokeStyle = strokeColor;
-          ctx.lineWidth = Math.max(0.5, mmToScreen(lineWidth) * 0.3);
-          ctx.setLineDash(dashPattern);
+          const stroke = pen?.(line, line.category === 'cut' ? 'cut' : 'projection', line);
+          if (stroke && !(stroke.lineWeight > 0)) continue;
+          ctx.strokeStyle = stroke?.color ?? strokeColor;
+          ctx.lineWidth = stroke ? mmToScreen(stroke.lineWeight) : Math.max(0.5, mmToScreen(lineWidth) * 0.3);
+          ctx.setLineDash(stroke?.dash?.map(d => mmToScreen(d)) ?? dashPattern);
 
           const screenStart = modelToScreen(start.x, start.y);
           const screenEnd = modelToScreen(end.x, end.y);
@@ -997,6 +1000,7 @@ export function Drawing2DCanvas({
       // - 'side': also flip X to look from conventional direction
       const scaleX = sectionAxis === 'side' ? -transform.scale : transform.scale;
       const scaleY = sectionAxis === 'down' ? transform.scale : -transform.scale;
+      const penMm = printPreview ? (fillPreview?.scale ?? 100) / 1000 : 1 / transform.scale;
       drawReferenceImages(ctx, referenceImages, (x, y) => ({ x: x * scaleX + transform.x, y: y * scaleY + transform.y }));
 
       // DXF reference underlays render first, beneath the cut geometry
@@ -1020,15 +1024,16 @@ export function Drawing2DCanvas({
       // ═══════════════════════════════════════════════════════════════════════
       // 1. FILL CUT POLYGONS (with color from IFC materials, override engine, or type fallback)
       // ═══════════════════════════════════════════════════════════════════════
-      for (const polygon of [...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons]) {
-        const { fillColor, opacity } = polygon.isCut ? cutFill(polygon, paperTheme.isDark) : { fillColor: '#666666', opacity: 0 };
+      if (fillPreview?.resolve) drawPublicationSurfaces(ctx, drawing.projectionPolygons ?? [], fillPreview.resolve,
+        (x, y) => ({ x, y }), 1, fillPreview.scale / 1000, Math.sign(scaleX * scaleY));
+      for (const polygon of drawing.cutPolygons) {
+        const { fillColor, opacity } = cutFill(polygon, paperTheme.isDark);
         const paints = fillPreview?.resolve?.(polygon, fillColor);
         if (paints) {
           drawPublicationCanvasFills(ctx, polygon, paints, (x, y) => ({ x, y }),
             1, (fillPreview?.scale ?? 100) / 1000, Math.sign(scaleX * scaleY));
           continue;
         }
-        if (!polygon.isCut) continue;
         ctx.globalAlpha = opacity;
         ctx.fillStyle = fillColor;
         ctx.beginPath();
@@ -1058,10 +1063,11 @@ export function Drawing2DCanvas({
       // 2. STROKE CUT POLYGON OUTLINES (with color from override engine)
       // ═══════════════════════════════════════════════════════════════════════
       for (const polygon of drawing.cutPolygons) {
+        const stroke = pen?.(polygon, 'cut');
         let strokeColor = paperTheme.ink;
         let lineWeight = 0.5;
 
-        if (overridesEnabled) {
+        if (!stroke && overridesEnabled) {
           const elementData: ElementData = {
             expressId: polygon.entityId,
             ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
@@ -1071,8 +1077,10 @@ export function Drawing2DCanvas({
           lineWeight = result.style.lineWeight;
         }
 
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = lineWeight / transform.scale;
+        if (stroke && !(stroke.lineWeight > 0)) continue;
+        ctx.strokeStyle = stroke?.color ?? strokeColor;
+        ctx.lineWidth = stroke ? stroke.lineWeight * penMm : lineWeight / transform.scale;
+        ctx.setLineDash(stroke?.dash?.map(d => d * penMm) ?? []);
         ctx.beginPath();
         if (polygon.polygon.outer.length > 0) {
           ctx.moveTo(polygon.polygon.outer[0].x, polygon.polygon.outer[0].y);
@@ -1165,9 +1173,11 @@ export function Drawing2DCanvas({
           lineWidth *= 0.7;
         }
 
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = lineWidth / transform.scale;
-        ctx.setLineDash(dashPattern.map((d) => d / transform.scale));
+        const stroke = pen?.(line, line.category === 'cut' ? 'cut' : 'projection', line);
+        if (stroke && !(stroke.lineWeight > 0)) continue;
+        ctx.strokeStyle = stroke?.color ?? strokeColor;
+        ctx.lineWidth = stroke ? stroke.lineWeight * penMm : lineWidth / transform.scale;
+        ctx.setLineDash(stroke?.dash?.map(d => d * penMm) ?? dashPattern.map(d => d / transform.scale));
 
         ctx.beginPath();
         ctx.moveTo(line.line.start.x, line.line.start.y);
@@ -1664,7 +1674,7 @@ export function Drawing2DCanvas({
       }
     }
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas

@@ -54,6 +54,7 @@
  */
 
 type Rgba = readonly [number, number, number, number];
+export type SurfacePatternEntry = readonly [entityId: number, materialId: number, paint: Rgba];
 
 /** Key value of an unused slot. Federated ids stop far below it (`FederationRegistry`'s 2e9 limit). */
 export const ENTITY_COLOR_EMPTY_KEY = 0xFFFFFFFF;
@@ -100,10 +101,10 @@ function isTableKey(id: number): boolean {
   return Number.isInteger(id) && id >= 0 && id < ENTITY_COLOR_EMPTY_KEY;
 }
 
-function capacityFor(entries: number, maxBytes: number): number {
+function capacityFor(entries: number, maxBytes: number, bytesPerSlot: number): number {
   let capacity = MIN_CAPACITY;
   while (capacity < entries * 2) capacity *= 2;
-  while (capacity > MIN_CAPACITY && ENTITY_COLOR_HEADER_WORDS * 4 + capacity * BYTES_PER_SLOT > maxBytes) capacity /= 2;
+  while (capacity > MIN_CAPACITY && ENTITY_COLOR_HEADER_WORDS * 4 + capacity * bytesPerSlot > maxBytes) capacity /= 2;
   return capacity;
 }
 
@@ -112,28 +113,42 @@ export function buildEntityColorTableImage(
   overrides: ReadonlyMap<number, Rgba>,
   maxBytes: number = DEFAULT_MAX_TABLE_BYTES,
 ): EntityColorTableImage {
-  let entries = 0;
-  for (const id of overrides.keys()) if (isTableKey(id)) entries++;
-  if (entries === 0) return EMPTY_IMAGE;
-  const capacity = capacityFor(entries, maxBytes);
-  const limit = Math.min(entries, capacity / 2);
-  const colorBase = ENTITY_COLOR_HEADER_WORDS + capacity;
+  return buildColorTableImage(function* () {
+    for (const [id, rgba] of overrides) yield [id, 0, rgba];
+  }, maxBytes, false);
+}
+
+export function buildSurfacePatternImage(patterns: readonly SurfacePatternEntry[], maxBytes = DEFAULT_MAX_TABLE_BYTES): EntityColorTableImage {
+  return buildColorTableImage(() => patterns, maxBytes, true);
+}
+
+function buildColorTableImage(
+  entries: () => Iterable<SurfacePatternEntry>, maxBytes: number, withMaterial: boolean,
+): EntityColorTableImage {
+  let length = 0;
+  for (const [id] of entries()) if (isTableKey(id)) length++;
+  if (length === 0) return EMPTY_IMAGE;
+  const capacity = capacityFor(length, maxBytes, BYTES_PER_SLOT + (withMaterial ? 4 : 0));
+  const limit = Math.min(length, capacity / 2);
+  const materialBase = ENTITY_COLOR_HEADER_WORDS + capacity;
+  const colorBase = materialBase + (withMaterial ? capacity : 0);
   const words = new Uint32Array(colorBase + capacity * 4);
   const colors = new Float32Array(words.buffer);
-  words.fill(ENTITY_COLOR_EMPTY_KEY, ENTITY_COLOR_HEADER_WORDS, colorBase);
+  words.fill(ENTITY_COLOR_EMPTY_KEY, ENTITY_COLOR_HEADER_WORDS, materialBase);
   const mask = capacity - 1;
   let count = 0;
   let maxProbe = 0;
-  for (const [id, rgba] of overrides) {
+  for (const [id, materialId, rgba] of entries()) {
     if (count === limit) break;
     if (!isTableKey(id)) continue;
-    let slot = entityColorSlotHash(id) & mask;
+    let slot = entityColorSlotHash(id ^ entityColorSlotHash(materialId)) & mask;
     let probe = 0;
     while (words[ENTITY_COLOR_HEADER_WORDS + slot] !== ENTITY_COLOR_EMPTY_KEY) {
       slot = (slot + 1) & mask;
       probe++;
     }
     words[ENTITY_COLOR_HEADER_WORDS + slot] = id;
+    if (withMaterial) words[materialBase + slot] = materialId;
     colors.set([rgba[0], rgba[1], rgba[2], rgba[3]], colorBase + slot * 4);
     if (probe > maxProbe) maxProbe = probe;
     count++;
@@ -142,19 +157,19 @@ export function buildEntityColorTableImage(
   words[1] = maxProbe;
   words[2] = count;
   words[3] = colorBase;
-  return { words, capacity, count, maxProbe, dropped: entries - count };
+  return { words, capacity, count, maxProbe, dropped: length - count };
 }
 
 /** CPU mirror of the shader lookup: the colour stored for `id`, or null (sentinel). */
-export function lookupEntityColor(image: EntityColorTableImage, id: number): [number, number, number, number] | null {
+export function lookupEntityColor(image: EntityColorTableImage, id: number, materialId?: number): [number, number, number, number] | null {
   if (image.count === 0 || !isTableKey(id)) return null;
   const { words, capacity } = image;
   const colorBase = words[3];
   const mask = capacity - 1;
-  let slot = entityColorSlotHash(id) & mask;
+  let slot = entityColorSlotHash(id ^ entityColorSlotHash(materialId ?? 0)) & mask;
   for (let i = 0; i <= image.maxProbe && i < capacity; i++) {
     const key = words[ENTITY_COLOR_HEADER_WORDS + slot];
-    if (key === id) {
+    if (key === id && (materialId === undefined || words[ENTITY_COLOR_HEADER_WORDS + capacity + slot] === materialId)) {
       const c = new Float32Array(words.buffer, (colorBase + slot * 4) * 4, 4);
       return [c[0], c[1], c[2], c[3]];
     }
@@ -261,13 +276,15 @@ export class EntityColorTable {
   private warnedDropped = false; // per table, i.e. per scene
 
   /** Replace the table with `overrides` and upload it. */
-  write(device: TableDevice, overrides: ReadonlyMap<number, Rgba>): void {
+  write(device: TableDevice, overrides: ReadonlyMap<number, Rgba> | readonly SurfacePatternEntry[]): void {
     const limits = device.limits;
     const maxBytes = Math.min(
       limits?.maxStorageBufferBindingSize ?? DEFAULT_MAX_TABLE_BYTES,
       limits?.maxBufferSize ?? DEFAULT_MAX_TABLE_BYTES,
     );
-    this.image = buildEntityColorTableImage(overrides, maxBytes);
+    this.image = 'size' in overrides
+      ? buildEntityColorTableImage(overrides, maxBytes)
+      : buildSurfacePatternImage(overrides, maxBytes);
     if (this.image.dropped > 0 && !this.warnedDropped) {
       this.warnedDropped = true;
       console.warn(`[EntityColorTable] ${this.image.dropped} colour overrides exceed the device's storage-buffer limit and are not painted.`);

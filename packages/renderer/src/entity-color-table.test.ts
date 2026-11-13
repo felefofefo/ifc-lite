@@ -156,3 +156,12 @@ describe('entity colour table layout (#6076)', () => {
     assert.equal(MESH_UNIFORM_OFFSET.extraClip + EXTRA_CLIP_FLOATS, MESH_UNIFORM_FLOATS);
   });
 });
+
+it('keeps separate surface patterns for two layers of one federated entity', async () => {
+  const { buildSurfacePatternImage, lookupEntityColor } = await requireColorTable();
+  const id = 0x02000007;
+  const image = buildSurfacePatternImage([[id, 0x02000010, RED], [id, 0x02000011, BLUE]]);
+  assert.deepEqual(lookupEntityColor(image, id, 0x02000010), RED);
+  assert.deepEqual(lookupEntityColor(image, id, 0x02000011), BLUE);
+  assert.equal(lookupEntityColor(image, id, 0), null);
+});

@@ -118,10 +118,11 @@ export function colorKey(
 }
 
 export function bucketBaseKeyFor(
-  mesh: ChunkAnchorSource,
+  mesh: ChunkAnchorSource & { materialId?: number },
   colorKey: string,
   chunking: SpatialChunkingConfig | null,
 ): string {
+  if (mesh.materialId !== undefined) colorKey = `mat${mesh.materialId}~${colorKey}`;
   if (!chunking) return colorKey;
   return `${chunkCellKey(mesh, chunking.cellSize)}~${colorKey}`;
 }

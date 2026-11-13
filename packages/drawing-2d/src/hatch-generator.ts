@@ -236,7 +236,7 @@ export class HatchGenerator {
    * Clip a line to a polygon (with holes)
    * Returns array of line segments inside the polygon
    */
-  private clipLineToPolygon(line: Line2D, polygon: Polygon2D): Line2D[] {
+  clipLineToPolygon(line: Line2D, polygon: Polygon2D): Line2D[] {
     // First clip to outer boundary
     let segments = this.clipLineToRing(line, polygon.outer, true);
 

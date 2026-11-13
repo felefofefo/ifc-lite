@@ -11,7 +11,6 @@
  * - Projection lines (visible geometry beyond cut)
  * - Hidden lines (occluded geometry, dashed)
  * - Silhouettes and feature edges
- * - Hatching (material-based fill patterns by IFC type)
  * - Vector output (SVG)
  */
 
@@ -164,6 +163,7 @@ export type {
 // HATCH GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+export { patternSegments, type PatternLine } from './pat-lines.js';
 export { HatchGenerator } from './hatch-generator.js';
 export type { HatchLine, HatchResult, CustomHatchSettings } from './hatch-generator.js';
 

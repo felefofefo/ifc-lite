@@ -224,7 +224,7 @@ import { batchForWholeDraw, pushWholeSplit } from './residency.js';
 import { captureRendererScreenshot } from './renderer-screenshot.js';
 import { traceRendererColorFrameEncoder, beginRendererColorFrameCapture, cancelRendererColorFrame, discardRendererColorFrameReadback, encodeRendererColorFrameCapture, requestRendererColorFrame, retryRendererColorFrame, settleRendererColorFrameCapture, type RendererColorFrame, type RendererColorFrameCapture } from './renderer-color-readback.js';
 import { shouldRouteMeshTransparent, shouldRouteBatchTransparent, DEFAULT_GHOST_ALPHA } from './overlay-routing.js';
-import { batchEntityIdAnchor, batchHasColorOverride, packOverrideParams } from './entity-color-table.js';
+import { batchEntityIdAnchor, batchHasColorOverride, packOverrideParams, type SurfacePatternEntry } from './entity-color-table.js';
 import { XRayAlpha, XRayEpochTracker, type AlphaBatchLike } from './xray-alpha.js';
 import { PartialBatchRequests } from './partial-batch-requests.js';
 import { uploadIndividualMesh, type IndividualMeshFrame } from './individual-mesh-upload.js';
@@ -247,12 +247,12 @@ import { runGuardedGpuUpload, isDeviceLossThrow, type GpuUploadOutcome } from '.
 import { enableRendererQuantizedBatches } from './quantized-lifecycle.js';
 import { recoverRendererDevice, rendererDestroyedError, rendererDeviceLostError, type DeviceRecoveryOmission, type DeviceRecoveryResult, type RendererRecoveryHost } from './device-recovery.js';
 
-
-/**
- * Main renderer class
- */
 export class Renderer {
     private device: WebGPUDevice;
+    setSurfacePatterns(patterns: readonly SurfacePatternEntry[]): void {
+        this.pipeline?.setSurfacePatterns(patterns);
+        this.requestRender();
+    }
     private pipeline: RenderPipeline | null = null;
     private camera: Camera;
     private scene: Scene;
@@ -1409,6 +1409,7 @@ export class Renderer {
             // In-tree callers pre-split merged pieces (Scene.getMeshDataPieces
             // drops the field incidentally); this is public, so it owns the rule.
             geometryItemId: reportableItemId(meshData, meshData.expressId),
+            layerMaterialId: meshData.materialId,
             vertexBuffer,
             indexBuffer,
             indexCount,
@@ -2539,6 +2540,7 @@ export class Renderer {
                     const painted = paint && batchHasColorOverride(batch, colorOverrides, colorOverrideGen);
                     packOverrideParams(this.uniformOverrideU32, batchEntityIdAnchor(batch), painted, options.emphasizeOverrides === true);
                     this.uniformOverrideU32[0] = batchEntityIdAnchor(batch) ?? 0xFFFFFFFF;
+                    this.uniformOverrideU32[2] = batch.layerMaterialId ?? 0;
                     stageMeshUniforms(batch.uniformSlot, tpl); // uploaded by flushMeshUniforms before submit
                     this.uniformOverrideU32.fill(0);
 
@@ -2703,18 +2705,12 @@ export class Renderer {
                         tpl[33] = txOverride ? txOverride[1] : tm.color[1];
                         tpl[34] = txOverride ? txOverride[2] : tm.color[2];
                         tpl[35] = txAlpha;
-                        // Same authored-alpha + material contract as the flat/batched
-                        // paths (mesh-material.ts) — a call with neither argument
-                        // silently gave every textured metal or translucent mesh the
-                        // opaque dielectric default (#5623 review). The pipeline
-                        // itself is still opaque/depth-write only (no blend state,
-                        // see `txAlpha` above), so a translucent authored alpha still
-                        // never actually blends here — only the glass/roughness
-                        // CHOICE in the shader follows the same rule as everywhere
-                        // else, for the same reason `tm.material` does.
+                        // Glass and roughness use authored alpha, even in this opaque pass.
                         packMeshMaterial(tpl, tm.color[3], tm.finish ?? tm.material);
                         this.uniformOverrideU32[0] = tm.expressId;
+                        this.uniformOverrideU32[2] = tm.layerMaterialId ?? 0;
                         device.queue.writeBuffer(tm.uniformBuffer, 0, tpl);
+                        this.uniformOverrideU32[2] = 0;
                         pass.setBindGroup(0, tm.bindGroup);
                         pass.setVertexBuffer(0, tm.vertexBuffer);
                         pass.setIndexBuffer(tm.indexBuffer, 'uint32');
@@ -2872,7 +2868,9 @@ export class Renderer {
                         tplFlags[0] |= MESH_FLAG_RTE_DRAWABLE;
 
                         this.uniformOverrideU32[0] = mesh.expressId;
+                        this.uniformOverrideU32[2] = mesh.layerMaterialId ?? 0;
                         device.queue.writeBuffer(mesh.uniformBuffer, 0, tpl);
+                        this.uniformOverrideU32[2] = 0;
 
                         pass.setBindGroup(0, mesh.bindGroup);
                         pass.setVertexBuffer(0, mesh.vertexBuffer);

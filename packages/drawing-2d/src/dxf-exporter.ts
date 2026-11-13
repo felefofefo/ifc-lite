@@ -25,6 +25,7 @@
  * `metadataComment`.
  */
 
+import { patternSegments, type PatternLine } from './pat-lines.js';
 import type { Drawing2D, DrawingLine, DrawingPolygon, LineCategory, Point2D } from './types.js';
 import { isPolygonCutLine, makeEntityKey } from './types.js';
 import { getLineStyle, getHatchPattern } from './styles.js';
@@ -34,7 +35,8 @@ import { ModernDxfWriter, type DxfObjectStroke } from './dxf/writer-modern.js';
 import { DxfWriter, type DxfLinetype } from './dxf/writer.js';
 
 export interface DXFHatchLayer {
-  pattern: 'solid' | 'diagonal' | 'cross-hatch';
+  pattern: 'solid' | 'diagonal' | 'cross-hatch' | 'custom';
+  families?: readonly PatternLine[];
   spacing: number;
   color: string;
   lineWeight?: number;
@@ -81,6 +83,8 @@ export interface DXFExportOptions {
    * drawing space and go through `coordinateTransform` like everything else.
    */
   polylineLayers?: DXFPolylineLayer[];
+  /** Additional drawing-space labels, kept on the same layer as their marker lines. */
+  labels?: readonly { layer: string; color: string; text: string; position: Point2D; height: number }[];
 }
 
 /** One named layer of polylines to embed. */
@@ -147,6 +151,14 @@ export class DXFExporter {
     const strokeStyle = styledWriter ? options.strokeStyle : undefined;
     const outlined = new Set<string>();
 
+    const writePaint = (polygon: DrawingPolygon, outer: Point2D[], holes: Point2D[][], item: DXFHatchLayer) => {
+      if (!styledWriter) return;
+      if (item.pattern === 'custom') {
+        for (const { start, end } of patternSegments(polygon.polygon, item.families ?? [], item.spacing)) {
+          styledWriter.addLine(map(start), map(end), fillLayer, undefined, { color: item.color, lineWeight: item.lineWeight ?? 0.13 });
+        }
+      } else styledWriter.addHatch(outer, holes, fillLayer, item.pattern, item.spacing, item.color, item.lineWeight);
+    };
     // Hatching first (bottom-most, like SVGExporter's hatching layer).
     if (showHatching) {
       if (styledWriter && options.hatchLayers) {
@@ -155,7 +167,7 @@ export class DXFExporter {
           if (!layers.length) continue;
           const outer = polygon.polygon.outer.map(map);
           const holes = polygon.polygon.holes.map(hole => hole.map(map));
-          for (const item of layers) styledWriter.addHatch(outer, holes, fillLayer, item.pattern, item.spacing, item.color, item.lineWeight);
+          for (const item of layers) writePaint(polygon, outer, holes, item);
         }
       }
       for (const polygon of drawing.cutPolygons) {
@@ -167,7 +179,7 @@ export class DXFExporter {
         const outer = polygon.polygon.outer.map(map);
         const holes = polygon.polygon.holes.map((hole) => hole.map(map));
         if (styledWriter && layers) {
-          for (const item of layers) styledWriter.addHatch(outer, holes, fillLayer, item.pattern, item.spacing, item.color, item.lineWeight);
+          for (const item of layers) writePaint(polygon, outer, holes, item);
         } else if (styledWriter && pattern !== 'none') {
           styledWriter.addHatch(outer, holes, fillLayer, pattern, hatch?.spacing);
         }
@@ -223,6 +235,11 @@ export class DXFExporter {
       for (const polyline of extra.polylines) {
         writer.addPolyline(polyline.map(map), layer, extra.closed ?? true);
       }
+    }
+
+    for (const label of options.labels ?? []) {
+      const layer = writer.layer(label.layer, label.color);
+      writer.addText(map(label.position), label.text, label.height, layer, { hAlign: 'center', vAlign: 'middle' });
     }
 
     return writer.toString();

@@ -31,7 +31,7 @@ export const meshUniformsWgsl = `
           drawableDeltaLow: vec4<f32>,
           rteCameraHigh: vec4<f32>,
           rteCameraLow: vec4<f32>,
-          overrideParams: vec4<u32>, // x = draw's id anchor, y = OVERRIDE_* bits (entity-color-table.ts, #6076)
+          overrideParams: vec4<u32>, // x = draw's id anchor, y = OVERRIDE_* bits, z = IFC layer material ID or zero
           extraClip: ExtraClip,      // cutting planes beyond sectionPlane (#7545); count 0 = none
         }
         @binding(0) @group(0) var<uniform> uniforms: Uniforms;

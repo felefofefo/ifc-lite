@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { useDrawingPatterns } from './useDrawingPatterns';
 import { useCallback } from 'react';
 import { buildDxfUnderlaySvg, drawDxfUnderlaysPdf, mappedDxfUnderlayOptions } from '@/lib/export/drawing-vector-underlays';
 import { drawingReferenceSvg, snapshotDrawingReferences, rasterizeReferenceLayer } from '@/lib/export/drawing-raster-references';
@@ -50,6 +51,7 @@ import { resolveCutPolygonStyle, type CutPolygonStyleContext } from '@/component
 import { publicationCutSvg, svgDash } from '@/lib/export/drawing-publication-svg';
 import { pdfColor } from '@/lib/export/pdf-color';
 import { drawCutPolygonsPdf, isPagePoint, prepareCutPolygonsPdf, type PdfCutPolygon } from '@/lib/export/section-pdf-cut-polygons';
+import { viewMarkersSvg, viewMarkersDxf, drawViewMarkersPdf, viewMarkerExportBounds, useDrawingViewMarkers } from '@/lib/export/drawing-view-markers';
 import { titleBlockWithEffectiveScale } from '@/hooks/titleBlockScaleField';
 import { scanOutlineDxfLayers, type ScanOutlineLayer } from '@/lib/scan-outline/scan-outline';
 
@@ -302,6 +304,8 @@ function useDrawingExport({
   cachedSheetTransformRef,
 }: UseDrawingExportParams): UseDrawingExportResult {
   const { t } = useTranslation();
+  const { patterns } = useDrawingPatterns();
+  const markers = useDrawingViewMarkers(drawing, coordinateInfo?.shiftedBounds, sectionPlane.axis, !!sectionPlane.custom);
   // Georef inputs for the DXF export (PR #1871 review, P1): placement edits
   // applied in CesiumPlacementEditor live in `georefMutations` (per model
   // id), not in `ifcDataStore`, and in a federation the georef frame is the
@@ -327,17 +331,17 @@ function useDrawingExport({
       context.stroke = drawingPublicationStrokeStyle(row, context);
       context.fills = displayOptions.showHatching === false ? () => [] : drawingPublicationHatchStyle(
         materialHatches, scale, storeModels, ifcDataStore,
-        overridesEnabled ? context.overrideEngine.getRules() : [], context.getElementProperties, resolveEntityRef);
+        overridesEnabled ? context.overrideEngine.getRules() : [], context.getElementProperties, resolveEntityRef, patterns);
     }
     return context;
   }, [activePresetId, entityColorMap, overridesEnabled, overrideEngine, storeModels, ifcDataStore,
-    lineweights, lineweightTable, materialHatches, displayOptions.scale, displayOptions.showHatching]);
+    lineweights, lineweightTable, materialHatches, displayOptions.scale, displayOptions.showHatching, patterns]);
 
   // Generate SVG that matches the canvas rendering exactly
   const generateExportSVG = useCallback((): string | null => {
     if (!drawing) return null;
 
-    const { bounds } = drawing;
+    const bounds = viewMarkerExportBounds(drawing.bounds, markers, displayOptions.scale);
 
     // World-metres -> paper-mm arithmetic for the direct SVG export,
     // extracted to svgExportViewport.ts (see that file's docstring for why
@@ -417,7 +421,7 @@ function useDrawingExport({
       escapeXml,
     );
 
-    svg += publicationCutSvg([...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons], styleContext, (p) => polygonToPath(p.polygon), escapeXml, effectiveScale, mmToModel);
+    svg += publicationCutSvg([...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons], styleContext, (p) => polygonToPath(p.polygon), escapeXml, effectiveScale, mmToModel, 1, mapUnderlay);
 
     // 3. DRAW PROJECTION/SILHOUETTE LINES
     // Pre-compute bounds for line validation
@@ -621,9 +625,10 @@ function useDrawingExport({
       );
     }
 
+    svg += viewMarkersSvg(markers, mapUnderlay, mmToModel(1), mmToModel(1), escapeXml);
     svg += '</svg>';
     return svg;
-  }, [drawing, displayOptions, cutPolygonStyleContext, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, sectionPlane.axis, dxfUnderlays, scanSection]);
+  }, [drawing, displayOptions, cutPolygonStyleContext, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, sectionPlane.axis, dxfUnderlays, scanSection, markers]);
 
   // Generate SVG with drawing sheet (frame, title block, scale bar)
   // This generates coordinates directly in paper mm space (like the canvas rendering)
@@ -738,7 +743,7 @@ function useDrawingExport({
       escapeXml,
     );
 
-    svg += publicationCutSvg([...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons], styleContext, (p) => polygonToPath(p.polygon), escapeXml, activeSheet.scale.factor, (mm) => mm, 0.3);
+    svg += publicationCutSvg([...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons], styleContext, (p) => polygonToPath(p.polygon), escapeXml, activeSheet.scale.factor, (mm) => mm, 0.3, modelToPaper);
 
     // Render drawing lines
     const lineBounds = drawing.bounds;
@@ -802,6 +807,7 @@ function useDrawingExport({
       );
     }
 
+    svg += viewMarkersSvg(markers, modelToPaper, 1 / Math.abs(scaleFactor), 1, escapeXml);
     svg += '  </g>\n\n';
 
     // Render frame (on top of drawing content)
@@ -837,7 +843,7 @@ function useDrawingExport({
     // identity when the axis changes, and the canvas rewrote the cache on
     // every fresh draw — neither of which this callback controls.
     // `cachedSheetTransformRef` is a ref: stable identity, read at call time.
-  }, [drawing, activeSheet, displayOptions, cutPolygonStyleContext, dxfUnderlays, scanSection, sectionPlane.axis, isPinned]);
+  }, [drawing, activeSheet, displayOptions, cutPolygonStyleContext, dxfUnderlays, scanSection, sectionPlane.axis, isPinned, markers]);
   // Export SVG
   const handleExportSVG = useCallback(() => {
     // Use sheet export if enabled, otherwise raw drawing export
@@ -908,7 +914,7 @@ function useDrawingExport({
       underlays: mappedDxfUnderlayOptions(dxfUnderlays, sectionPlane.axis),
       // The traced scan outline (#6871) on its own layer, through the same
       // georeference transform as the cut.
-      polylineLayers: displayOptions.showScanSection ? scanOutlineDxfLayers(scanSection.outline) : [],
+      ...viewMarkersDxf(markers, scale, displayOptions.showScanSection ? scanOutlineDxfLayers(scanSection.outline) : []),
     });
     const suffix = lineweights ? `-1-${formatScaleFactorLabel(scale)}` : '';
     const stem = `section-${sectionPlane.axis}-${sectionPlane.position}${suffix}`;
@@ -922,7 +928,7 @@ function useDrawingExport({
   }, [
     drawing, dxfUnderlays, displayOptions.showHiddenLines, displayOptions.showHatching, displayOptions.showScanSection, scanSection.outline,
     sectionPlane, ifcDataStore, coordinateInfo, storeModels, anchorModelIdOverride, georefMutations, mutationVersion,
-    lineweights, cutPolygonStyleContext, sheetEnabled, activeSheet, displayOptions.scale,
+    lineweights, cutPolygonStyleContext, sheetEnabled, activeSheet, displayOptions.scale, markers,
   ]);
   // Export the drawing as vectors at the requested scale, sizing the page
   // around its extent (see pdf-scale.ts). Sheet exports take the separate
@@ -1040,7 +1046,7 @@ function useDrawingExport({
     const currentAxis = sectionPlane.axis;
     let layout: PdfScaleLayout;
     try {
-      layout = computePdfSectionLayout(drawing.bounds, currentAxis, effectiveScale, 10);
+      layout = computePdfSectionLayout(viewMarkerExportBounds(drawing.bounds, markers, effectiveScale), currentAxis, effectiveScale, 10);
     } catch (err) {
       toast.error(err instanceof Error ? t('section2d.export.invalidScaleDetail', { error: err.message }) : t('section2d.export.invalidScale'));
       return;
@@ -1121,6 +1127,7 @@ function useDrawingExport({
           doc.setLineDashPattern(pen ? [...(pen.dash ?? [])] : dash, 0);
           doc.line(p0.x, p0.y, p1.x, p1.y);
         }
+        drawViewMarkersPdf(doc, markers, mapPoint, effectiveScale);
         doc.setLineDashPattern([], 0);
         // v1 has no title block, so this filename is the SOLE record of the
         // sheet's scale — round-tripping through Math.round() here would
@@ -1140,7 +1147,7 @@ function useDrawingExport({
     }).catch((err: unknown) => {
       toast.error(err instanceof Error ? t('section2d.export.pdfFailed', { error: err.message }) : t('section2d.export.pdfFailedGeneric'));
     });
-  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t]);
+  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers]);
 
   // Print handler
   const handlePrint = useCallback(() => {

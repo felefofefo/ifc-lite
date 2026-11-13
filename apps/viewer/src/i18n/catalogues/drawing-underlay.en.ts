@@ -58,7 +58,7 @@ export const drawingUnderlayEn = {
   'drawingUnderlay.materials.foreground': 'Foreground',
   'drawingUnderlay.materials.background': 'Background',
   'drawingUnderlay.materials.fillColor': '{label} color',
-  'drawingUnderlay.materials.inheritColor': 'Reset {label} color',
+  'drawingUnderlay.materials.resetPaint': 'Reset {label} to default',
   'drawingUnderlay.materials.lineType': 'Line type',
   'drawingUnderlay.materials.lineType.inherit': 'Default line type',
   'drawingUnderlay.materials.lineType.solid': 'Continuous',

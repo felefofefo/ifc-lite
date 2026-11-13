@@ -237,6 +237,7 @@ describe('Flip, Set view and Show (#7545)', () => {
 describe('Fill slice (#7545)', () => {
   it('one click paints the cut solid; a second returns to the hatch the user had', () => {
     renderTool();
+    act(() => s().updateDrawing2DDisplayOptions({ show3DOverlay: false }));
     act(() => s().setSectionCapStyle({ pattern: 'brick' }));
     assert.equal(button('Fill').getAttribute('aria-pressed'), 'false');
     click(button('Fill'));
@@ -249,6 +250,7 @@ describe('Fill slice (#7545)', () => {
 
   it('turns surfaces back on when they were off, and reaches every plane', () => {
     renderTool();
+    act(() => s().updateDrawing2DDisplayOptions({ show3DOverlay: false }));
     s().addSectionPlane('side');
     act(() => s().setSectionShowCap(false));
     click(button('Fill'));
@@ -257,4 +259,16 @@ describe('Fill slice (#7545)', () => {
       assert.equal(p.capStyle.pattern, 'solid');
     }
   });
+});
+
+it('toggles the drawing cap without changing the independent hatch style', () => {
+  renderTool();
+  act(() => {
+    s().updateDrawing2DDisplayOptions({ show3DOverlay: true });
+    s().setSectionCapStyle({ pattern: 'brick' });
+    s().setSectionShowCap(true);
+  });
+  click(button('Fill'));
+  assert.equal(s().sectionPlane.showCap, false);
+  assert.equal(s().sectionPlane.capStyle.pattern, 'brick');
 });

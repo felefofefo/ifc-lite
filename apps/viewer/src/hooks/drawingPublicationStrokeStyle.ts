@@ -8,7 +8,7 @@ import { LINEWEIGHT_PRESETS, type LineweightRow } from '@/lib/drawing/lineweight
 
 export function drawingPublicationStrokeStyle(
   lineweights: LineweightRow | undefined,
-  { overridesEnabled, overrideEngine, getElementProperties }: CutPolygonStyleContext,
+  { overridesEnabled, overrideEngine, getElementProperties }: Pick<CutPolygonStyleContext, 'overridesEnabled' | 'overrideEngine' | 'getElementProperties'>,
 ): DXFExportOptions['strokeStyle'] {
   const cutStyles = new Map<string, ReturnType<NonNullable<DXFExportOptions['strokeStyle']>>>();
   return (element, role, drawingLine) => {

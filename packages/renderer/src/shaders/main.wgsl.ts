@@ -14,6 +14,7 @@ import { mainRteWgsl, mainShadowWgsl } from './main-rte-shadow.wgsl.js';
 import { meshUniformsWgsl } from './mesh-uniforms.wgsl.js';
 import { relativeToEyeWgsl } from './relative-to-eye.wgsl.js';
 import { specularWgsl } from './specular.wgsl.js';
+import { surfacePatternsWgsl } from './surface-patterns.wgsl.js';
 import { entityColorTableWgsl } from './entity-color-table.wgsl.js';
 import { depthNudgeWgsl } from './depth-nudge.wgsl.js';
 
@@ -81,6 +82,7 @@ export const mainShaderSource = `
         ${colorTransferWgsl}
         ${specularWgsl}
         ${entityColorTableWgsl}
+        ${surfacePatternsWgsl}
 
         ${mainShadowWgsl}
 
@@ -278,6 +280,8 @@ export const mainShaderSource = `
           // section/crop/derivative ingress. Instanced geometry is not yet
           // anchored, so its worldPos remains the authoritative input.
           let fragmentPos = clipSpacePos(input.worldPos, input.eyePos);
+          let patternDx = dpdx(input.worldPos);
+          let patternDy = dpdy(input.worldPos);
           ${FRAGMENT_DISCARDS_BEGIN}
           // Per-instance hide/isolate: bit 1 of the instance flags lane marks a hidden
           // occurrence. Discard it so it neither draws nor writes depth (and the pick
@@ -543,6 +547,7 @@ export const mainShaderSource = `
           if (entityOverride.a >= 0.0 && !isSelected) {
             out.color = paintEntityOverride(out.color, entityOverride, irradiance, N);
           }
+          if (!isSelected) { out.color = surfacePatternColor(out.color, input.sectionEntityId, input.worldPos, N, patternDx, patternDy); }
           out.objectIdEncoded = encodeId24(input.entityId);
           return out;
         }

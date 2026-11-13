@@ -21,11 +21,14 @@
  */
 
 import React, { useCallback, useRef } from 'react';
-import { FileText, Layers, Palette, ScanLine } from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Eye, FileText, Layers, Palette, ScanLine, SwatchBook, Tag } from 'lucide-react';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n/en';
+import { DrawingPatterns } from './DrawingPatterns';
+import { ViewVisibilitySettings } from './ViewVisibilitySettings';
 import { DrawingSettingsPanel } from '../DrawingSettingsPanel';
 import { DrawingUnderlaysPanel } from './DrawingUnderlaysPanel';
 import { ScanSectionPanel } from '../ScanSectionPanel';
@@ -44,6 +47,9 @@ const TABS: ReadonlyArray<{ id: DrawingDrawer; icon: typeof Palette; labelKey: T
   { id: 'overrides', icon: Palette, labelKey: 'section2d.drawers.overrides' },
   { id: 'sheet', icon: FileText, labelKey: 'section2d.drawers.sheet' },
   { id: 'underlays', icon: Layers, labelKey: 'section2d.drawers.underlays' },
+  { id: 'visibility', icon: Eye, labelKey: 'section2d.drawers.visibility' },
+  { id: 'annotations', icon: Tag, labelKey: 'section2d.drawers.annotations' },
+  { id: 'patterns', icon: SwatchBook, labelKey: 'section2d.patterns.title' },
   { id: 'scan', icon: ScanLine, labelKey: 'section2d.drawers.scan' },
 ];
 
@@ -85,19 +91,18 @@ export function DrawingInspector({ vm, layers, panelWidth }: DrawingInspectorPro
 
   const body = (
     <Tabs value={tab} onValueChange={(v) => vm.toggleDrawer(v as DrawingDrawer)} className="flex h-full flex-col overflow-hidden">
-      <TabsList className="properties-tabs-list w-full shrink-0">
-        {TABS.map(({ id, icon: Icon, labelKey }) => (
-          <TabsTrigger
-            key={id}
-            value={id}
-            title={t(labelKey)}
-            className="properties-tab-trigger flex-1 min-w-0 uppercase text-2xs tracking-wide"
-          >
-            <Icon className="h-3 w-3 shrink-0 panel-compact-icon" />
-            <span className="panel-compact-text">{t(labelKey)}</span>
-          </TabsTrigger>
-        ))}
-      </TabsList>
+      <div className="shrink-0 border-b p-2">
+        <Select value={tab} onValueChange={(value) => vm.toggleDrawer(value as DrawingDrawer)}>
+          <SelectTrigger aria-label={t('section2d.inspector.sections')} className="h-8 w-full text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {TABS.map(({ id, icon: Icon, labelKey }) => (
+              <SelectItem key={id} value={id}>
+                <span className="flex items-center gap-2"><Icon className="h-3.5 w-3.5 shrink-0" />{t(labelKey)}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <TabsContent value="overrides" className="m-0 h-full">
           <DrawingSettingsPanel lineweights={vm.lineweights} />
@@ -113,6 +118,9 @@ export function DrawingInspector({ vm, layers, panelWidth }: DrawingInspectorPro
             georeferenceAvailable={layers.dxfGeoreferenceAvailable}
           />
         </TabsContent>
+        <TabsContent value="visibility" className="m-0 h-full"><ViewVisibilitySettings /></TabsContent>
+        <TabsContent value="annotations" className="m-0 h-full"><ViewVisibilitySettings annotations /></TabsContent>
+        <TabsContent value="patterns" className="m-0 h-full overflow-auto p-3 text-xs"><DrawingPatterns /></TabsContent>
         <TabsContent value="scan" className="m-0 h-full">
           <ScanSectionPanel
             hasPointCloud={layers.scanSectionLayer.hasPointCloud}

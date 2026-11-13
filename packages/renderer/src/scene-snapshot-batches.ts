@@ -118,6 +118,7 @@ export function stageSnapshotBatches(snapshot: SceneSnapshot, device: GPUDevice,
       staged.push({
         id: firstBatchId + staged.length, colorKey: source.key, vertexBuffer, indexBuffer,
         indexCount: source.indices.length, color: source.color,
+        layerMaterialId: Number(/(?:^|~)mat(\d+)~/.exec(source.key)?.[1]) || undefined,
         ...(source.finish ? { finish: source.finish } : {}),
         expressIds, bindGroup, uniformSlot,
         ...(source.bounds ? { bounds: source.bounds } : {}),

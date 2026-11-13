@@ -48,8 +48,11 @@ import { getDefaultSectionPlane } from './slices/sectionSlice.js';
 import { clippingSectionPlanes } from '@/store/section-active';
 import { orderedSectionPlanes, sectionPlaneCount } from '@/lib/section/section-plane-set';
 import { zoomToSectionTarget } from '@/lib/section/section-zoom';
-import { planCutPosition } from '@/lib/drawing/view-placement';
+import { planCutPosition, verticalViewPlane } from '@/lib/drawing/view-placement';
 import { getDrawingRuntime } from '@/lib/drawing/drawing-runtime';
+import { DEFAULT_VIEW_MARKERS, isViewCodeAvailable, nextViewCode, type MarkerTrace } from '@/lib/drawing/view-markers';
+import { captureViewVisibility, restoreViewVisibility, type SavedViewVisibility } from '@/lib/drawing/view-visibility';
+import type { SavedFilterPreset } from '@/lib/search/saved-filters';
 import type { SectionZoomSpec } from '@/lib/section/section-zoom-spec';
 
 /** The subset of `SectionPlane` that defines the CUT itself, not its
@@ -73,11 +76,16 @@ export const SAVED_VIEW_KINDS = ['plan', 'section', 'elevation', '3d'] as const;
 export type SavedViewKind = typeof SAVED_VIEW_KINDS[number];
 type ViewDisplay = Pick<ViewerState['drawing2DDisplayOptions'],
   'showConstructionProjection' | 'constructionProjectionDepth' | 'showHiddenLines' | 'showHatching' |
-  'useSymbolicRepresentations' | 'showIfcAnnotations'>;
+  'useSymbolicRepresentations' | 'showIfcAnnotations' | 'showSurfacePatterns3D'>;
 
 export interface SavedSectionCut {
   id: string;
   name: string;
+  code?: string;
+  markerTrace?: MarkerTrace;
+  markers?: typeof DEFAULT_VIEW_MARKERS;
+  visibility?: SavedViewVisibility;
+  filter?: { mode: 'show' | 'hide'; preset: SavedFilterPreset };
   /** Every plane that was cutting, in creation order. */
   planes: SavedSectionCutPlane[];
   /** Which of `planes` was the active one. */
@@ -143,6 +151,7 @@ function isSavedSectionCut(value: unknown): value is SavedSectionCut {
     && cut.planes.every((plane) => plane && ['down', 'front', 'side'].includes(plane.axis) && Number.isFinite(plane.position))
     && (!cut.graphics || (Array.isArray(cut.graphics.rules) && cut.graphics.rules.every((rule) =>
       rule && typeof rule.id === 'string' && rule.criteria && rule.style)))
+    && (cut.code === undefined || typeof cut.code === 'string')
     && (cut.planElevation === undefined || Number.isFinite(cut.planElevation))
     && (cut.publicationScale === undefined || (Number.isFinite(cut.publicationScale) && cut.publicationScale > 0));
 }
@@ -153,7 +162,17 @@ export function setSavedViewsProject(projectId: string | undefined): void {
   if (projectId) {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(savedViewsKey(projectId)) ?? '[]');
-      if (Array.isArray(value)) cuts = value.filter(isSavedSectionCut);
+      if (Array.isArray(value)) {
+        const loaded = value.filter(isSavedSectionCut);
+        const used: SavedSectionCut[] = [];
+        cuts = loaded.map(cut => {
+          const code = cut.code && isViewCodeAvailable(cut.code, used)
+            ? cut.code : nextViewCode(savedViewKind(cut), [...loaded, ...used]);
+          const withCode = { ...cut, code };
+          used.push(withCode);
+          return withCode;
+        });
+      }
     } catch (error) {
       console.warn('Could not load saved drawing views', error);
     }
@@ -185,19 +204,22 @@ export function canSaveDrawingView(state: ViewerState, kind: SavedViewKind): boo
  * Save the live cut as a new named set: every plane that is cutting (all of them,
  * active first when none is), with the zoom and the camera as they are now. Returns its id.
  */
-export function saveCurrentSectionCut(name: string, kind?: SavedViewKind, scale?: number): string {
+export function saveCurrentSectionCut(name: string, kind?: SavedViewKind, scale?: number, code?: string): string {
   const cut = captureSectionCut(name, kind, undefined, scale);
+  cut.code = validateViewCode(savedViewKind(cut), code);
   commitCuts({ cuts: [...useSavedSectionCuts.getState().cuts, cut], activeCutId: cut.id });
   return cut.id;
 }
 
 export function createDrawingView(
   name: string, kind: 'plan' | 'section' | 'elevation', geometry: Pick<SectionPlane, 'axis' | 'position' | 'custom'>,
-  planElevation?: number,
+  planElevation?: number, code?: string, markerTrace?: MarkerTrace,
 ): string {
   const cut = captureSectionCut(name, kind, undefined, undefined,
     { ...getDefaultSectionPlane(), ...geometry, flipped: false, enabled: true });
   cut.planElevation = planElevation;
+  cut.code = validateViewCode(kind, code);
+  cut.markerTrace = markerTrace;
   commitCuts({ cuts: [...useSavedSectionCuts.getState().cuts, cut] });
   applySavedSectionCut(cut.id);
   return cut.id;
@@ -221,6 +243,11 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
   return {
     id,
     name,
+    code: existing?.code,
+    markers: existing?.markers,
+    markerTrace: existing?.markerTrace,
+    visibility: captureViewVisibility(state),
+    filter: existing?.filter,
     kind: kind ?? (state.sectionPlane.axis === 'down' ? 'plan' : 'section'),
     planes: structuredClone(planes.map(planeSnapshot)),
     activeIndex: Math.max(0, planes.findIndex((p) => p.id === state.sectionPlane.id)),
@@ -234,6 +261,7 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     display: {
       showConstructionProjection: newPlane ? true : display.showConstructionProjection,
       constructionProjectionDepth: newPlane ? null : display.constructionProjectionDepth,
+      showSurfacePatterns3D: display.showSurfacePatterns3D ?? false,
       showHiddenLines: display.showHiddenLines, showHatching: display.showHatching,
       useSymbolicRepresentations: display.useSymbolicRepresentations, showIfcAnnotations: display.showIfcAnnotations,
     },
@@ -260,7 +288,7 @@ export function duplicateSavedSectionCut(id: string, name: string): string | und
   const existing = cuts.find((cut) => cut.id === id);
   if (!existing) return undefined;
   const now = Date.now();
-  const copy = { ...structuredClone(existing), id: createCutId(), name, createdAt: now, updatedAt: now };
+  const copy = { ...structuredClone(existing), id: createCutId(), name, code: validateViewCode(savedViewKind(existing)), createdAt: now, updatedAt: now };
   commitCuts({ cuts: [...cuts, copy] });
   return copy.id;
 }
@@ -299,13 +327,14 @@ export function applySavedSectionCut(id: string): void {
     state.clearSectionPlanes();
     if (state.activeTool === 'section') state.setActiveTool('select');
   }
+  if (cut.visibility) useViewerStore.setState(restoreViewVisibility(state, cut.visibility));
   if (cut.graphics) {
     useViewerStore.setState({
       activePresetId: cut.graphics.presetId, overridesEnabled: cut.graphics.enabled,
       customOverrideRules: structuredClone(cut.graphics.rules),
     });
   }
-  if (cut.display) state.updateDrawing2DDisplayOptions(cut.display);
+  if (cut.display) state.updateDrawing2DDisplayOptions({ ...cut.display, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false });
   useSavedSectionCuts.setState({ activeCutId: id });
   if (cut.publicationScale) {
     const factor = cut.publicationScale;
@@ -324,14 +353,46 @@ export function setDrawingPublicationScale(scale: DrawingScale): void {
   state.updateDrawing2DDisplayOptions({ scale: scale.factor });
 }
 
-export function renameSavedSectionCut(id: string, name: string): void {
-  const trimmed = name.trim();
-  if (!trimmed) return;
+function validateViewCode(kind: SavedViewKind, code?: string, except?: string): string {
   const { cuts } = useSavedSectionCuts.getState();
-  commitCuts({ cuts: cuts.map((c) => (c.id === id ? { ...c, name: trimmed, updatedAt: Date.now() } : c)) });
+  const value = code?.trim() || nextViewCode(kind, cuts);
+  if (!isViewCodeAvailable(value, cuts, except)) throw new Error('Duplicate drawing view code.');
+  return value;
+}
+
+export function renameSavedSectionCut(id: string, name: string, code?: string): void {
+  const trimmed = name.trim();
+  const { cuts } = useSavedSectionCuts.getState();
+  const cut = cuts.find(c => c.id === id);
+  if (!trimmed || !cut) return;
+  updateViewSettings(id, { name: trimmed, code: validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
+}
+
+export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display'>>): void {
+  const { cuts } = useSavedSectionCuts.getState();
+  commitCuts({ cuts: cuts.map(cut => cut.id === id ? { ...cut, ...settings, updatedAt: Date.now() } : cut) });
+}
+
+export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: boolean): void {
+  const { cuts } = useSavedSectionCuts.getState();
+  const cut = cuts.find(view => view.id === id);
+  const plane = cut?.planes[cut.activeIndex];
+  const custom = verticalViewPlane(trace[0], trace[1], false, reverse);
+  if (!cut || !plane || !custom || plane.axis === 'down' || plane.box) return;
+  const planes = [...cut.planes];
+  planes[cut.activeIndex] = { ...plane, axis: 'front', flipped: false, custom };
+  commitCuts({ cuts: cuts.map(view => view.id === id
+    ? { ...view, planes, markerTrace: trace, viewpoint: null, zoom: null, updatedAt: Date.now() } : view) });
 }
 
 export function removeSavedSectionCut(id: string): void {
   const { cuts, activeCutId } = useSavedSectionCuts.getState();
   commitCuts({ cuts: cuts.filter((c) => c.id !== id), activeCutId: activeCutId === id ? null : activeCutId });
+}
+
+export function setViewSurfacePatterns(showSurfacePatterns3D: boolean): void {
+  const { activeCutId, cuts } = useSavedSectionCuts.getState();
+  const cut = cuts.find(view => view.id === activeCutId);
+  if (cut?.display) updateViewSettings(cut.id, { display: { ...cut.display, showSurfacePatterns3D } });
+  useViewerStore.getState().updateDrawing2DDisplayOptions({ showSurfacePatterns3D });
 }

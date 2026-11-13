@@ -77,6 +77,7 @@ beforeEach(() => {
     sectionPickMode: false, sectionPickPreview: null,
   });
   // The bar's Cap control belongs to a plane, so the tool opens on a Down cut at 50 % (opening restores nothing, #7545).
+  useViewerStore.getState().updateDrawing2DDisplayOptions({ show3DOverlay: false });
   useViewerStore.getState().addSectionPlane('down');
 });
 

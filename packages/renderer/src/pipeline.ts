@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { EntityColorTable, type SurfacePatternEntry } from './entity-color-table.js';
 import { sectionExclusions, withSectionExclusions } from './section-exclusions.js';
 /**
  * WebGPU render pipeline setup
@@ -53,6 +54,7 @@ export class RenderPipeline {
     private overlayPipeline: GPURenderPipeline | null = null;  // deprecated equal-depth overlay (#6076); built only if getOverlayPipeline() is called
     private makeOverlayPipeline!: () => GPURenderPipeline;
     private readonly emptyEntityColorTable: GPUBuffer;  // header-only table bound until a scene writes one (#6076)
+    private readonly surfacePatternTable = new EntityColorTable();
     private entityColorTableBuffer: GPUBuffer;
     private texturedPipeline: GPURenderPipeline;  // Pipeline for textured meshes (#961): UV lane + albedo texture/sampler
     private texturedBindGroupLayout: GPUBindGroupLayout;  // group(0): uniform + texture + sampler
@@ -185,6 +187,7 @@ export class RenderPipeline {
                 },
                 { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
                 { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // selectionColorUniform (#5484)
+                { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
                 { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } }, // entity colour table (#6076)
             ],
         });
@@ -662,8 +665,15 @@ export class RenderPipeline {
                 { binding: 3, resource: { buffer: this.shadowUniformBuffer } },
                 { binding: 4, resource: { buffer: this.selectionColorUniform.buffer } },
                 { binding: 5, resource: { buffer: this.entityColorTableBuffer } },
+                { binding: 6, resource: { buffer: this.surfacePatternTable.getBuffer() ?? this.emptyEntityColorTable } },
             ],
         });
+    }
+
+    setSurfacePatterns(patterns: readonly SurfacePatternEntry[]): void {
+        if (patterns.length) this.surfacePatternTable.write(this.device, patterns);
+        else this.surfacePatternTable.clear();
+        this.environmentBindGroup = this.buildEnvironmentBindGroup();
     }
 
     /** Bind the scene's entity colour table (#6076); null binds the empty one. Rebuilds only on change. */
@@ -935,6 +945,7 @@ export class RenderPipeline {
         this.shadowUniformBuffer.destroy();
         this.selectionColorUniform.destroy();
         this.dummyShadowTexture.destroy();
+        this.surfacePatternTable.releaseGpu();
         this.emptyEntityColorTable.destroy();
         sectionExclusions(this.device).release();
     }

@@ -89,21 +89,11 @@ interface BatchBucket {
   frameOrigin?: [number, number, number];
 }
 
-/**
- * Release the GPU resources owned by a batch / mesh. Every
- * BatchedMesh and Mesh shares the same {vertex, index, optional
- * uniform} buffer layout, and forgetting any one of the three is a
- * GPU memory leak that won't surface until the user spends ten
- * minutes inside the viewer. Centralised here so callers don't
- * have to remember the cleanup sequence.
- *
- * Accepts the structural shape so it works for both BatchedMesh and
- * Mesh — they each carry the same buffer trio.
- */
 /** A surface-textured mesh (#961): its own interleaved vertex buffer (with a UV
  *  lane), index buffer, per-mesh uniform buffer, GPU texture + sampler, and a
  *  bindGroup wiring all three. Drawn per-mesh in a dedicated sub-pass. */
 export interface TexturedMesh {
+  layerMaterialId?: number;
   expressId: number;
   modelIndex?: number;
   bounds?: { min: [number, number, number]; max: [number, number, number] };
@@ -3585,6 +3575,7 @@ export class Scene {
       const box = worldAabbFromPieces([meshData]);
       const drawable: TexturedMesh = this.modelTranslations.registerDrawable({
         expressId: meshData.expressId, modelIndex: meshData.modelIndex,
+        layerMaterialId: meshData.materialId,
         bounds: box ? { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] } : undefined,
         vertexBuffer,
         indexBuffer,

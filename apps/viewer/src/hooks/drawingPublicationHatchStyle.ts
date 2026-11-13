@@ -7,6 +7,8 @@ import type { IfcDataStore } from '@ifc-lite/parser';
 import type { EntityRef, FederatedModel } from '@/store/types';
 import { backgroundHatchPattern, hasHatchPaint, isMaterialHatchPattern, materialNameForCut, type FillPaint, type MaterialHatches, type MaterialHatchStyle } from '@/lib/drawing/material-hatches';
 
+import type { ImportedPattern } from '@/lib/drawing/pattern-library';
+
 export function drawingPublicationHatchStyle(
   assignments: MaterialHatches | undefined,
   scale: number,
@@ -15,9 +17,11 @@ export function drawingPublicationHatchStyle(
   rules: readonly GraphicOverrideRule[],
   getProperties: (entityId: number) => ElementData['properties'],
   resolveEntityRef: (entityId: number) => EntityRef,
+  patterns: readonly ImportedPattern[] = [],
 ) {
+  const imported = new Map(patterns.map(p => [p.id, p.lines]));
   const cutRules = rules.filter(({ enabled, style }) => enabled &&
-    (isMaterialHatchPattern(style.hatchPattern) || isMaterialHatchPattern(style.hatchBackgroundPattern)
+    (style.publicationPattern || isMaterialHatchPattern(style.hatchPattern) || isMaterialHatchPattern(style.hatchBackgroundPattern)
       || style.hatchColor !== undefined || style.backgroundColor !== undefined || style.fillColor !== undefined
       || style.hatchSpacing !== undefined || style.hatchLineWeight !== undefined));
   const hasAssignments = !!assignments && Object.keys(assignments).length > 0;
@@ -53,14 +57,17 @@ export function drawingPublicationHatchStyle(
     }
     if (!material && !matched.length) return undefined;
 
-    const background: FillPaint = { ...(material ? material.background : polygon.isCut
-      ? { pattern: 'solid', color: typeof fallbackColor === 'function' ? fallbackColor() : fallbackColor } : {}) };
+    const background: FillPaint = { ...material?.background };
+    if (polygon.isCut && background.pattern !== 'none') {
+      background.pattern ??= 'solid';
+      background.color ??= typeof fallbackColor === 'function' ? fallbackColor() : fallbackColor;
+    }
     background.pattern = backgroundHatchPattern(background.pattern);
     const foreground: FillPaint = { ...material?.foreground };
     let spacing = 2.5;
     let lineWeight = 0.13;
     for (const { style } of matched) {
-      const foregroundPattern = polygon.isCut ? style.hatchPattern : style.surfaceHatch?.foreground?.pattern;
+      const foregroundPattern = polygon.isCut ? style.publicationPattern ?? style.hatchPattern : style.surfaceHatch?.foreground?.pattern;
       const foregroundColor = polygon.isCut ? style.hatchColor : style.surfaceHatch?.foreground?.color;
       if (isMaterialHatchPattern(foregroundPattern)) foreground.pattern = foregroundPattern;
       const backgroundPattern = backgroundHatchPattern(polygon.isCut ? style.hatchBackgroundPattern : style.surfaceHatch?.background?.pattern);
@@ -76,8 +83,12 @@ export function drawingPublicationHatchStyle(
     }
 
     if (background.color) background.pattern ??= 'solid';
-    return [background, foreground].flatMap(({ pattern, color }) => pattern && pattern !== 'none'
-      ? [{ pattern, color: color ?? '#666666', spacing: spacing * scale / 1000, lineWeight }]
-      : []);
+    return [background, foreground].flatMap<DXFHatchLayer>(({ pattern, color }) => {
+      if (!pattern || pattern === 'none') return [];
+      const paint = { color: color ?? '#666666', spacing: spacing * scale / 1000, lineWeight };
+      if (pattern === 'solid' || pattern === 'diagonal' || pattern === 'cross-hatch') return [{ ...paint, pattern }];
+      const families = imported.get(pattern);
+      return families ? [{ ...paint, pattern: 'custom', spacing: scale / 1000, families }] : [];
+    });
   };
 }

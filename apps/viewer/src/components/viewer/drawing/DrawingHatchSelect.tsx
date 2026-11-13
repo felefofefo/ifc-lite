@@ -10,6 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useTranslation } from '@/i18n';
 import { backgroundHatchPattern, hasHatchPaint, isMaterialHatchPattern, MATERIAL_HATCH_PATTERNS, type MaterialHatchPattern, type FillPaint } from '@/lib/drawing/material-hatches';
 
+import { useDrawingPatterns } from '@/hooks/useDrawingPatterns';
+
 const samples = {
   solid: 'bg-muted-foreground',
   diagonal: 'bg-[repeating-linear-gradient(45deg,transparent_0_4px,currentColor_4px_5px)]',
@@ -24,6 +26,7 @@ export function DrawingHatchSelect({ label, value, background, onChange }: {
   onChange: (value: MaterialHatchPattern | undefined) => void;
 }) {
   const { t } = useTranslation();
+  const { patterns: imported } = useDrawingPatterns();
   const selected = background ? backgroundHatchPattern(value) : value;
   const patterns = background ? (['solid', 'none'] as const) : MATERIAL_HATCH_PATTERNS;
   return (
@@ -39,6 +42,9 @@ export function DrawingHatchSelect({ label, value, background, onChange }: {
             </span>
           </SelectItem>
         ))}
+        {!background && imported.map(pattern => <SelectItem key={pattern.id} value={pattern.id}>{pattern.name}</SelectItem>)}
+        {!background && selected?.startsWith('pat:') && !imported.some(p => p.id === selected) &&
+          <SelectItem value={selected} disabled>{selected.slice(4)}</SelectItem>}
       </SelectContent>
     </Select>
   );
@@ -55,14 +61,14 @@ export function DrawingFillControl({ label, paint, background, onChange }: {
     <div className="min-w-0 space-y-1">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="flex min-w-0 items-center gap-1">
-        <DrawingHatchSelect background={background} label={label} value={paint?.pattern} onChange={(pattern) => onChange({ ...paint, pattern })} />
+        <DrawingHatchSelect background={background} label={label} value={paint?.pattern} onChange={(pattern) => onChange(pattern ? { ...paint, pattern } : {})} />
         <Input className="h-8 w-9 shrink-0 cursor-pointer p-1" type="color"
           value={/^#[0-9a-f]{6}$/i.test(paint?.color ?? '') ? paint!.color : '#666666'}
           aria-label={t('drawingUnderlay.materials.fillColor', { label })}
           onChange={(event) => onChange({ ...paint, color: event.target.value })} />
-        <Button type="button" size="icon-xs" variant="ghost" disabled={!paint?.color}
-          aria-label={t('drawingUnderlay.materials.inheritColor', { label })}
-          onClick={() => onChange({ ...paint, color: undefined })}><RotateCcw className="h-3.5 w-3.5" /></Button>
+        <Button type="button" size="icon-xs" variant="ghost" disabled={!paint?.color && !paint?.pattern}
+          aria-label={t('drawingUnderlay.materials.resetPaint', { label })}
+          onClick={() => onChange({})}><RotateCcw className="h-3.5 w-3.5" /></Button>
       </div>
     </div>
   );
@@ -76,10 +82,15 @@ export function DrawingRulePaintControls({ style, onChange }: { style: GraphicSt
         {(['background', 'foreground'] as const).map((side) => {
           const patternKey = side === 'background' ? 'hatchBackgroundPattern' : 'hatchPattern';
           const colorKey = side === 'background' ? 'backgroundColor' : 'hatchColor';
-          const pattern = style[patternKey];
+          const pattern = side === 'foreground' ? style.publicationPattern ?? style[patternKey] : style[patternKey];
           return <DrawingFillControl key={side} background={side === 'background'} label={t(`drawingUnderlay.materials.${side}`)}
             paint={{ pattern: isMaterialHatchPattern(pattern) ? pattern : undefined, color: style[colorKey] }}
-            onChange={(paint) => onChange({ ...style, [patternKey]: paint.pattern, [colorKey]: paint.color })} />;
+            onChange={(paint) => {
+              const pattern = paint.pattern;
+              const imported = pattern && pattern !== 'solid' && pattern !== 'none' && pattern !== 'diagonal' && pattern !== 'cross-hatch';
+              onChange({ ...style, [patternKey]: imported ? undefined : pattern, [colorKey]: paint.color,
+                publicationPattern: side === 'foreground' ? imported ? pattern : undefined : style.publicationPattern });
+            }} />;
         })}
       </fieldset>
       <fieldset className="space-y-2">

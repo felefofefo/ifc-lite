@@ -156,6 +156,7 @@ export interface Drawing2DState {
   drawing2DDisplayOptions: {
     showHiddenLines: boolean;
     showHatching: boolean;
+    showSurfacePatterns3D?: boolean;
     showAnnotations: boolean;
     show3DOverlay: boolean;
     scale: number;

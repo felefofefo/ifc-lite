@@ -29,3 +29,14 @@ describe('section cap overlay of a cut with no polygons (#8664)', () => {
     assert.equal(capOverlayHasContent({ cutPolygons: [], lines: [line({ category: 'projection' })] }), false);
   });
 });
+
+it('uses the drawing fallback and disables the independent cap hatch when the material inherits', () => {
+  const polygon = { polygon: { outer: [], holes: [] }, isCut: true, entityId: 7, modelIndex: 0, ifcType: 'IfcSlab' };
+  const { polygons } = capOverlayInput({ cutPolygons: [polygon], lines: [] }, false, 'element', {
+    scale: 50,
+    fallbackStyle: () => ({ fillColor: '#808080', fillOpacity: 0.5 }),
+    resolve: () => undefined,
+  });
+  assert.deepEqual(polygons[0].color, [128 / 255, 128 / 255, 128 / 255, 0.5]);
+  assert.equal(polygons[0].hatch?.patternId, 0);
+});

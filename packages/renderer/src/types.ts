@@ -2,10 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * Renderer types for IFC-Lite
- */
-
 import type { ClipBox } from './clip-types.js';
 import type { MeshUniformSlot } from './mesh-uniform-arena.js';
 export type { ClipBox, ExtraClipPlane } from './clip-types.js';
@@ -41,6 +37,7 @@ export interface Material {
 export type MeshFinish = Partial<Pick<Material, 'metallic' | 'roughness'>>;
 
 export interface Mesh {
+  layerMaterialId?: number;
   expressId: number;
   modelIndex?: number;  // Index of the model this mesh belongs to (for multi-model federation)
   vertexBuffer: GPUBuffer;
@@ -83,6 +80,7 @@ export interface Mesh {
  * "base#N"), so the rest of the pipeline stays unchanged.
  */
 export interface BatchedMesh {
+  layerMaterialId?: number;
   id: number;        // Unique monotonic identifier for this batch instance
   colorKey: string;  // Unique batch key (base color hash, or "hash#N" for overflow buckets)
   vertexBuffer: GPUBuffer;

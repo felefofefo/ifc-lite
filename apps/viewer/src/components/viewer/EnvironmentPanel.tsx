@@ -25,6 +25,7 @@ import { Play, Pause, Sun, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { useViewerStore } from '@/store';
+import { setViewSurfacePatterns } from '@/store/savedSectionCutsStore';
 import { useEffectiveSkyEnabled } from '@/hooks/useEffectiveSkyEnabled';
 import { cn } from '@/lib/utils';
 import type { CesiumDataSource } from '@/store/slices/cesiumSlice';
@@ -97,6 +98,7 @@ export function EnvironmentPanel({ onClose }: EnvironmentPanelProps) {
   const setSweepMode = useViewerStore((s) => s.setSolarSweepMode);
 
   const { t } = useTranslation();
+  const surfacePatterns = useViewerStore(s => s.drawing2DDisplayOptions.showSurfacePatterns3D ?? false);
 
   const offsetMin = solarDisplayOffsetMinutes(useLocalTime, sunInfo?.longitude);
   const minutes = solarMinutesOfDay(dateMs, offsetMin);
@@ -188,6 +190,9 @@ export function EnvironmentPanel({ onClose }: EnvironmentPanelProps) {
         {/* Sun cast shadows (#2670) — standalone WebGPU only; Cesium casts
             its own in world-context. */}
         {!cesiumEnabled && <ShadowControls />}
+        {!cesiumEnabled && <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={surfacePatterns} onChange={e => setViewSurfacePatterns(e.target.checked)} />{t('section2d.patterns.surface3d')}
+        </label>}
 
         {/* Manual time-of-day sun (#2670) for models without georeference —
             the real study (below, when georeferenced) overrides it. */}

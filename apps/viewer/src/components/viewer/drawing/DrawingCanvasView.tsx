@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
+import { ViewMarkers } from './ViewMarkers';
 import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
@@ -69,6 +70,8 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           overridesEnabled={vm.overridesEnabled}
           entityColorMap={vm.entityColorMap}
           fillPreview={fillPreview}
+          lineweights={vm.lineweights}
+          printPreview={displayOptions.showPrintPreview}
           useIfcMaterials={vm.activePresetId === 'preset-3d-colors'}
           measureMode={vm.measure2DMode}
           measureStart={vm.measure2DStart}
@@ -101,6 +104,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         />
       )}
 
+      {status === 'ready' && !placement && <ViewMarkers vm={vm} />}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
 
       {editingAnnotation && (() => {

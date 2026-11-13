@@ -66,6 +66,7 @@ const FIELD = 'w-full rounded-sm border border-border bg-background px-1.5 py-0.
 export function SectionCapControls(): React.JSX.Element {
   const { t } = useTranslation();
   const sectionPlane       = useViewerStore((s) => s.sectionPlane);
+  const followsDrawing = useViewerStore((s) => s.drawing2DDisplayOptions.show3DOverlay);
   const setShowCap         = useViewerStore((s) => s.setSectionShowCap);
   const setShowOutlines    = useViewerStore((s) => s.setSectionShowOutlines);
   const setCapStyle        = useViewerStore((s) => s.setSectionCapStyle);
@@ -142,7 +143,7 @@ export function SectionCapControls(): React.JSX.Element {
 
       {/* Surface look, disabled while surfaces are off. Each row pairs a choice with the colour it uses:
           the fill source with the fill colour, the hatch pattern with the hatch colour. */}
-      <fieldset
+      {followsDrawing ? <p className="text-xs text-muted-foreground">{t('sectionCap.followsDrawing')}</p> : <fieldset
         disabled={hatchInputsDisabled}
         className={`space-y-2 ${hatchInputsDisabled ? 'opacity-50 pointer-events-none' : ''}`}
       >
@@ -206,7 +207,7 @@ export function SectionCapControls(): React.JSX.Element {
             <input id={widthId} type="number" min="1" max="16" step="0.5" value={sectionPlane.capStyle.widthPx} onChange={onWidth} className={FIELD} />
           </div>
         </div>
-      </fieldset>
+      </fieldset>}
     </div>
   );
 }

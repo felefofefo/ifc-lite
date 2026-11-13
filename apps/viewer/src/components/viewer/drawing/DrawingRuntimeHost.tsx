@@ -27,6 +27,7 @@ import { useIfc } from '@/hooks/useIfc';
 import { usePlacementCoordinateInfo } from '@/hooks/usePlacementCoordinateInfo';
 import { hasHatchPaint } from '@/lib/drawing/material-hatches';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
+import { useDrawingViewFilter } from '@/hooks/useDrawingViewFilter';
 import { useDrawingGeneration } from '@/hooks/useDrawingGeneration';
 import { useExtraSectionCaps } from '@/hooks/useExtraSectionCaps';
 import { useDrawing2DPersistence } from '@/hooks/useDrawing2DPersistence';
@@ -75,6 +76,13 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
 
   const hiddenEntities = useViewerStore((s) => s.hiddenEntities);
   const isolatedEntities = useViewerStore((s) => s.isolatedEntities);
+  const viewFilter = useDrawingViewFilter();
+  const filterMode = viewFilter?.mode, filterIds = viewFilter?.ids;
+  const drawingHidden = useMemo(() => filterMode === 'hide' && filterIds
+    ? new Set([...hiddenEntities, ...filterIds]) : hiddenEntities, [filterMode, filterIds, hiddenEntities]);
+  const drawingIsolated = useMemo(() => filterMode === 'show' && filterIds
+    ? isolatedEntities === null ? filterIds : new Set([...filterIds].filter(id => isolatedEntities.has(id)))
+    : isolatedEntities, [filterMode, filterIds, isolatedEntities]);
   const { hatches } = useDrawingMaterials(projectId);
   const surfaceOverrides = useViewerStore((s) => s.overridesEnabled
     && s.getActiveOverrideRules().some(({ style }) => hasHatchPaint(style.surfaceHatch)));
@@ -83,7 +91,7 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   const { generateDrawing, isRegenerating } = useDrawingGeneration({
     geometryResult, ifcDataStore, sectionPlane, displayOptions, typeVisibility, includeProjectionPolygons,
     // Both sets hold global ids, so they cover every federated model.
-    combinedHiddenIds: hiddenEntities, combinedIsolatedIds: isolatedEntities, computedIsolatedIds,
+    combinedHiddenIds: drawingHidden, combinedIsolatedIds: drawingIsolated, computedIsolatedIds,
     models, panelVisible, activeTool, drawing: sourceDrawing,
     setDrawing, setDrawingStatus, setDrawingProgress, setDrawingError,
   });
@@ -93,8 +101,8 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
 
   const sourceCoordinateInfo = (mergedGeometry ?? legacyGeometryResult)?.coordinateInfo;
   useEffect(() => {
-    publishDrawingRuntime({ geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating });
-  }, [geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating]);
+    publishDrawingRuntime({ geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, viewFilterFailed: viewFilter?.failed });
+  }, [geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, viewFilter?.failed]);
   useEffect(() => () => publishDrawingRuntime(null), []);
 
   return null;
