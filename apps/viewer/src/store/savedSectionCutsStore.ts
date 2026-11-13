@@ -48,6 +48,8 @@ import { getDefaultSectionPlane } from './slices/sectionSlice.js';
 import { clippingSectionPlanes } from '@/store/section-active';
 import { orderedSectionPlanes, sectionPlaneCount } from '@/lib/section/section-plane-set';
 import { zoomToSectionTarget } from '@/lib/section/section-zoom';
+import { planCutPosition } from '@/lib/drawing/view-placement';
+import { getDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import type { SectionZoomSpec } from '@/lib/section/section-zoom-spec';
 
 /** The subset of `SectionPlane` that defines the CUT itself, not its
@@ -85,6 +87,8 @@ export interface SavedSectionCut {
   /** The exact camera when the set was saved, so applying it is a restore and not a re-frame. */
   viewpoint: CameraViewpoint | null;
   publicationScale?: number;
+  /** Fixed Y in the drawing's placed frame, independent of visible model bounds. */
+  planElevation?: number;
   kind?: SavedViewKind;
   graphics?: { presetId: string | null; enabled: boolean; rules: GraphicOverrideRule[] };
   display?: ViewDisplay;
@@ -139,6 +143,7 @@ function isSavedSectionCut(value: unknown): value is SavedSectionCut {
     && cut.planes.every((plane) => plane && ['down', 'front', 'side'].includes(plane.axis) && Number.isFinite(plane.position))
     && (!cut.graphics || (Array.isArray(cut.graphics.rules) && cut.graphics.rules.every((rule) =>
       rule && typeof rule.id === 'string' && rule.criteria && rule.style)))
+    && (cut.planElevation === undefined || Number.isFinite(cut.planElevation))
     && (cut.publicationScale === undefined || (Number.isFinite(cut.publicationScale) && cut.publicationScale > 0));
 }
 
@@ -186,17 +191,29 @@ export function saveCurrentSectionCut(name: string, kind?: SavedViewKind, scale?
   return cut.id;
 }
 
-function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedSectionCut, scale?: number): SavedSectionCut {
+export function createDrawingView(
+  name: string, kind: 'plan' | 'section' | 'elevation', geometry: Pick<SectionPlane, 'axis' | 'position' | 'custom'>,
+  planElevation?: number,
+): string {
+  const cut = captureSectionCut(name, kind, undefined, undefined,
+    { ...getDefaultSectionPlane(), ...geometry, flipped: false, enabled: true });
+  cut.planElevation = planElevation;
+  commitCuts({ cuts: [...useSavedSectionCuts.getState().cuts, cut] });
+  applySavedSectionCut(cut.id);
+  return cut.id;
+}
+
+function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedSectionCut, scale?: number, newPlane?: SectionPlane): SavedSectionCut {
   const state = useViewerStore.getState();
   // The untouched placeholder is not a cut: saving it would store a plane that cuts the model when applied.
-  if (kind !== '3d' && !canSaveSectionCut(state)) throw new Error('saveCurrentSectionCut: there is no cutting plane to save');
+  if (!newPlane && kind !== '3d' && !canSaveSectionCut(state)) throw new Error('saveCurrentSectionCut: there is no cutting plane to save');
   const viewpoint = state.cameraCallbacks.getViewpoint?.() ?? null;
   if (kind === '3d' && scale !== undefined && (!Number.isFinite(scale) || scale <= 0)) throw new Error('Invalid 3D publication scale.');
   if (kind === '3d' && !viewpoint) throw new Error('The 3D camera is not ready.');
   const all = orderedSectionPlanes(state.sectionPlane, state.inactiveSectionPlanes);
   const cutting = all.filter((p) => p.enabled);
   const visible = kind === '3d' ? new Set(clippingSectionPlanes(state)) : undefined;
-  const planes = visible ? all.filter((plane) => visible.has(plane))
+  const planes = newPlane ? [newPlane] : visible ? all.filter((plane) => visible.has(plane))
     : cutting.length > 0 ? cutting : [state.sectionPlane];
   const id = existing?.id ?? createCutId();
   const now = Date.now();
@@ -207,19 +224,27 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     kind: kind ?? (state.sectionPlane.axis === 'down' ? 'plan' : 'section'),
     planes: structuredClone(planes.map(planeSnapshot)),
     activeIndex: Math.max(0, planes.findIndex((p) => p.id === state.sectionPlane.id)),
-    zoom: state.sectionZoom,
-    viewpoint: structuredClone(viewpoint),
+    zoom: newPlane ? null : state.sectionZoom,
+    viewpoint: newPlane ? null : structuredClone(viewpoint),
+    planElevation: existing?.planElevation !== undefined && state.sectionPlane.axis === 'down'
+      ? cutElevationForPosition(state.sectionPlane.position) ?? existing.planElevation : undefined,
     publicationScale: kind === '3d' && scale !== undefined ? scale
       : kind !== '3d' && state.sheetEnabled && state.activeSheet ? state.activeSheet.scale.factor : display.scale,
     graphics: { presetId: state.activePresetId, enabled: state.overridesEnabled, rules: structuredClone(state.customOverrideRules) },
     display: {
-      showConstructionProjection: display.showConstructionProjection, constructionProjectionDepth: display.constructionProjectionDepth,
+      showConstructionProjection: newPlane ? true : display.showConstructionProjection,
+      constructionProjectionDepth: newPlane ? null : display.constructionProjectionDepth,
       showHiddenLines: display.showHiddenLines, showHatching: display.showHatching,
       useSymbolicRepresentations: display.useSymbolicRepresentations, showIfcAnnotations: display.showIfcAnnotations,
     },
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
+}
+
+function cutElevationForPosition(position: number): number | undefined {
+  const bounds = getDrawingRuntime().geometryResult?.coordinateInfo.shiftedBounds;
+  return bounds && bounds.min.y + position * (bounds.max.y - bounds.min.y) / 100;
 }
 
 export function updateSavedSectionCut(id: string, scale?: number): void {
@@ -261,6 +286,11 @@ export function applySavedSectionCut(id: string): void {
     enabled: true,
     parked: false,
   }));
+  if (cut.planElevation !== undefined && planes[cut.activeIndex]?.axis === 'down') {
+    const bounds = getDrawingRuntime().geometryResult?.coordinateInfo.shiftedBounds ?? null;
+    const position = planCutPosition(cut.planElevation, bounds);
+    if (position !== null) planes[cut.activeIndex].position = position;
+  }
   if (planes.length) {
     state.installSectionPlanes(planes, cut.activeIndex);
     state.setSectionVisible(true);

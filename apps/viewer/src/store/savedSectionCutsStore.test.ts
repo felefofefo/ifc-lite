@@ -13,9 +13,11 @@ import '@/test/setup-dom.js';
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { useViewerStore } from './index.js';
+import { publishDrawingRuntime } from '@/lib/drawing/drawing-runtime';
+import type { GeometryResult } from '@ifc-lite/geometry';
 import { activeSectionPlane } from './section-active.js';
 import {
-  applySavedSectionCut, duplicateSavedSectionCut, setSavedViewsProject, updateSavedSectionCut,
+  applySavedSectionCut, createDrawingView, duplicateSavedSectionCut, setSavedViewsProject, updateSavedSectionCut,
   removeSavedSectionCut,
   renameSavedSectionCut,
   saveCurrentSectionCut,
@@ -218,5 +220,33 @@ describe('saved section cuts beyond the bounds (#8162)', () => {
       assert.equal(state().sectionPlane.position, position);
       assert.equal(activeSectionPlane(state())?.position, position, 'and it is the cut on screen');
     });
+  }
+});
+
+it('reopens a new plan at the same elevation after the workspace bounds change', () => {
+  function publish(max: number) {
+    publishDrawingRuntime({
+      geometryResult: { coordinateInfo: { shiftedBounds: { min: { y: 0 }, max: { y: max } } } } as GeometryResult,
+      sourceCoordinateInfo: undefined,
+      generateDrawing: async () => {},
+      isRegenerating: false,
+    });
+  }
+  setSavedViewsProject('new-plan-height-test');
+  try {
+    publish(12);
+    const id = createDrawingView('Terrace', 'plan', { axis: 'down', position: 50 }, 6);
+    assert.equal(state().sectionPlane.position, 50);
+    assert.equal(state().drawing2DDisplayOptions.showConstructionProjection, true);
+    setSavedViewsProject(undefined);
+    setSavedViewsProject('new-plan-height-test');
+    publish(24);
+    applySavedSectionCut(id);
+    assert.equal(state().sectionPlane.position, 25);
+    assert.equal(useSavedSectionCuts.getState().activeCutId, id);
+  } finally {
+    publishDrawingRuntime(null);
+    setSavedViewsProject(undefined);
+    localStorage.removeItem('ifc-lite:saved-drawing-views:v1:new-plan-height-test');
   }
 });

@@ -217,6 +217,28 @@ describe('generate() hidden-line removal (issue #2639)', () => {
   });
 });
 
+it('projects a vertical oblique elevation with its visible corner, occlusion and surface material', async () => {
+  const n = Math.SQRT1_2;
+  const config = { ...sectionConfig({
+    axis: 'z', position: 50, flipped: false,
+    customPlane: {
+      normal: { x: n, y: 0, z: n }, distance: 0,
+      origin: { x: 0, y: 0, z: 0 },
+      tangent: { x: n, y: 0, z: -n }, bitangent: { x: 0, y: 1, z: 0 },
+    },
+  }), clipProjectionBands: true, projectionAboveDepth: 0 };
+  const visible = { ...boxMesh(1, [-5, 0, -5], [-1, 4, -1]), materialId: 31 };
+  const hidden = { ...boxMesh(2, [-8, 1, -8], [-7, 2, -7]), materialId: 32 };
+  const inFront = { ...boxMesh(3, [1, 0, 1], [2, 2, 2]), materialId: 33 };
+  const drawing = await new Drawing2DGenerator().generate([visible, hidden, inFront], config,
+    { ...GEN_OPTIONS, includeProjectionPolygons: true });
+  const edges = projectionLinesOf(drawing.lines, 1).filter(line => line.visibility === 'visible');
+  expect(edges.some(({ line }) => [line.start, line.end].every(p => Math.abs(p.x) < 1e-8))).toBe(true);
+  expect(projectionLinesOf(drawing.lines, 2).some(line => line.visibility === 'visible')).toBe(false);
+  expect(projectionLinesOf(drawing.lines, 3)).toHaveLength(0);
+  expect(new Set(drawing.projectionPolygons.map(p => p.materialId))).toEqual(new Set([31]));
+});
+
 // -----------------------------------------------------------------------------
 // Outline-provider basis agreement (PR #2644 review)
 //

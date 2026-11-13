@@ -270,6 +270,8 @@ export class Drawing2DGenerator {
         );
 
         const viewDir = getViewDirectionForPlane(config.plane);
+        const obliqueVertical = !!config.plane.customPlane && Math.abs(viewDir.y) < 1e-8
+          && Math.abs(viewDir.x) > 1e-8 && Math.abs(viewDir.z) > 1e-8;
 
         // The outline provider contract is CARDINAL-only: it receives just
         // (axis, flipped) and returns contours and axisMin/axisMax in cardinal
@@ -307,17 +309,14 @@ export class Drawing2DGenerator {
               );
             } else {
               const edges = this.edgeExtractor.extractEdges(mesh);
-              const silhouettes = this.edgeExtractor.extractSilhouettes(edges, viewDir);
+              const projectedEdges = obliqueVertical ? edges : this.edgeExtractor.extractSilhouettes(edges, viewDir);
               projectionLines.push(
-                ...this.edgeExtractor.edgesToProjectionLines(silhouettes, config.plane, bands),
+                ...this.edgeExtractor.edgesToProjectionLines(projectedEdges, config.plane, bands),
               );
             }
           }
         }
       }
-
-      // Projection edges are bounded by the configured depth and visibility,
-      // not by the cut extent: an elevation can legitimately cut only a post.
 
       if (config.clipProjectionBands && config.plane.axis === 'y' && !config.plane.customPlane) {
         projectionLines = removeCoveredOverhead(projectionLines);

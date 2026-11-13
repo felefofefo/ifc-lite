@@ -46,6 +46,7 @@ import { useDrawingRtcContext } from './useDrawingRtcContext.js';
 import { FIRST_SECTION_PLANE_NAME } from '@/lib/section/section-plane-set';
 import { restoredCutPosition } from '@/lib/section/section-distance';
 import { markActiveDrawingGenerationCompleted } from '@/lib/drawing/active-canvas-snapshot';
+import { supportsDrawingProjection, verticalProjectionDepth } from '@/lib/drawing/view-placement';
 import { constructionProjectionEnabled } from '@/lib/drawing/construction-projection';
 // The winding-robust Rust `meshOutline2d` binding (issue #979) is gitignored →
 // CI-built, so reference it defensively: against an older wasm bundle it's
@@ -295,14 +296,7 @@ export function useDrawingGeneration({
       }
     }
 
-    // Construction projection runs on any CARDINAL cut (plan 'down' + vertical
-    // 'front'/'side'), but NOT a face-picked custom plane (the band classifier
-    // and outline binding are cardinal-only). Plan and section use different
-    // boundaries: plan scopes to the current storey; a vertical section has no
-    // "storey", so it projects a bounded view depth behind the cut (see the
-    // band computation below). The UI gates the toggle to the same set; the
-    // persisted flag can survive a switch to a custom plane, so gate here too.
-    const projectionSupported = !sectionPlane.custom;
+    const projectionSupported = supportsDrawingProjection(sectionPlane);
     const manualDepth = displayOptions.constructionProjectionDepth;
     const boundedProjection = typeof manualDepth === 'number' && Number.isFinite(manualDepth) && manualDepth >= 0;
     const projectionOn = projectionSupported && constructionProjectionEnabled(displayOptions.showConstructionProjection, sectionPlane)
@@ -316,7 +310,7 @@ export function useDrawingGeneration({
     // (profiles stay empty → every mesh silhouettes). Cached per model since
     // they don't move with the section. Single-model (modelIndex 0) for now,
     // mirroring the symbolic path's federation limitation.
-    const profilesNeeded = projectionOn && !boundedProjection && sectionPlane.axis === 'down';
+    const profilesNeeded = projectionOn && !sectionPlane.custom && !boundedProjection && sectionPlane.axis === 'down';
     let profiles: ProfileEntry[] = [];
     if (profilesNeeded && ifcDataStore?.source && modelCacheKey !== null) {
       const pcache = profileCacheRef.current;
@@ -452,7 +446,10 @@ export function useDrawingGeneration({
         }
       }
 
-      if (projectionOn && !sectionPlane.custom && sectionPlane.axis !== 'down') {
+      if (projectionOn && sectionPlane.custom) {
+        belowDepth = verticalProjectionDepth(bounds, sectionPlane.custom, sectionPlane.flipped);
+        aboveDepth = 0;
+      } else if (projectionOn && sectionPlane.axis !== 'down') {
         belowDepth = Math.max((axisMax - axisMin) * SECTION_VIEW_DEPTH_FRACTION, 1e-3);
         aboveDepth = 1e-3;
       }
@@ -470,8 +467,8 @@ export function useDrawingGeneration({
 
       // Create section config
       const config: SectionConfig = createSectionConfig(axis, position, {
-        projectionDepth: boundedProjection ? belowDepth : maxDepth,
-        clipProjectionBands: boundedProjection,
+        projectionDepth: boundedProjection || sectionPlane.custom ? belowDepth : maxDepth,
+        clipProjectionBands: boundedProjection || !!sectionPlane.custom,
         projectionBelowDepth: belowDepth,
         projectionAboveDepth: aboveDepth,
         includeHiddenLines: displayOptions.showHiddenLines,

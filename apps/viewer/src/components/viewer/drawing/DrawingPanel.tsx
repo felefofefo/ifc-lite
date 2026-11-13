@@ -42,6 +42,8 @@ import { DrawingExportMenu } from './DrawingExportMenu';
 import { DrawingCanvasView } from './DrawingCanvasView';
 import { DrawingStatusLine } from './DrawingStatusLine';
 import { DrawingInspector } from './DrawingInspector';
+import type { VerticalViewKind } from './PlaceVerticalView';
+import { supportsDrawingProjection } from '@/lib/drawing/view-placement';
 import { DrawingViewsBrowser } from './DrawingViewsBrowser';
 import { DrawingSectionCutMenu } from './DrawingSectionCutMenu';
 import { useBottomStripHeaderSlot } from '../bottom-strip-header-slot';
@@ -101,6 +103,11 @@ export function DrawingPanel(): React.ReactElement {
   const vm = useDrawingViewModel();
   const layers = useDrawingLayers(vm);
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [placement, setPlacement] = useState<VerticalViewKind>();
+  const stopPlacement = useCallback(() => setPlacement(undefined), []);
+  const canTrace = !!vm.sourceDrawing && vm.status === 'ready' && !vm.runtime.isRegenerating && vm.drawnPlane.axis === 'down'
+    && !vm.drawnPlane.custom && !vm.sectionPlane.box;
+  useEffect(() => { if (!canTrace) stopPlacement(); }, [canTrace, stopPlacement]);
   const panelRef = useRef<HTMLDivElement>(null);
   const { tier, width: panelWidth } = usePanelMetrics(panelRef);
   const { sectionPlane, status, displayOptions } = vm;
@@ -234,7 +241,7 @@ export function DrawingPanel(): React.ReactElement {
           printPreview: displayOptions.showPrintPreview,
         }}
         ifcAnnotationsAvailable={sectionPlane.axis === 'down'}
-        projectionAvailable={sectionPlane.custom === undefined}
+        projectionAvailable={supportsDrawingProjection(sectionPlane)}
         onToggleSymbolic={vm.toggleSymbolicRepresentations}
         onToggleIfcAnnotations={vm.toggleIfcAnnotations}
         onToggleProjection={vm.toggleConstructionProjection}
@@ -254,8 +261,12 @@ export function DrawingPanel(): React.ReactElement {
       />
 
       <div className="relative flex min-h-0 flex-1">
-        {viewsOpen && <DrawingViewsBrowser overlay={tier === 'narrow'} close={() => setViewsOpen(false)} />}
-        <DrawingCanvasView vm={vm} layers={layers} />
+        {viewsOpen && <DrawingViewsBrowser overlay={tier === 'narrow'} close={() => setViewsOpen(false)}
+          canCreatePlan={!!vm.runtime.geometryResult} canTrace={canTrace} trace={kind => {
+            setPlacement(kind);
+            if (tier === 'narrow') setViewsOpen(false);
+          }} />}
+        <DrawingCanvasView vm={vm} layers={layers} placement={canTrace ? placement : undefined} stopPlacement={stopPlacement} />
         <DrawingInspector vm={vm} layers={layers} panelWidth={panelWidth} />
       </div>
 

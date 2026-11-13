@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { useTranslation } from '@/i18n';
+import { NewPlanDialog } from './NewPlanDialog';
+import type { VerticalViewKind } from './PlaceVerticalView';
 import { useViewerStore } from '@/store';
 import {
   applySavedSectionCut, canSaveDrawingView, duplicateSavedSectionCut, removeSavedSectionCut,
@@ -17,7 +19,9 @@ import {
   useSavedSectionCuts, type SavedViewKind,
 } from '@/store/savedSectionCutsStore';
 
-export function DrawingViewsBrowser({ overlay, close }: { overlay: boolean; close: () => void }) {
+export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, trace }: {
+  overlay: boolean; close: () => void; canCreatePlan: boolean; canTrace: boolean; trace: (kind: VerticalViewKind) => void;
+}) {
   const { t } = useTranslation();
   const { promptDialog, confirmDialog } = useDialogs();
   const cuts = useSavedSectionCuts((s) => s.cuts);
@@ -25,6 +29,7 @@ export function DrawingViewsBrowser({ overlay, close }: { overlay: boolean; clos
   const viewScale = useViewerStore((s) => s.drawing2DDisplayOptions.scale);
   const axis = useViewerStore((s) => s.sectionPlane.axis);
   const [query, setQuery] = useState('');
+  const [newPlan, setNewPlan] = useState(false);
   const [kind, setKind] = useState<SavedViewKind>();
   const [scaleDraft, setScaleDraft] = useState<{ view: string | null; value: string }>();
   const [failed, setFailed] = useState(false);
@@ -56,6 +61,16 @@ export function DrawingViewsBrowser({ overlay, close }: { overlay: boolean; clos
         <Button size="icon-xs" variant="ghost" aria-label={t('section2d.views.close')} onClick={close}><X className="h-3.5 w-3.5" /></Button>
       </div>
       <div className="space-y-2 p-2">
+        <Button size="sm" variant="outline" className="w-full" disabled={!canCreatePlan}
+          onClick={() => setNewPlan(true)}>{t('section2d.create.plan')}</Button>
+        <div className="grid grid-cols-2 gap-1">
+          <Button size="sm" variant="outline" disabled={!canTrace}
+            onClick={() => trace('section')}>{t('section2d.create.section')}</Button>
+          <Button size="sm" variant="outline" disabled={!canTrace}
+            onClick={() => trace('elevation')}>{t('section2d.create.elevation')}</Button>
+        </div>
+        {!canTrace && <p className="text-xs text-muted-foreground">{t('section2d.create.openPlan')}</p>}
+        {newPlan && <NewPlanDialog close={() => { setNewPlan(false); setQuery(''); }} />}
         <Input type="search" value={query} className="h-7 text-xs" onChange={(event) => setQuery(event.target.value)}
           placeholder={t('section2d.views.search')} aria-label={t('section2d.views.search')} />
         <div className="flex gap-1.5">

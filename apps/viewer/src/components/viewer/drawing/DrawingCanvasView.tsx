@@ -14,10 +14,13 @@ import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
+import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
 
-export function DrawingCanvasView({ vm, layers }: { vm: DrawingViewModel; layers: DrawingLayers }) {
+export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
+  vm: DrawingViewModel; layers: DrawingLayers; placement?: VerticalViewKind; stopPlacement: () => void;
+}) {
   const fillPreview = usePublicationFillPreview();
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, displayOptions } = vm;
@@ -97,6 +100,8 @@ export function DrawingCanvasView({ vm, layers }: { vm: DrawingViewModel; layers
           paperTheme={vm.paperTheme}
         />
       )}
+
+      {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
 
       {editingAnnotation && (() => {
         const scaleX = drawnPlane.axis === 'side' ? -viewTransform.scale : viewTransform.scale;

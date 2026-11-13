@@ -140,6 +140,7 @@ export function worldToPercent(world: number, range: AxisRange): number {
 export function collectStoreys(
   models: ReadonlyMap<string, StoreyModel>,
   legacy: StoreyModel['ifcDataStore'],
+  deduplicate = true,
 ): SectionStorey[] {
   const storeys: SectionStorey[] = [];
   const collect = (modelId: string, ds: StoreyModel['ifcDataStore']) => {
@@ -156,6 +157,7 @@ export function collectStoreys(
   } else {
     collect('legacy', legacy);
   }
+  if (!deduplicate) return storeys.sort((a, b) => b.elevation - a.elevation);
   const seen = new Map<string, SectionStorey>();
   for (const s of storeys) {
     const key = (Math.round(s.elevation * 2) / 2).toFixed(2);

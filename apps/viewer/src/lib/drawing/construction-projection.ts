@@ -14,7 +14,7 @@
  *  - `true` / `false`: an explicit choice. It is set by the Projection toggle,
  *    or restored from a persisted drawing, and holds on every cut.
  *
- * A face-picked custom plane never projects; `useDrawingGeneration` and the
+ * A custom plane that is not vertical does not project; `useDrawingGeneration` and the
  * toolbar gate that separately, so this only resolves the preference.
  */
 

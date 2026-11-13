@@ -44,10 +44,10 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-function getRuntime(): DrawingRuntime {
+export function getDrawingRuntime(): DrawingRuntime {
   return runtime;
 }
 
 export function useDrawingRuntime(): DrawingRuntime {
-  return useSyncExternalStore(subscribe, getRuntime, getRuntime);
+  return useSyncExternalStore(subscribe, getDrawingRuntime, getDrawingRuntime);
 }
