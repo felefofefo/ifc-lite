@@ -29,7 +29,7 @@ import { getIfcSubtypes } from './ifc-type-hierarchy.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Line weight presets in mm */
-const LINE_WEIGHT_VALUES: Record<LineWeightPreset, number> = {
+export const LINE_WEIGHT_VALUES: Readonly<Record<LineWeightPreset, number>> = {
   heavy: 0.5,
   medium: 0.35,
   light: 0.25,
@@ -37,7 +37,7 @@ const LINE_WEIGHT_VALUES: Record<LineWeightPreset, number> = {
 };
 
 /** Dash pattern presets [dash, gap, ...] in mm */
-const DASH_PATTERNS: Record<LineStylePreset, number[]> = {
+export const LINE_STYLE_PRESET_DASHES: Record<LineStylePreset, number[]> = {
   solid: [],
   dashed: [2, 1],
   dotted: [0.5, 0.5],
@@ -264,10 +264,10 @@ function evaluateCriteria(
 /**
  * Resolve line weight to mm value
  */
-function resolveLineWeight(weight: LineWeightPreset | number | undefined): number {
+function resolveLineWeight(weight: LineWeightPreset | number | undefined, weights: Partial<Record<LineWeightPreset, number>>): number {
   if (weight === undefined) return DEFAULT_STYLE.lineWeight;
   if (typeof weight === 'number') return weight;
-  const value = LINE_WEIGHT_VALUES[weight as LineWeightPreset];
+  const value = weights[weight] ?? LINE_WEIGHT_VALUES[weight];
   return value !== undefined ? value : DEFAULT_STYLE.lineWeight;
 }
 
@@ -278,7 +278,7 @@ function resolveDashPattern(style: LineStylePreset | DashPattern | undefined): n
   if (style === undefined) return DEFAULT_STYLE.dashPattern;
 
   if (typeof style === 'string') {
-    return DASH_PATTERNS[style] ?? DEFAULT_STYLE.dashPattern;
+    return LINE_STYLE_PRESET_DASHES[style] ?? DEFAULT_STYLE.dashPattern;
   }
 
   if (style.custom) {
@@ -286,7 +286,7 @@ function resolveDashPattern(style: LineStylePreset | DashPattern | undefined): n
   }
 
   if (style.preset) {
-    return DASH_PATTERNS[style.preset] ?? DEFAULT_STYLE.dashPattern;
+    return LINE_STYLE_PRESET_DASHES[style.preset] ?? DEFAULT_STYLE.dashPattern;
   }
 
   return DEFAULT_STYLE.dashPattern;
@@ -295,12 +295,12 @@ function resolveDashPattern(style: LineStylePreset | DashPattern | undefined): n
 /**
  * Merge a partial style into a resolved style
  */
-function mergeStyle(base: ResolvedGraphicStyle, override: GraphicStyle): ResolvedGraphicStyle {
+function mergeStyle(base: ResolvedGraphicStyle, override: GraphicStyle, weights: Partial<Record<LineWeightPreset, number>>): ResolvedGraphicStyle {
   return {
     fillColor: override.fillColor ?? base.fillColor,
     strokeColor: override.strokeColor ?? base.strokeColor,
     backgroundColor: override.backgroundColor ?? base.backgroundColor,
-    lineWeight: override.lineWeight !== undefined ? resolveLineWeight(override.lineWeight) : base.lineWeight,
+    lineWeight: override.lineWeight !== undefined ? resolveLineWeight(override.lineWeight, weights) : base.lineWeight,
     lineCap: override.lineCap ?? base.lineCap,
     lineJoin: override.lineJoin ?? base.lineJoin,
     dashPattern: override.lineStyle ? resolveDashPattern(override.lineStyle) : base.dashPattern,
@@ -323,7 +323,7 @@ function mergeStyle(base: ResolvedGraphicStyle, override: GraphicStyle): Resolve
 export class GraphicOverrideEngine {
   private rules: GraphicOverrideRule[] = [];
 
-  constructor(rules?: GraphicOverrideRule[]) {
+  constructor(rules?: GraphicOverrideRule[], private readonly weights: Partial<Record<LineWeightPreset, number>> = {}) {
     if (rules) {
       this.setRules(rules);
     }
@@ -365,7 +365,7 @@ export class GraphicOverrideEngine {
   applyOverrides(element: ElementData, baseStyle?: Partial<GraphicStyle>): OverrideResult {
     // Start with default style merged with any base style
     let resolvedStyle: ResolvedGraphicStyle = baseStyle
-      ? mergeStyle(DEFAULT_STYLE, baseStyle)
+      ? mergeStyle(DEFAULT_STYLE, baseStyle, this.weights)
       : { ...DEFAULT_STYLE };
 
     const matchedRules: GraphicOverrideRule[] = [];
@@ -375,7 +375,7 @@ export class GraphicOverrideEngine {
       if (!rule.enabled) continue;
 
       if (evaluateCriteria(rule.criteria, element)) {
-        resolvedStyle = mergeStyle(resolvedStyle, rule.style);
+        resolvedStyle = mergeStyle(resolvedStyle, rule.style, this.weights);
         matchedRules.push(rule);
       }
     }

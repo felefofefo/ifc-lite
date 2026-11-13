@@ -21,6 +21,7 @@ import type {
   DrawingLine,
   CutSegment,
   Bounds2D,
+  DrawingPolygon,
   LineCategory,
   ProfileEntry,
   EntityKey,
@@ -45,9 +46,11 @@ import {
 } from './projection-bands.js';
 import { isFeatureElementType } from './feature-elements.js';
 import { projectionBandMeshes, clipMeshToProjectionWindow } from './projection-clip.js';
+import { buildProjectionPolygons } from './projection-polygons.js';
 import { removeCoveredOverhead } from './projection-overlap.js';
 import {
   boundsEmpty,
+  boundsExtendPoint,
   boundsExtendLine,
 } from './math.js';
 
@@ -62,6 +65,8 @@ export interface GeneratorOptions {
   includeHiddenLines: boolean;
   /** Include projection lines (visible geometry beyond cut) */
   includeProjection: boolean;
+  /** Generate visible surface regions for publication fills. */
+  includeProjectionPolygons?: boolean;
   /** Include silhouettes and feature edges */
   includeEdges: boolean;
   /** Merge collinear line segments */
@@ -377,10 +382,9 @@ export class Drawing2DGenerator {
       report('merging', 1);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // FINALIZE
-    // ─────────────────────────────────────────────────────────────────────────
-    const bounds = this.computeBounds(allLines);
+    const projectionPolygons = opts.includeProjection && opts.includeProjectionPolygons
+      ? buildProjectionPolygons(meshes, cutPolygons, config.plane, config.projectionBelowDepth ?? config.projectionDepth) : [];
+    const bounds = this.computeBounds(allLines, projectionPolygons);
     const processingTimeMs = performance.now() - startTime;
 
     // Count line categories
@@ -396,14 +400,14 @@ export class Drawing2DGenerator {
       lines: allLines,
       cutPolygons,
       layerBaseCutPolygons,
-      projectionPolygons: [], // TODO: implement projection polygon extraction
+      projectionPolygons,
       bounds,
       stats: {
         cutLineCount,
         projectionLineCount,
         hiddenLineCount,
         silhouetteLineCount,
-        polygonCount: cutPolygons.length,
+        polygonCount: cutPolygons.length + projectionPolygons.length,
         totalTriangles: meshes.reduce((sum, m) => sum + m.indices.length / 3, 0),
         processingTimeMs,
       },
@@ -444,16 +448,12 @@ export class Drawing2DGenerator {
     return hatchLines;
   }
 
-  /**
-   * Compute bounds from lines
-   */
-  private computeBounds(lines: DrawingLine[]): Bounds2D {
+  private computeBounds(lines: DrawingLine[], surfaces: DrawingPolygon[] = []): Bounds2D {
     let bounds = boundsEmpty();
-
-    for (const line of lines) {
-      bounds = boundsExtendLine(bounds, line.line);
+    for (const line of lines) bounds = boundsExtendLine(bounds, line.line);
+    for (const { polygon } of surfaces) {
+      for (const point of polygon.outer) bounds = boundsExtendPoint(bounds, point);
     }
-
     return bounds;
   }
 

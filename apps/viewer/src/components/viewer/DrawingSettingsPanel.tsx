@@ -31,6 +31,9 @@ import {
 } from '@/components/ui/collapsible';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
+import { LINE_WEIGHT_VALUES } from '@ifc-lite/drawing-2d';
+import { LINEWEIGHT_PRESETS, type LineweightRow } from '@/lib/drawing/lineweight-table';
+import { DrawingRulePaintControls } from './drawing/DrawingHatchSelect';
 import type { GraphicOverrideRule, GraphicStyle } from '@ifc-lite/drawing-2d';
 
 // Common IFC types for the dropdown
@@ -51,14 +54,6 @@ const COMMON_IFC_TYPES = [
   'IfcBuildingElementProxy',
 ];
 
-// Line weight presets
-const LINE_WEIGHTS = [
-  { value: 'heavy', label: 'Heavy (0.5mm)' },
-  { value: 'medium', label: 'Medium (0.35mm)' },
-  { value: 'light', label: 'Light (0.25mm)' },
-  { value: 'hairline', label: 'Hairline (0.18mm)' },
-];
-
 // Icon mapping for presets
 const PRESET_ICONS: Record<string, LucideIcon> = {
   Palette,
@@ -75,7 +70,7 @@ function PresetIcon({ iconName, className }: { iconName?: string; className?: st
   return <Icon className={className} />;
 }
 
-export function DrawingSettingsPanel() {
+export function DrawingSettingsPanel({ lineweights = LINE_WEIGHT_VALUES }: { lineweights?: LineweightRow } = {}) {
   const { t } = useTranslation(); const graphicOverridePresets = useViewerStore((s) => s.graphicOverridePresets);
   const activePresetId = useViewerStore((s) => s.activePresetId);
   const setActivePreset = useViewerStore((s) => s.setActivePreset);
@@ -244,6 +239,7 @@ export function DrawingSettingsPanel() {
                     <CustomRuleItem
                       key={rule.id}
                       rule={rule}
+                      lineweights={lineweights}
                       isEditing={editingRuleId === rule.id}
                       onEdit={() => setEditingRuleId(rule.id)}
                       onSave={() => setEditingRuleId(null)}
@@ -308,6 +304,7 @@ function PresetRuleItem({ rule }: { rule: GraphicOverrideRule }) {
 // Editable custom rule
 interface CustomRuleItemProps {
   rule: GraphicOverrideRule;
+  lineweights: LineweightRow;
   isEditing: boolean;
   onEdit: () => void;
   onSave: () => void;
@@ -317,6 +314,7 @@ interface CustomRuleItemProps {
 
 function CustomRuleItem({
   rule,
+  lineweights,
   isEditing,
   onEdit,
   onSave,
@@ -466,7 +464,8 @@ function CustomRuleItem({
         </div>
       </div>
 
-      {/* Line Weight - preset or custom mm value */}
+      <DrawingRulePaintControls style={rule.style} onChange={(style) => onUpdate({ style })} />
+
       <div>
         <Label className="text-xs">{t('drawingUnderlay.settings.lineWeightLabel')}</Label>
         <div className="flex gap-2 mt-1">
@@ -484,9 +483,9 @@ function CustomRuleItem({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {LINE_WEIGHTS.map((w) => (
-                <SelectItem key={w.value} value={w.value}>
-                  {w.label}
+              {LINEWEIGHT_PRESETS.map((preset) => (
+                <SelectItem key={preset} value={preset}>
+                  {t('drawingUnderlay.lineweights.resolvedPreset', { preset: t(`drawingUnderlay.lineweights.preset.${preset}`), width: lineweights[preset] })}
                 </SelectItem>
               ))}
               <SelectItem value="custom">{t('drawingUnderlay.settings.customLineWeightOption')}</SelectItem>

@@ -89,6 +89,7 @@ export const SECTION_VIEW_DEPTH_FRACTION = 0.5;
 
 interface UseDrawingGenerationParams {
   geometryResult: GeometryResult | null | undefined;
+  includeProjectionPolygons?: boolean;
   // `spatialHierarchy` (optional — absent on cache-reopened models) backs the
   // current-floor projection scoping (issue #979 follow-up). The runtime
   // already passes the full DataStore from `useIfc()`, so this is a pure type
@@ -141,6 +142,7 @@ interface UseDrawingGenerationResult {
 
 export function useDrawingGeneration({
   geometryResult,
+  includeProjectionPolygons,
   ifcDataStore,
   sectionPlane,
   displayOptions,
@@ -609,6 +611,7 @@ export function useDrawingGeneration({
           // hide geometry behind them (#6615). Overhead stays dashed separately.
           includeHiddenLines: projectionOn,
           includeProjection: projectionOn,
+          includeProjectionPolygons,
           includeEdges: projectionOn,
           mergeLines: true,
           outlineProvider,
@@ -822,7 +825,6 @@ export function useDrawingGeneration({
         // Combine filtered section cuts with aligned symbolic lines
         const combinedLines = [...filteredLines, ...alignedSymbolicLines];
 
-        // Recalculate bounds with combined lines and polygons
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const line of combinedLines) {
           minX = Math.min(minX, line.line.start.x, line.line.end.x);
@@ -830,8 +832,7 @@ export function useDrawingGeneration({
           maxX = Math.max(maxX, line.line.start.x, line.line.end.x);
           maxY = Math.max(maxY, line.line.start.y, line.line.end.y);
         }
-        // Include polygon vertices in bounds
-        for (const poly of filteredCutPolygons) {
+        for (const poly of [...filteredCutPolygons, ...(result.projectionPolygons ?? [])]) {
           for (const pt of poly.polygon.outer) {
             minX = Math.min(minX, pt.x);
             minY = Math.min(minY, pt.y);
@@ -848,7 +849,6 @@ export function useDrawingGeneration({
           }
         }
 
-        // Create hybrid drawing
         // Keep the opaque layer-base backstop (3D overlay only) in step with the
         // filtered per-layer fills, so an entity replaced by a symbolic rep does
         // not leave a base with no colour fills behind it.
@@ -894,6 +894,7 @@ export function useDrawingGeneration({
     }
   }, [
     geometryResult,
+    includeProjectionPolygons,
     ifcDataStore,
     sectionPlane,
     displayOptions,
@@ -910,7 +911,6 @@ export function useDrawingGeneration({
     setDrawingError,
   ]);
 
-  // All entry points share one queue; superseded cuts cannot publish over newer inputs (#3921).
   const { queue, generateDrawing, doRegenerate, isRegenerating } =
     useDrawingRequests({ computeDrawing, drawing, setDrawingStatus, setDrawingError });
 
@@ -996,7 +996,7 @@ export function useDrawingGeneration({
   useEffect(() => {
     const plane = JSON.stringify([sectionPlane.axis, sectionPlane.position, sectionPlane.flipped,
       sectionPlane.custom]);
-    const inputs = [geometryResult, geometryResult?.meshes.length, ifcDataStore,
+    const inputs = [geometryResult, geometryResult?.meshes.length, includeProjectionPolygons, ifcDataStore,
       displayOptions, typeVisibility, combinedHiddenIds, combinedIsolatedIds,
       computedIsolatedIds, models, drawingRtcContextKey];
     const changed = inputs.some((value, index) => value !== previousInputs.current[index]);

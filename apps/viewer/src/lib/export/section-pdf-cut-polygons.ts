@@ -11,6 +11,7 @@
  * (`drawCutPolygonsPdf`) runs inside the export job.
  */
 
+import { HatchGenerator } from '@ifc-lite/drawing-2d';
 import type { jsPDF } from 'jspdf';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
 import { getFillColorForType } from '@/components/viewer/drawing/ifc-fill-colors';
@@ -120,16 +121,16 @@ function setColor(doc: jsPDF, kind: 'fill' | 'draw', color: string, fallback: st
  * graphics state is saved and restored around it; jsPDF's own getters
  * (getLineWidth, getFillColor) may still report the last polygon's values.
  */
-export function drawCutPolygonsPdf(doc: jsPDF, polygons: readonly PdfCutPolygon[]): void {
+export function drawCutPolygonsPdf(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale = 100): void {
   doc.saveGraphicsState();
   try {
-    drawCutPolygons(doc, polygons);
+    drawCutPolygons(doc, polygons, scale);
   } finally {
     doc.restoreGraphicsState();
   }
 }
 
-function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[]): void {
+function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: number): void {
   doc.setLineCap('round');
   doc.setLineDashPattern([], 0);
   const colors: ColorCache = new Map();
@@ -141,14 +142,40 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[]): void {
     }
   };
 
+  const hatch = new HatchGenerator();
   for (const { polygon, rings, fillable, style } of polygons) {
-    if (!fillable || !(style.fillOpacity > 0)) continue;
-    const alpha = setColor(doc, 'fill', style.fillColor, getFillColorForType(polygon.ifcType), colors);
-    const opacity = roundOpacity(style.fillOpacity * alpha);
-    if (!(opacity > 0)) continue;
-    doc.setGState(doc.GState({ opacity }));
-    tracePath(rings);
-    doc.fillEvenOdd();
+    if (!fillable) continue;
+    const paints = style.fills ?? [{ pattern: 'solid' as const, color: style.fillColor, spacing: 0, lineWeight: undefined }];
+    for (const paint of paints) {
+      const alpha = setColor(doc, paint.pattern === 'solid' ? 'fill' : 'draw', paint.color, getFillColorForType(polygon.ifcType), colors);
+      const opacity = roundOpacity((style.fills ? 1 : style.fillOpacity) * alpha);
+      if (!(opacity > 0)) continue;
+      if (paint.pattern === 'solid') {
+        doc.setGState(doc.GState({ opacity }));
+        tracePath(rings);
+        doc.fillEvenOdd();
+        continue;
+      }
+      const spacing = paint.spacing * 1000 / scale;
+      if (!Number.isFinite(spacing) || spacing <= 0) continue;
+      const origin = rings[0][0];
+      const relative = (ring: Point[]) => ring.map(({ x, y }) => ({ x: x - origin.x, y: y - origin.y }));
+      const shape = { ...polygon, polygon: { outer: relative(rings[0]), holes: rings.slice(1).map(relative) } };
+      // Prevent oversized drawings from allocating an unbounded line array.
+      if (shape.polygon.outer.some(({ x, y }) => Math.hypot(x, y) / spacing > 100_000)) {
+        throw new RangeError('This PDF scale and hatch spacing generate too many lines.');
+      }
+      const segments = hatch.generateHatch(shape, 100, {
+        type: paint.pattern, spacing, angle: 45, secondaryAngle: -45,
+        origin: polygon.isCut ? undefined : { x: -origin.x, y: -origin.y },
+      }).lines;
+      doc.setGState(doc.GState({ 'stroke-opacity': opacity }));
+      doc.setLineWidth(paint.lineWeight ?? 0.13);
+      doc.setLineDashPattern([], 0);
+      for (const { line: { start, end } } of segments) {
+        doc.line(start.x + origin.x, start.y + origin.y, end.x + origin.x, end.y + origin.y);
+      }
+    }
   }
 
   // Outlines cover every surviving ring, as before fills existed. Zero width
@@ -160,6 +187,7 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[]): void {
     if (!(opacity > 0)) continue;
     doc.setGState(doc.GState({ 'stroke-opacity': opacity }));
     doc.setLineWidth(style.lineWeight);
+    if (style.dash) doc.setLineDashPattern([...style.dash], 0);
     tracePath(rings);
     doc.stroke();
   }

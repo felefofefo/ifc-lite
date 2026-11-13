@@ -100,7 +100,7 @@ export function DrawingInspector({ vm, layers, panelWidth }: DrawingInspectorPro
       </TabsList>
       <div className="min-h-0 flex-1 overflow-hidden">
         <TabsContent value="overrides" className="m-0 h-full">
-          <DrawingSettingsPanel />
+          <DrawingSettingsPanel lineweights={vm.lineweights} />
         </TabsContent>
         <TabsContent value="sheet" className="m-0 h-full">
           <SheetSetupPanel onOpenTitleBlockEditor={() => vm.setTitleBlockEditorVisible(true)} />

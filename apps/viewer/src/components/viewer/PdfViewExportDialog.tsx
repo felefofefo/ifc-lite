@@ -61,6 +61,7 @@ import { useTranslation } from '@/i18n';
 import { trackExportCompleted } from '@/lib/analytics';
 import { toast } from '@/components/ui/toast';
 import { formatScaleFactorLabel, formatSheetScaleLabel } from '@ifc-lite/drawing-2d';
+import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { collectViewMeshes } from '@/lib/export/view-pdf/collect-view-meshes';
 import { readViewPdfSource, readViewZoom } from '@/lib/export/view-pdf/view-pdf-export-source';
 import { resolveKeptHalfSpace } from '@/lib/export/view-pdf/view-section-plane';
@@ -129,6 +130,8 @@ export function PdfViewExportDialog({ surface, trigger, exportViewPdf }: PdfView
   // gate these reads the way the pre-#5848 local `open` state did — the
   // shell itself owns the Dialog's actual open/close chrome now.
   const [open, setOpenMirror] = useState(false);
+  const savedScale = useSavedSectionCuts((s) =>
+    s.cuts.find((cut) => cut.id === s.activeCutId && cut.kind === '3d')?.publicationScale);
   const [scaleChoice, setScaleChoice] = useState<string>('displayed');
   const [customScale, setCustomScale] = useState('100');
   const [showHiddenEdges, setShowHiddenEdges] = useState(true);
@@ -144,8 +147,12 @@ export function PdfViewExportDialog({ surface, trigger, exportViewPdf }: PdfView
     setOpenMirror(next);
     // Reset the transient bits every time the dialog opens so a previous
     // run's progress text cannot be read as this run's.
-    if (next) setPhase(null);
-  }, []);
+    if (next) {
+      setPhase(null);
+      if (savedScale) setScaleChoice('saved');
+      else setScaleChoice((current) => current === 'saved' ? 'displayed' : current);
+    }
+  }, [savedScale]);
 
   const source = useMemo(
     () => (open ? readViewPdfSource(useViewerStore.getState()) : null),
@@ -176,12 +183,7 @@ export function PdfViewExportDialog({ surface, trigger, exportViewPdf }: PdfView
     });
   }, [camera, zoom, source]);
 
-  // Drafting scales are whole numbers (1:50, not 1:49.7), so a custom entry is
-  // rounded to an integer and the rounded value is what actually gets drawn.
-  // Rounding here is safe precisely because it happens BEFORE the factor reaches
-  // the layout and the filename: the sheet is drawn at the rounded scale, so the
-  // filename still names the scale the sheet was really drawn at. (Rounding at
-  // the filename instead is the #2119 defect - a 1:99.5 sheet filed as "1-100".)
+  // Manual scale entries are rounded before layout and filename generation.
   const customScaleValue = Math.round(Number.parseFloat(customScale));
   const customScaleValid = Number.isFinite(customScaleValue) && customScaleValue > 0;
 
@@ -191,11 +193,12 @@ export function PdfViewExportDialog({ surface, trigger, exportViewPdf }: PdfView
     // user a measured sheet at a scale they never chose - the one failure this
     // whole feature exists to prevent. `null` disables Export instead, so they
     // pick a preset or a custom scale.
+    if (scaleChoice === 'saved') return savedScale ?? null;
     if (scaleChoice === 'displayed') return displayedScale;
     if (scaleChoice === 'custom') return customScaleValid ? customScaleValue : null;
     const preset = Number(scaleChoice);
     return Number.isFinite(preset) && preset > 0 ? preset : null;
-  }, [scaleChoice, displayedScale, customScaleValid, customScaleValue]);
+  }, [scaleChoice, savedScale, displayedScale, customScaleValid, customScaleValue]);
 
   const preview = useMemo(() => {
     if (!camera || drawnMeshes.length === 0 || scaleFactor === null) return null;
@@ -323,6 +326,7 @@ export function PdfViewExportDialog({ surface, trigger, exportViewPdf }: PdfView
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            {savedScale && <SelectItem value="saved">{t('sheetsPdf.pdfView.savedScale', { scale: formatScaleFactorLabel(savedScale) })}</SelectItem>}
             <SelectItem value="displayed">{displayedLabel}</SelectItem>
             {SCALE_PRESETS.map((preset) => (
               <SelectItem key={preset} value={String(preset)}>

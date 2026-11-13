@@ -23,7 +23,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Video } from 'lucide-react';
+import { PanelLeft, RefreshCw, Video } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -35,10 +35,14 @@ import { useDrawingViewModel } from './useDrawingViewModel';
 import { useDrawingLayers } from './useDrawingLayers';
 import { AssistantAction } from '../assistant/AssistantAction';
 import { DrawingToolbar, type DrawingWidthTier } from './DrawingToolbar';
+import { DrawingLineweights } from './DrawingLineweights';
+import { DrawingMaterials } from './DrawingMaterials';
+import { setDrawingPublicationScale } from '@/store/savedSectionCutsStore';
 import { DrawingExportMenu } from './DrawingExportMenu';
 import { DrawingCanvasView } from './DrawingCanvasView';
 import { DrawingStatusLine } from './DrawingStatusLine';
 import { DrawingInspector } from './DrawingInspector';
+import { DrawingViewsBrowser } from './DrawingViewsBrowser';
 import { DrawingSectionCutMenu } from './DrawingSectionCutMenu';
 import { useBottomStripHeaderSlot } from '../bottom-strip-header-slot';
 import { constructionProjectionEnabled } from '@/lib/drawing/construction-projection';
@@ -96,6 +100,7 @@ export function DrawingPanel(): React.ReactElement {
   const cameraCallbacks = useViewerStore((s) => s.cameraCallbacks);
   const vm = useDrawingViewModel();
   const layers = useDrawingLayers(vm);
+  const [viewsOpen, setViewsOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const { tier, width: panelWidth } = usePanelMetrics(panelRef);
   const { sectionPlane, status, displayOptions } = vm;
@@ -156,6 +161,15 @@ export function DrawingPanel(): React.ReactElement {
         </TooltipTrigger>
         <TooltipContent>{t(isCustomPlane ? 'section2d.matchView.unavailableTitle' : 'section2d.matchView.title')}</TooltipContent>
       </Tooltip>
+      <Button variant="ghost" size={tier === 'narrow' ? 'icon-xs' : 'sm'} aria-pressed={viewsOpen}
+        aria-label={t('section2d.views.title')} title={t('section2d.views.title')} onClick={() => setViewsOpen((open) => !open)}
+        className={tier === 'narrow' ? undefined : 'h-7 gap-1 px-2 text-xs'}>
+        <PanelLeft className="h-3.5 w-3.5" />
+        {tier !== 'narrow' && t('section2d.views.title')}
+      </Button>
+      <DrawingMaterials settings={vm.materialSettings} compact={tier === 'narrow'} />
+      <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale} settings={vm.lineweightSettings}
+        compact={tier === 'narrow'} onScaleChange={setDrawingPublicationScale} />
       <DrawingExportMenu
         hasDrawing={!!vm.exportableDrawing} compact={tier === 'narrow'}
         onExportSvg={layers.handleExportSVG} onExportDxf={layers.handleExportDXF}
@@ -240,6 +254,7 @@ export function DrawingPanel(): React.ReactElement {
       />
 
       <div className="relative flex min-h-0 flex-1">
+        {viewsOpen && <DrawingViewsBrowser overlay={tier === 'narrow'} close={() => setViewsOpen(false)} />}
         <DrawingCanvasView vm={vm} layers={layers} />
         <DrawingInspector vm={vm} layers={layers} panelWidth={panelWidth} />
       </div>

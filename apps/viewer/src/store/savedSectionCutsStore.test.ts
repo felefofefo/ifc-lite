@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { useViewerStore } from './index.js';
 import { activeSectionPlane } from './section-active.js';
 import {
-  applySavedSectionCut,
+  applySavedSectionCut, duplicateSavedSectionCut, setSavedViewsProject, updateSavedSectionCut,
   removeSavedSectionCut,
   renameSavedSectionCut,
   saveCurrentSectionCut,
@@ -63,6 +63,82 @@ describe('saved section cuts (#5514)', () => {
     const shown = activeSectionPlane(state());
     assert.ok(shown, 'the saved cut is visible, exactly like any other section writer');
     assert.equal(useSavedSectionCuts.getState().activeCutId, id);
+  });
+
+  it('restores the individual publication scale of each saved cut', () => {
+    state().setActiveTool('section');
+    useViewerStore.setState({ sheetEnabled: false });
+    state().updateDrawing2DDisplayOptions({ scale: 50 });
+    const detail = saveCurrentSectionCut('Detail');
+    state().updateDrawing2DDisplayOptions({ scale: 100 });
+    const overall = saveCurrentSectionCut('Overall');
+
+    applySavedSectionCut(detail);
+    assert.equal(state().drawing2DDisplayOptions.scale, 50);
+    applySavedSectionCut(overall);
+    assert.equal(state().drawing2DDisplayOptions.scale, 100);
+  });
+
+  it('reopens project views with independent scale, depth and graphic overrides', () => {
+    setSavedViewsProject('saved-views-test');
+    try {
+      state().setActiveTool('section');
+      state().updateDrawing2DDisplayOptions({ scale: 50, constructionProjectionDepth: 1.2 });
+      state().addCustomRule({ id: 'foreground', name: 'Foreground', enabled: true, priority: 1,
+        criteria: { type: 'all' }, style: { hatchPattern: 'diagonal' } });
+      const original = saveCurrentSectionCut('A', 'elevation');
+      const copy = duplicateSavedSectionCut(original, 'B')!;
+      applySavedSectionCut(copy);
+      state().updateDrawing2DDisplayOptions({ scale: 100, constructionProjectionDepth: 2.5 });
+      state().updateCustomRule('foreground', { style: { hatchPattern: 'cross-hatch' } });
+      updateSavedSectionCut(copy);
+
+      setSavedViewsProject('another-project');
+      assert.equal(useSavedSectionCuts.getState().cuts.length, 0);
+      setSavedViewsProject('saved-views-test');
+      assert.equal(useSavedSectionCuts.getState().cuts[0]?.kind, 'elevation');
+      applySavedSectionCut(original);
+      assert.equal(state().drawing2DDisplayOptions.scale, 50);
+      assert.equal(state().drawing2DDisplayOptions.constructionProjectionDepth, 1.2);
+      assert.equal(state().customOverrideRules[0]?.style.hatchPattern, 'diagonal');
+      applySavedSectionCut(copy);
+      assert.equal(state().drawing2DDisplayOptions.scale, 100);
+      assert.equal(state().drawing2DDisplayOptions.constructionProjectionDepth, 2.5);
+      assert.equal(state().customOverrideRules[0]?.style.hatchPattern, 'cross-hatch');
+    } finally {
+      setSavedViewsProject(undefined);
+      state().clearCustomRules();
+      localStorage.removeItem('ifc-lite:saved-drawing-views:v1:saved-views-test');
+    }
+  });
+
+  it('reopens a camera-only 3D view at its saved publication scale', () => {
+    const camera = {
+      position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 },
+      fov: 45, projectionMode: 'orthographic' as const, orthoSize: 4,
+    };
+    const callbacks = state().cameraCallbacks;
+    let restored: unknown;
+    useViewerStore.setState({ cameraCallbacks: {
+      ...callbacks, getViewpoint: () => camera, applyViewpoint: (value) => { restored = value; },
+    } });
+    setSavedViewsProject('3d-view-test');
+    try {
+      state().clearSectionPlanes();
+      const id = saveCurrentSectionCut('Axonometric', '3d', 75);
+      setSavedViewsProject(undefined);
+      setSavedViewsProject('3d-view-test');
+      state().setActiveTool('section');
+      applySavedSectionCut(id);
+      assert.deepEqual(restored, camera);
+      assert.equal(state().drawing2DDisplayOptions.scale, 75);
+      assert.equal(activeSectionPlane(state()), null);
+      assert.equal(useSavedSectionCuts.getState().cuts[0]?.publicationScale, 75);
+    } finally {
+      useViewerStore.setState({ cameraCallbacks: callbacks });
+      setSavedViewsProject(undefined);
+      localStorage.removeItem('ifc-lite:saved-drawing-views:v1:3d-view-test');
+    }
   });
 
   it('applying a saved cut un-hides it, even if the chip hid the previous one (#5893 review)', () => {

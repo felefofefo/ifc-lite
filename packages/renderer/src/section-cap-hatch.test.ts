@@ -80,6 +80,14 @@ describe('cap fill vertex: per-polygon hatch (#8753)', () => {
     }
   });
 
+  it('preserves cut-plane hatch coordinates independently of the GPU origin', () => {
+    const fill = buildCapFillGeometry([tri(3, { hatch: { patternId: 1, modelSpace: true, spacingPx: 0.125 } })],
+      lift, [500, 600, 700])!;
+    assert.equal(maskOf(fill.vertices, 0) & 64, 64);
+    assert.deepEqual(attr(fill.vertices, 0, 'hatchB').slice(2), [3, 0]);
+    assert.deepEqual(attr(fill.vertices, 1, 'hatchB').slice(2), [4, 0]);
+  });
+
   it('two polygons in one upload carry their own patternId; colours are unchanged', () => {
     const color: [number, number, number, number] = [0.5, 0.5, 0.5, 1];
     const fill = buildCapFillGeometry([

@@ -165,7 +165,7 @@ export interface DrawingLine {
 }
 
 /**
- * A polygon from section cut (used for hatching)
+ * A polygon from a section cut or a visible projected surface (used for hatching)
  */
 export interface DrawingPolygon {
   /** 2D polygon geometry */

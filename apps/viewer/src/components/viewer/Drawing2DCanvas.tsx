@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
+import type { usePublicationFillPreview } from '@/hooks/usePublicationFillPreview';
+import { drawPublicationCanvasFills } from './drawing/publication-canvas-fills';
 import { drawDxfUnderlaysScreenSpace } from './drawing-underlays';
 import { drawReferenceImages } from './drawing-reference-images';
 import { useReferenceImagesForDrawing } from '@/hooks/useReferenceImagesForDrawing';
@@ -184,6 +187,7 @@ interface Drawing2DCanvasProps {
   overridesEnabled: boolean;
   entityColorMap: Map<number, [number, number, number, number]>;
   useIfcMaterials: boolean;
+  fillPreview?: ReturnType<typeof usePublicationFillPreview>;
   // Measure tool props
   measureMode?: boolean;
   measureStart?: { x: number; y: number } | null;
@@ -243,7 +247,7 @@ export function Drawing2DCanvas({
   overrideEngine,
   overridesEnabled,
   entityColorMap,
-  useIfcMaterials,
+  useIfcMaterials, fillPreview,
   measureMode = false,
   measureStart = null,
   measureCurrent = null,
@@ -306,6 +310,21 @@ export function Drawing2DCanvas({
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    const cutFill = (polygon: DrawingPolygon, dark = false) => {
+      const material = useIfcMaterials ? polygon.color ?? entityColorMap.get(polygon.entityId) : undefined;
+      if (material) {
+        const rgb = material.slice(0, 3).map((value) => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
+        return { fillColor: `#${rgb}`, opacity: material[3] };
+      }
+      if (!useIfcMaterials && overridesEnabled) {
+        const { style } = overrideEngine.applyOverrides({
+          expressId: polygon.entityId, ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
+        });
+        return { fillColor: style.fillColor, opacity: style.opacity };
+      }
+      return { fillColor: getFillColorForType(polygon.ifcType, dark), opacity: 1 };
+    };
 
     // Set canvas size using tracked dimensions
     const dpr = window.devicePixelRatio || 1;
@@ -653,34 +672,17 @@ export function Drawing2DCanvas({
           (worldHeight) => worldHeight * drawingTransform.scaleFactor * transform.scale,
         );
 
-        // Fill cut polygons
-        for (const polygon of drawing.cutPolygons) {
-          let fillColor = getFillColorForType(polygon.ifcType), opacity = 1;
-
-          if (useIfcMaterials) {
-            // Per-layer fill (material-layer wall/slab) wins over the per-entity
-          // colour, so each sliced layer paints with its own IfcMaterial colour
-          // instead of one colour for the whole element. Falls back to the
-          // per-entity map for ordinary single-material elements.
-          const materialColor = polygon.color ?? entityColorMap.get(polygon.entityId);
-            if (materialColor) {
-              const r = Math.round(materialColor[0] * 255);
-              const g = Math.round(materialColor[1] * 255);
-              const b = Math.round(materialColor[2] * 255);
-              fillColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-              opacity = materialColor[3];
-            }
-          } else if (overridesEnabled) {
-            const elementData: ElementData = {
-              expressId: polygon.entityId,
-              ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
-            };
-            const result = overrideEngine.applyOverrides(elementData);
-            fillColor = result.style.fillColor;
-            opacity = result.style.opacity;
+        // Surface fills sit beneath the cut and its outlines.
+        for (const polygon of [...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons]) {
+          const { fillColor, opacity } = polygon.isCut ? cutFill(polygon) : { fillColor: '#666666', opacity: 0 };
+          const paints = fillPreview?.resolve?.(polygon, fillColor);
+          if (paints) {
+            drawPublicationCanvasFills(ctx, polygon, paints, modelToScreen,
+              Math.abs(drawingTransform.scaleFactor * transform.scale), transform.scale);
+            continue;
           }
-
-          ctx.globalAlpha = opacity;
+          if (!polygon.isCut) continue;
+        ctx.globalAlpha = opacity;
           ctx.fillStyle = fillColor;
           ctx.beginPath();
 
@@ -1018,37 +1020,15 @@ export function Drawing2DCanvas({
       // ═══════════════════════════════════════════════════════════════════════
       // 1. FILL CUT POLYGONS (with color from IFC materials, override engine, or type fallback)
       // ═══════════════════════════════════════════════════════════════════════
-      for (const polygon of drawing.cutPolygons) {
-        // Get fill color - priority: IFC materials > override engine > IFC type fallback.
-        // Direct mode only (#5496): the dark-paper analogue applies here, never
-        // in sheet mode above, which stays on white paper.
-        let fillColor = getFillColorForType(polygon.ifcType, paperTheme.isDark), opacity = 1;
-
-        // Use actual IFC material colors from the mesh data
-        if (useIfcMaterials) {
-          // Per-layer fill (material-layer wall/slab) wins over the per-entity
-          // colour, so each sliced layer paints with its own IfcMaterial colour
-          // instead of one colour for the whole element. Falls back to the
-          // per-entity map for ordinary single-material elements.
-          const materialColor = polygon.color ?? entityColorMap.get(polygon.entityId);
-          if (materialColor) {
-            // Convert RGBA [0-1] to hex color
-            const r = Math.round(materialColor[0] * 255);
-            const g = Math.round(materialColor[1] * 255);
-            const b = Math.round(materialColor[2] * 255);
-            fillColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-            opacity = materialColor[3];
-          }
-        } else if (overridesEnabled) {
-          const elementData: ElementData = {
-            expressId: polygon.entityId,
-            ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
-          };
-          const result = overrideEngine.applyOverrides(elementData);
-          fillColor = result.style.fillColor;
-          opacity = result.style.opacity;
+      for (const polygon of [...(drawing.projectionPolygons ?? []), ...drawing.cutPolygons]) {
+        const { fillColor, opacity } = polygon.isCut ? cutFill(polygon, paperTheme.isDark) : { fillColor: '#666666', opacity: 0 };
+        const paints = fillPreview?.resolve?.(polygon, fillColor);
+        if (paints) {
+          drawPublicationCanvasFills(ctx, polygon, paints, (x, y) => ({ x, y }),
+            1, (fillPreview?.scale ?? 100) / 1000, Math.sign(scaleX * scaleY));
+          continue;
         }
-
+        if (!polygon.isCut) continue;
         ctx.globalAlpha = opacity;
         ctx.fillStyle = fillColor;
         ctx.beginPath();
@@ -1684,7 +1664,7 @@ export function Drawing2DCanvas({
       }
     }
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas

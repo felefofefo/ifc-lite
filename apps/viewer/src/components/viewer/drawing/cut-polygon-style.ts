@@ -9,7 +9,7 @@
  * as the light-paper canvas in Drawing2DCanvas.
  */
 
-import type { DrawingPolygon, ElementData, GraphicOverrideEngine } from '@ifc-lite/drawing-2d';
+import type { DrawingPolygon, DXFExportOptions, DXFHatchLayer, ElementData, GraphicOverrideEngine } from '@ifc-lite/drawing-2d';
 import { rgbaToHex } from '@ifc-lite/lens';
 import { getFillColorForType } from './ifc-fill-colors';
 
@@ -19,6 +19,8 @@ export interface CutPolygonStyle {
   strokeColor: string;
   /** Paper millimetres. */
   lineWeight: number;
+  dash?: readonly number[];
+  fills?: readonly DXFHatchLayer[];
 }
 
 export interface CutPolygonStyleContext {
@@ -27,13 +29,21 @@ export interface CutPolygonStyleContext {
   entityColorMap: Map<number, [number, number, number, number]>;
   overridesEnabled: boolean;
   overrideEngine: GraphicOverrideEngine;
+  stroke?: DXFExportOptions['strokeStyle'];
+  fills?: (polygon: DrawingPolygon, fallbackColor: string) => readonly DXFHatchLayer[] | undefined;
   getElementProperties: (entityId: number) => ElementData['properties'];
 }
 
 export function resolveCutPolygonStyle(
-  polygon: Pick<DrawingPolygon, 'entityId' | 'ifcType' | 'color'>,
+  polygon: DrawingPolygon,
   ctx: CutPolygonStyleContext,
 ): CutPolygonStyle {
+  if (!polygon.isCut) {
+    return {
+      fillColor: '#666666', fillOpacity: 0, strokeColor: '#000000', lineWeight: 0,
+      fills: ctx.fills?.(polygon, '#666666') ?? [],
+    };
+  }
   const override = ctx.overridesEnabled
     ? ctx.overrideEngine.applyOverrides({
       expressId: polygon.entityId,
@@ -41,22 +51,23 @@ export function resolveCutPolygonStyle(
       properties: ctx.getElementProperties(polygon.entityId),
     }).style
     : null;
-  const stroke = {
-    strokeColor: override?.strokeColor ?? '#000000',
-    // Negative weights clamp to 0 (no outline) so SVG and PDF agree.
-    lineWeight: override && Number.isFinite(override.lineWeight) ? Math.max(0, override.lineWeight) : 0.5,
-  };
-
-  // IFC material colours win for fills, per layer first, as on screen
-  // (Drawing2DCanvas): a layered wall paints each layer in its own colour.
+  const pen = ctx.stroke?.(polygon, 'cut');
+  const weight = pen?.lineWeight ?? override?.lineWeight;
   const material = ctx.useIfcMaterials ? (polygon.color ?? ctx.entityColorMap.get(polygon.entityId)) : undefined;
-  if (material) return { fillColor: rgbaToHex(material), fillOpacity: material[3], ...stroke };
-  if (override && !ctx.useIfcMaterials) return { fillColor: override.fillColor, fillOpacity: override.opacity, ...stroke };
-  return { fillColor: getFillColorForType(polygon.ifcType), fillOpacity: 1, ...stroke };
+  const fillColor = material ? rgbaToHex(material)
+    : override && !ctx.useIfcMaterials ? override.fillColor : getFillColorForType(polygon.ifcType);
+  const fillOpacity = material?.[3] ?? (override && !ctx.useIfcMaterials ? override.opacity : 1);
+  return {
+    fillColor, fillOpacity,
+    strokeColor: pen?.color ?? override?.strokeColor ?? '#000000',
+    lineWeight: weight !== undefined && Number.isFinite(weight) ? Math.max(0, weight) : 0.5,
+    dash: pen?.dash,
+    fills: ctx.fills?.(polygon, fillColor),
+  };
 }
 
 /** Style every cut polygon once, alongside the writer's own geometry for it. */
-export function styleCutPolygons<P extends Pick<DrawingPolygon, 'entityId' | 'ifcType' | 'color'>, G>(
+export function styleCutPolygons<P extends DrawingPolygon, G>(
   polygons: readonly P[],
   ctx: CutPolygonStyleContext,
   geometry: (polygon: P) => G,

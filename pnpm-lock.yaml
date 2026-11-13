@@ -1477,6 +1477,9 @@ importers:
       '@ifc-lite/geometry':
         specifier: workspace:^
         version: link:../geometry
+      '@tarikjabiri/dxf':
+        specifier: 2.8.9
+        version: 2.8.9
     devDependencies:
       '@ifc-lite/data':
         specifier: workspace:^
@@ -4954,6 +4957,9 @@ packages:
 
   '@tanstack/virtual-core@3.19.9':
     resolution: {integrity: sha512-Syiaf3w69dFyYv4o2mqJ1/2VtBJTNq5Hu5cVXfnzOuJKFpUojukQR13ZW+5NvdMJM7GFHeNPmveMNhoIubiFyA==}
+
+  '@tarikjabiri/dxf@2.8.9':
+    resolution: {integrity: sha512-ckBkEsWdlFTvqm2ARm23xX3EVouYsnNuZWS7P/oec1WCGTjzdd9jhmtQqyhh7TQSvQo4HunbDv4Vxiv07/8zsQ==}
 
   '@tauri-apps/api@2.11.1':
     resolution: {integrity: sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA==}
@@ -9862,6 +9868,8 @@ snapshots:
       react-dom: 19.3.1(react@19.3.1)
 
   '@tanstack/virtual-core@3.19.9': {}
+
+  '@tarikjabiri/dxf@2.8.9': {}
 
   '@tauri-apps/api@2.11.1':
     optional: true

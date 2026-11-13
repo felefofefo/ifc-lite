@@ -134,6 +134,12 @@ export interface GraphicStyle {
   // ─── Hatching ──────────────────────────────────────────────────────────────
   /** Hatch pattern type */
   hatchPattern?: HatchPatternType;
+  hatchBackgroundPattern?: HatchPatternType;
+  /** Publication fills for visible faces in projection. */
+  surfaceHatch?: {
+    background?: { pattern?: 'solid' | 'none'; color?: string };
+    foreground?: { pattern?: 'solid' | 'none' | 'diagonal' | 'cross-hatch'; color?: string };
+  };
   /** Hatch line spacing in mm */
   hatchSpacing?: number;
   /** Hatch angle in degrees */

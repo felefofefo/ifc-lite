@@ -19,7 +19,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ifc-lite/geometry": "workspace:^"
+    "@ifc-lite/geometry": "workspace:^",
+    "@tarikjabiri/dxf": "2.8.9"
   },
   "devDependencies": {
     "@ifc-lite/data": "workspace:^",

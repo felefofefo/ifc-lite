@@ -19,25 +19,46 @@
  * supply `coordinateTransform`, applied to every point — drawing and
  * underlay alike — right before it reaches the writer.
  *
- * Output targets DXF R12 (AC1009) — see `dxf/writer.ts`'s module docs for
- * why (handles/subclass markers are mandatory from R13 on; R12 needs
- * neither and is the universal interop baseline). There is accordingly no
- * `$INSUNITS` header variable; the unit (always metres) is stated in a
- * `999` comment at the top of the file instead, optionally naming the
- * `IfcProjectedCRS` via `metadataComment`.
+ * The default DXF R12 (AC1009) output uses closed boundaries. The R2007
+ * (AC1021) output adds native solid hatches and declares metres in
+ * `$INSUNITS`. Both formats can carry the CRS in a `999` comment via
+ * `metadataComment`.
  */
 
 import type { Drawing2D, DrawingLine, DrawingPolygon, LineCategory, Point2D } from './types.js';
+import { isPolygonCutLine, makeEntityKey } from './types.js';
 import { getLineStyle, getHatchPattern } from './styles.js';
 import { applyDxfPlacement } from './dxf/convert.js';
 import { DEFAULT_DXF_PLACEMENT, type DxfPlacement, type DxfUnderlay } from './dxf/types.js';
+import { ModernDxfWriter, type DxfObjectStroke } from './dxf/writer-modern.js';
 import { DxfWriter, type DxfLinetype } from './dxf/writer.js';
+
+export interface DXFHatchLayer {
+  pattern: 'solid' | 'diagonal' | 'cross-hatch';
+  spacing: number;
+  color: string;
+  lineWeight?: number;
+}
 
 export interface DXFExportOptions {
   /** Include lines whose `visibility === 'hidden'` (default true, matching SVG). */
   showHiddenLines?: boolean;
-  /** Include cut-polygon boundaries (hatch regions, represented as closed POLYLINE boundaries — see module docs). Default true. */
+  /** R12 writes cut boundaries; R2007 supports native solid hatches and UTF-8. Defaults to R12. */
+  version?: 'R12' | 'R2007';
+  /** Include cut-polygon boundaries and, in R2007, native solid hatches. Default true. */
   showHatching?: boolean;
+  /** Write R2007 pen properties on entities. */
+  objectStyles?: boolean;
+  /** Optional R2007 cut/projection appearance. Weights are paper millimetres. */
+  strokeStyle?: (
+    element: Pick<DrawingLine, 'entityId' | 'ifcType' | 'modelIndex'>,
+    role: 'cut' | 'projection',
+    line?: DrawingLine,
+  ) => DxfObjectStroke & { weightKey?: string };
+  /** Ordered native hatches, background first, in drawing metres. */
+  hatchLayers?: (polygon: DrawingPolygon) => readonly DXFHatchLayer[];
+  /** Optional R2007 pattern. An undefined result uses the default fill. Spacing is in drawing metres. */
+  hatchStyle?: (polygon: DrawingPolygon) => { pattern: 'solid' | 'none' | 'diagonal' | 'cross-hatch'; spacing: number } | undefined;
   /** DXF reference underlays composited alongside the drawing (issue #1782 parity). */
   underlays?: DXFUnderlayOptions[];
   /**
@@ -99,13 +120,16 @@ export class DXFExporter {
     const {
       showHiddenLines = true,
       showHatching = true,
+      version = 'R12',
       underlays = [],
       coordinateTransform = (p: Point2D) => p,
       metadataComment,
       polylineLayers = [],
     } = options;
 
-    const writer = new DxfWriter({ headerComment: metadataComment });
+    const writer = version === 'R2007'
+      ? new ModernDxfWriter(metadataComment)
+      : new DxfWriter({ headerComment: metadataComment });
     const map = (p: Point2D): Point2D => coordinateTransform(p);
 
     // Layer per line category, DASHED linetype for the hidden layer only —
@@ -119,10 +143,38 @@ export class DXFExporter {
     }
     const fillLayer = writer.layer(FILL_LAYER, '#666666');
 
+    const styledWriter = writer instanceof ModernDxfWriter ? writer : undefined;
+    const strokeStyle = styledWriter ? options.strokeStyle : undefined;
+    const outlined = new Set<string>();
+
     // Hatching first (bottom-most, like SVGExporter's hatching layer).
     if (showHatching) {
+      if (styledWriter && options.hatchLayers) {
+        for (const polygon of drawing.projectionPolygons ?? []) {
+          const layers = options.hatchLayers(polygon);
+          if (!layers.length) continue;
+          const outer = polygon.polygon.outer.map(map);
+          const holes = polygon.polygon.holes.map(hole => hole.map(map));
+          for (const item of layers) styledWriter.addHatch(outer, holes, fillLayer, item.pattern, item.spacing, item.color, item.lineWeight);
+        }
+      }
       for (const polygon of drawing.cutPolygons) {
-        this.writePolygonBoundary(writer, polygon, fillLayer, map);
+        const base = getHatchPattern(polygon.ifcType);
+        const layers = styledWriter ? options.hatchLayers?.(polygon) : undefined;
+        const hatch = styledWriter ? options.hatchStyle?.(polygon) : undefined;
+        const pattern = hatch?.pattern ?? (base.type === 'none' ? 'none' : 'solid');
+        if (!layers && pattern === 'none' && base.type === 'none') continue;
+        const outer = polygon.polygon.outer.map(map);
+        const holes = polygon.polygon.holes.map((hole) => hole.map(map));
+        if (styledWriter && layers) {
+          for (const item of layers) styledWriter.addHatch(outer, holes, fillLayer, item.pattern, item.spacing, item.color, item.lineWeight);
+        } else if (styledWriter && pattern !== 'none') {
+          styledWriter.addHatch(outer, holes, fillLayer, pattern, hatch?.spacing);
+        }
+        if (!strokeStyle && base.type !== 'none') {
+          writer.addPolyline(outer, fillLayer, true, base.strokeColor);
+          for (const hole of holes) writer.addPolyline(hole, fillLayer, true, base.strokeColor);
+        }
       }
     }
 
@@ -131,8 +183,38 @@ export class DXFExporter {
       this.writeUnderlay(writer, underlayOptions, map);
     }
 
+    if (strokeStyle && styledWriter) {
+      for (const polygon of drawing.cutPolygons) {
+        if (polygon.polygon.outer.length < 3) continue;
+        const style = strokeStyle(polygon, 'cut');
+        const layer = options.objectStyles ? categoryLayers.get('cut')!
+          : styledWriter.strokeLayer(CATEGORY_LAYER.cut, style.color, style.lineWeight, style.weightKey);
+        const pen = options.objectStyles ? style : undefined;
+        if (pen && !(pen.lineWeight > 0)) {
+          outlined.add(makeEntityKey(polygon.modelIndex, polygon.entityId));
+          continue;
+        }
+        styledWriter.addPolyline(polygon.polygon.outer.map(map), layer, true, undefined, pen);
+        for (const hole of polygon.polygon.holes) styledWriter.addPolyline(hole.map(map), layer, true, undefined, pen);
+        outlined.add(makeEntityKey(polygon.modelIndex, polygon.entityId));
+      }
+    }
+
     for (const line of drawing.lines) {
       if (!showHiddenLines && line.visibility === 'hidden') continue;
+      if (strokeStyle && styledWriter && (options.objectStyles || line.visibility !== 'hidden')) {
+        if (isPolygonCutLine(line) && outlined.has(makeEntityKey(line.modelIndex, line.entityId))) continue;
+        const role = line.category === 'cut' ? 'cut' : 'projection';
+        if (options.objectStyles || line.category === 'cut' || line.category === 'projection' || line.category === 'silhouette' || line.category === 'crease' || line.category === 'boundary') {
+          const style = strokeStyle(line, role, line);
+          if (options.objectStyles && !(style.lineWeight > 0)) continue;
+          const category = line.visibility === 'hidden' ? 'hidden' : line.category;
+          const layer = options.objectStyles ? categoryLayers.get(category)!
+            : styledWriter.strokeLayer(CATEGORY_LAYER[category], style.color, style.lineWeight, style.weightKey);
+          styledWriter.addLine(map(line.line.start), map(line.line.end), layer, undefined, options.objectStyles ? style : undefined);
+          continue;
+        }
+      }
       this.writeLine(writer, line, categoryLayers, map);
     }
 
@@ -168,21 +250,6 @@ export class DXFExporter {
     const start = map(line.line.start);
     const end = map(line.line.end);
     writer.addLine(start, end, layer, style.color);
-  }
-
-  private writePolygonBoundary(
-    writer: DxfWriter,
-    polygon: DrawingPolygon,
-    layer: string,
-    map: (p: Point2D) => Point2D,
-  ): void {
-    const pattern = getHatchPattern(polygon.ifcType);
-    if (pattern.type === 'none') return;
-    const outer = polygon.polygon.outer.map(map);
-    writer.addPolyline(outer, layer, true, pattern.strokeColor);
-    for (const hole of polygon.polygon.holes) {
-      writer.addPolyline(hole.map(map), layer, true, pattern.strokeColor);
-    }
   }
 
   private writeUnderlay(

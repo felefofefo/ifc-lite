@@ -105,6 +105,67 @@ describe('DXFExporter', () => {
     expect(lines.map((l) => l.layer).sort()).toEqual(['IFC-CUT', 'IFC-HIDDEN']);
   });
 
+  it('publishes cut and projection weights by layer without duplicate cut edges', () => {
+    const drawing = emptyDrawing();
+    drawing.lines = [makeLine(), makeLine({ category: 'projection' })];
+    drawing.cutPolygons = [makePolygon({ entityId: 1 })];
+    const doc = parseDxf(exportToDXF(drawing, {
+      version: 'R2007',
+      showHatching: false,
+      strokeStyle: (_element, role) => ({
+        color: '#000000',
+        lineWeight: role === 'cut' ? 0.35 : 0.13,
+      }),
+    }));
+    const strokes = doc.entities.filter((entity) => entity.kind === 'line' || entity.kind === 'polyline');
+    expect(strokes).toHaveLength(2);
+    expect(strokes.map((stroke) => stroke.lineweightMm)).toEqual([undefined, undefined]);
+    expect(strokes.map((stroke) => doc.layers.get(stroke.layer)?.lineweightMm)).toEqual([0.35, 0.13]);
+  });
+
+  it('writes native pattern hatches for mapped polygons and skips explicit no hatch', () => {
+    const drawing = emptyDrawing();
+    drawing.cutPolygons = [makePolygon(), makePolygon({ entityId: 3 })];
+    const dxf = exportToDXF(drawing, {
+      version: 'R2007',
+      hatchStyle: (polygon) => polygon.entityId === 2 ? { pattern: 'diagonal', spacing: 0.125 } : { pattern: 'none' },
+    });
+    expect(dxf.match(/\n0\nHATCH\n/g)).toHaveLength(1);
+    expect(dxf).toContain('\n2\nANSI31\n70\n0\n');
+  });
+
+  it('writes a native surface hatch without outlining the fragments', () => {
+    const drawing = emptyDrawing();
+    drawing.projectionPolygons = [makePolygon({ isCut: false })];
+    const dxf = exportToDXF(drawing, {
+      version: 'R2007',
+      hatchLayers: () => [{ pattern: 'diagonal', color: '#778899', spacing: 0.125 }],
+    });
+    expect(dxf.match(/\n0\nHATCH\n/g)).toHaveLength(1);
+    expect(dxf).toContain('\n2\nANSI31\n70\n0\n');
+    expect(dxf).not.toContain('\n0\nLWPOLYLINE\n');
+  });
+
+  it('writes object properties and two ordered hatch fills', () => {
+    const drawing = emptyDrawing();
+    drawing.lines = [makeLine({ category: 'projection' })];
+    drawing.cutPolygons = [makePolygon()];
+    const dxf = exportToDXF(drawing, {
+      version: 'R2007', objectStyles: true,
+      strokeStyle: () => ({ color: '#815132', lineWeight: 0.35, dash: [2, 1] }),
+      hatchLayers: () => [
+        { pattern: 'solid', color: '#f0dec0', spacing: 0 },
+        { pattern: 'diagonal', color: '#815132', spacing: 0.125 },
+      ],
+    });
+    const doc = parseDxf(dxf);
+    const line = doc.entities.find((entity) => entity.kind === 'line');
+    expect(line?.lineweightMm).toBe(0.35);
+    expect(line?.trueColor).toBe(0x815132);
+    expect(dxf.match(/\n0\nHATCH\n/g)).toHaveLength(2);
+    expect(dxf.indexOf('\n2\nSOLID\n70\n1\n')).toBeLessThan(dxf.indexOf('\n2\nANSI31\n70\n0\n'));
+  });
+
   it('omits hidden lines when showHiddenLines is false', () => {
     const drawing = emptyDrawing();
     drawing.lines = [makeLine({ category: 'hidden', visibility: 'hidden' })];
@@ -304,4 +365,24 @@ describe('DXFExporter', () => {
     expect(polys[0].vertices.map((v) => [v.x, v.y])).toEqual([[100, 50], [104, 50], [104, 53]]);
     expect(dxf).toContain('2\nSCAN-OUTLINE\n');
   });
+});
+
+it('exports native solid cut hatches in R2007 with the mapped outer and inner loops', () => {
+  const drawing = emptyDrawing();
+  const wall = makePolygon();
+  wall.polygon.holes = [[{ x: 1, y: 1 }, { x: 1, y: 2 }, { x: 2, y: 2 }, { x: 2, y: 1 }]];
+  drawing.cutPolygons.push(wall);
+  const options = {
+    version: 'R2007' as const,
+    coordinateTransform: ({ x, y }: { x: number; y: number }) => ({ x: x + 10, y: -y }),
+  };
+  const dxf = exportToDXF(drawing, options);
+  expect(dxf).toContain('\n$ACADVER\n1\nAC1021\n');
+  const hatch = dxf.split('\n0\nHATCH\n')[1]?.split('\n0\nENDSEC\n')[0];
+  expect(hatch).toContain('\n2\nSOLID\n70\n1\n');
+  expect(hatch).toContain('\n91\n2\n92\n3\n');
+  expect(hatch).toContain('\n92\n18\n');
+  expect(hatch).toContain('\n10\n11\n20\n-1\n');
+  expect(exportToDXF(drawing, { ...options, showHatching: false })).not.toContain('\n0\nHATCH\n');
+  expect(exportToDXF(drawing)).not.toContain('\n0\nHATCH\n');
 });

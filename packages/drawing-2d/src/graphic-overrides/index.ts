@@ -29,6 +29,7 @@ export type {
 // Rule Engine
 export {
   GraphicOverrideEngine,
+  LINE_WEIGHT_VALUES, LINE_STYLE_PRESET_DASHES,
   createOverrideEngine,
   ifcTypeCriterion,
   propertyCriterion,

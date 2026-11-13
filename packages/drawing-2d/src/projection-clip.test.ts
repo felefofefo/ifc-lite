@@ -153,3 +153,42 @@ describe('exact projection depth (#6615)', () => {
     } finally { generator.dispose(); }
   });
 });
+
+describe('visible surface polygons', () => {
+  it('keeps only the visible area, subtracting near faces and section caps', async () => {
+    const back = { ...box([0,0,-4], [4,4,-3]), expressId: 1, materialId: 41 };
+    const front = { ...box([0,0,-2], [2,4,-1]), expressId: 2, materialId: 42 };
+    const cut = { ...box([2,0,-2], [3,4,1]), expressId: 3, materialId: 43 };
+    const overhead = { ...box([0,0,1], [4,4,2]), expressId: 4 };
+    const hiddenBeyondDepth = { ...box([5,0,-10], [6,4,-8]), expressId: 5 };
+    const opening = { ...box([3,0,-1], [4,4,-0.5]), expressId: 6, ifcType: 'IfcOpeningElement' };
+    const drawing = await new Drawing2DGenerator().generate([back, front, cut, overhead, hiddenBeyondDepth, opening],
+      { plane, projectionDepth: 5, projectionBelowDepth: 5, scale: 100, includeHiddenLines: false, creaseAngle: 30 },
+      { useGPU: false, includeProjectionPolygons: true });
+    const areas = new Map<number, number>();
+    for (const { polygon, materialId, isCut } of drawing.projectionPolygons) {
+      expect(isCut).toBe(false);
+      const sum = polygon.outer.reduce((area, point, i, ring) => {
+        const next = ring[(i + 1) % ring.length];
+        return area + point.x * next.y - point.y * next.x;
+      }, 0);
+      areas.set(materialId!, (areas.get(materialId!) ?? 0) + Math.abs(sum / 2));
+    }
+    expect([...areas.entries()].sort()).toEqual([[41, 4], [42, 8]]);
+  });
+
+  it('splits intersecting slopes where their depth order changes', async () => {
+    const slope = (a: number, b: number, expressId: number): MeshData => ({
+      ...wedge(), expressId, materialId: expressId,
+      positions: new Float32Array([0,0,a,4,0,b,4,2,b,0,2,a]),
+      normals: new Float32Array(12), indices: new Uint32Array([0,1,2,0,2,3]),
+    });
+    const drawing = await new Drawing2DGenerator().generate([slope(-1,-3,1), slope(-3,-1,2)],
+      { plane, projectionDepth: 4, scale: 100, includeHiddenLines: false, creaseAngle: 30 },
+      { useGPU: false, includeProjectionPolygons: true });
+    expect(new Set(drawing.projectionPolygons.map((p) => p.materialId))).toEqual(new Set([1, 2]));
+    for (const { materialId, polygon } of drawing.projectionPolygons) {
+      expect(polygon.outer.every(({ x }) => materialId === 1 ? x <= 2.00001 : x >= 1.99999)).toBe(true);
+    }
+  });
+});

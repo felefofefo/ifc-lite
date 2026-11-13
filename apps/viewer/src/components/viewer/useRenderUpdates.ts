@@ -16,6 +16,7 @@ import type { CoordinateInfo } from '@ifc-lite/geometry';
 import type { Drawing2D } from '@ifc-lite/drawing-2d';
 import type { SectionPlane } from '@/store';
 import { useViewerStore } from '@/store';
+import { usePublicationFillPreview } from '@/hooks/usePublicationFillPreview';
 import { capOverlayBasis, capOverlayHasContent, capOverlayInput } from '@/lib/section/cap-overlay';
 import { capSignature } from '@/lib/section/section-cut-config';
 import { cuttingSectionBoxCapPlanes } from '@/lib/section/section-box-caps';
@@ -91,6 +92,7 @@ export function useRenderUpdates(params: UseRenderUpdatesParams): void {
     showHiddenLines,
   } = params;
   const fillMode = sectionPlane.capStyle?.fillMode;
+  const fillPreview = usePublicationFillPreview(true);
   // Only the box (and whether it cuts) moves the face caps: dragging the active PLANE must not re-upload them.
   // The face caps fill like the plane that holds the box, which need not be the active one.
   const { boxCapPlanes, boxFillMode } = useMemo(
@@ -132,7 +134,7 @@ export function useRenderUpdates(params: UseRenderUpdatesParams): void {
     if (!renderer || !isInitialized) return;
 
     if (activeTool === 'section' && drawing2D && drawingIsThisPlanes && capOverlayHasContent(drawing2D) && show3DOverlay) {
-      const { polygons, lines } = capOverlayInput(drawing2D, showHiddenLines, fillMode);
+      const { polygons, lines } = capOverlayInput(drawing2D, showHiddenLines, fillMode, fillPreview);
       const customPlane = capOverlayBasis(sectionPlane.custom);
 
       renderer.uploadSection2DOverlay(
@@ -149,7 +151,7 @@ export function useRenderUpdates(params: UseRenderUpdatesParams): void {
     }
 
     renderer.requestRender();
-  }, [drawing2D, drawingIsThisPlanes, activeTool, sectionPlane, isInitialized, coordinateInfo, show3DOverlay, showHiddenLines]);
+  }, [drawing2D, drawingIsThisPlanes, activeTool, sectionPlane, isInitialized, coordinateInfo, show3DOverlay, showHiddenLines, fillMode, fillPreview]);
 
   // The other cutting planes' caps (#7545), and the section box's face caps (#8696), which ride the
   // same path as face-picked planes. A cap is uploaded only while it was cut for the plane's CURRENT
@@ -167,14 +169,14 @@ export function useRenderUpdates(params: UseRenderUpdatesParams): void {
       if (!cap || !cap.signature.endsWith(`:${capSignature(plane)}`)) continue;
       if (!capOverlayHasContent(cap)) { renderer.clearSection2DOverlay(plane.id); continue; }
       const isBoxFace = boxCapPlanes.includes(plane);
-      const { polygons, lines } = capOverlayInput(cap, showHiddenLines, isBoxFace ? boxFillMode : fillMode);
+      const { polygons, lines } = capOverlayInput(cap, showHiddenLines, isBoxFace ? boxFillMode : fillMode, fillPreview);
       renderer.uploadSection2DOverlay(
         polygons, lines, plane.axis, plane.position, planeRange(plane, sectionBoundsRef?.current) ?? undefined,
         plane.flipped, capOverlayBasis(plane.custom), plane.id,
       );
     }
     renderer.requestRender();
-  }, [extraCaps, inactiveSectionPlanes, boxCapPlanes, boxFillMode, activeTool, isInitialized, coordinateInfo, show3DOverlay, showHiddenLines, fillMode]);
+  }, [extraCaps, inactiveSectionPlanes, boxCapPlanes, boxFillMode, activeTool, isInitialized, coordinateInfo, show3DOverlay, showHiddenLines, fillMode, fillPreview]);
 
   // Re-render when visibility, selection, or section plane changes
   useEffect(() => {

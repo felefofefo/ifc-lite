@@ -47,6 +47,8 @@ export interface CustomHatchSettings {
   spacing?: number;
   angle?: number;
   secondaryAngle?: number;
+  /** Shared origin for a hatch split across several visible regions. */
+  origin?: Point2D;
 }
 
 export class HatchGenerator {
@@ -89,7 +91,8 @@ export class HatchGenerator {
       pattern.angle,
       polygon.entityId,
       polygon.ifcType,
-      polygon.modelIndex
+      polygon.modelIndex,
+      customSettings?.origin
     );
     lines.push(...primaryLines);
 
@@ -101,7 +104,8 @@ export class HatchGenerator {
         pattern.secondaryAngle,
         polygon.entityId,
         polygon.ifcType,
-        polygon.modelIndex
+        polygon.modelIndex,
+        customSettings?.origin
       );
       lines.push(...secondaryLines);
     }
@@ -149,7 +153,8 @@ export class HatchGenerator {
     angleDegrees: number,
     entityId: number,
     ifcType: string,
-    modelIndex: number
+    modelIndex: number,
+    origin?: Point2D,
   ): HatchLine[] {
     if (spacing < EPSILON) return [];
 
@@ -191,11 +196,15 @@ export class HatchGenerator {
 
     const lines: HatchLine[] = [];
 
-    // Generate lines at regular intervals
-    for (let d = minD; d <= maxD; d += spacing) {
-      // Point on the perpendicular at distance d
-      const originX = d * perpX;
-      const originY = d * perpY;
+    const phase = origin ? origin.x * perpX + origin.y * perpY : minD;
+    const first = phase + Math.ceil((minD - phase) / spacing) * spacing;
+    const alongCenter = origin
+      ? ((bounds.min.x + bounds.max.x) * alongX + (bounds.min.y + bounds.max.y) * alongY) / 2
+      : 0;
+    // Surface fragments start on a common grid.
+    for (let d = first; d <= maxD; d += spacing) {
+      const originX = d * perpX + alongCenter * alongX;
+      const originY = d * perpY + alongCenter * alongY;
 
       // Line endpoints extending in both directions
       const lineStart: Point2D = {

@@ -111,7 +111,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
   const { handleExportSVG, handleExportDXF, handleExportPDF, handlePrint } = useDrawingExport({
     // Only the drawing on screen exports: a dialog left open while the cut
     // fails must not write the drawing the error now hides.
-    drawing: vm.exportableDrawing, displayOptions, sectionPlane: drawnPlane, activePresetId: vm.activePresetId,
+    drawing: vm.exportableDrawing, lineweights: vm.lineweights, lineweightTable: vm.lineweightSettings.table, materialHatches: vm.materialSettings.hatches, displayOptions, sectionPlane: drawnPlane, activePresetId: vm.activePresetId,
     entityColorMap: vm.entityColorMap, overridesEnabled: vm.overridesEnabled, overrideEngine: vm.overrideEngine,
     measure2DResults: vm.measure2DResults, polygonArea2DResults: vm.polygonArea2DResults,
     textAnnotations2D: vm.textAnnotations2D, cloudAnnotations2D: vm.cloudAnnotations2D,

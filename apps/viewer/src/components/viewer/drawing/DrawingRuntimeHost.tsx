@@ -21,8 +21,12 @@
 import { useEffect, useMemo } from 'react';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { useViewerStore } from '@/store';
+import { drawingProjectId } from '@/lib/drawing/drawing-project';
+import { setSavedViewsProject } from '@/store/savedSectionCutsStore';
 import { useIfc } from '@/hooks/useIfc';
 import { usePlacementCoordinateInfo } from '@/hooks/usePlacementCoordinateInfo';
+import { hasHatchPaint } from '@/lib/drawing/material-hatches';
+import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
 import { useDrawingGeneration } from '@/hooks/useDrawingGeneration';
 import { useExtraSectionCaps } from '@/hooks/useExtraSectionCaps';
 import { useDrawing2DPersistence } from '@/hooks/useDrawing2DPersistence';
@@ -40,6 +44,8 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   // `useDrawingMarkupRestoreOnLoad`'s module doc (#4153 vs #4159).
   useDrawing2DPersistence();
   useDrawingMarkupRestoreOnLoad();
+  const projectId = useViewerStore(drawingProjectId);
+  useEffect(() => setSavedViewsProject(projectId), [projectId]);
 
   // A drawing view is on screen when the panel is docked in the bottom strip,
   // floating, or popped out (#5493). Opening another bottom panel clears the
@@ -69,8 +75,13 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
 
   const hiddenEntities = useViewerStore((s) => s.hiddenEntities);
   const isolatedEntities = useViewerStore((s) => s.isolatedEntities);
+  const { hatches } = useDrawingMaterials(projectId);
+  const surfaceOverrides = useViewerStore((s) => s.overridesEnabled
+    && s.getActiveOverrideRules().some(({ style }) => hasHatchPaint(style.surfaceHatch)));
+  const includeProjectionPolygons = panelVisible && displayOptions.showHatching
+    && (surfaceOverrides || Object.values(hatches).some((style) => hasHatchPaint(style?.surface)));
   const { generateDrawing, isRegenerating } = useDrawingGeneration({
-    geometryResult, ifcDataStore, sectionPlane, displayOptions, typeVisibility,
+    geometryResult, ifcDataStore, sectionPlane, displayOptions, typeVisibility, includeProjectionPolygons,
     // Both sets hold global ids, so they cover every federated model.
     combinedHiddenIds: hiddenEntities, combinedIsolatedIds: isolatedEntities, computedIsolatedIds,
     models, panelVisible, activeTool, drawing: sourceDrawing,

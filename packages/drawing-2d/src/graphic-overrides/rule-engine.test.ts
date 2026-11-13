@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, it, expect } from 'vitest';
-import { createOverrideEngine, ifcTypeCriterion } from './rule-engine.js';
+import { GraphicOverrideEngine, createOverrideEngine, ifcTypeCriterion } from './rule-engine.js';
 import type { GraphicOverrideRule, ElementData } from './types.js';
 
 /**
@@ -144,4 +144,14 @@ describe('graphic-override subtype matching', () => {
     ]);
     expect(engine.applyOverrides(element('IfcWall')).matchedRules).toHaveLength(0);
   });
+});
+
+it('resolves named weights using the selected scale row and keeps custom weights fixed', () => {
+  const rule = supertypeRule('IfcWall');
+  const wall = element('IfcWall');
+  rule.style.lineWeight = 'medium';
+  expect(new GraphicOverrideEngine([rule]).applyOverrides(wall).style.lineWeight).toBe(0.35);
+  expect(new GraphicOverrideEngine([rule], { medium: 0.25 }).applyOverrides(wall).style.lineWeight).toBe(0.25);
+  rule.style.lineWeight = 0.32;
+  expect(new GraphicOverrideEngine([rule], { medium: 0.25 }).applyOverrides(wall).style.lineWeight).toBe(0.32);
 });

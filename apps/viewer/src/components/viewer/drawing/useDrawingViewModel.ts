@@ -25,6 +25,9 @@ import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import type { CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveDrawingPaperTheme } from './paper-theme';
 import { toggledConstructionProjection } from '@/lib/drawing/construction-projection';
+import { useDrawingLineweights } from './DrawingLineweights';
+import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
+import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
 
 /** The settings panels beside the canvas, as inspector tabs (#5495); they
@@ -60,6 +63,10 @@ export function useDrawingViewModel() {
   const pointCloudClassMask = useViewerStore((s) => s.pointCloudClassMask);
   const activeSheet = useViewerStore((s) => s.activeSheet);
   const sheetEnabled = useViewerStore((s) => s.sheetEnabled);
+  const publicationScale = sheetEnabled && activeSheet ? activeSheet.scale.factor : displayOptions.scale;
+  const lineweightSettings = useDrawingLineweights();
+  const materialSettings = useDrawingMaterials(lineweightSettings.projectId);
+  const lineweights = lineweightsAtScale(lineweightSettings.table, publicationScale);
   const titleBlockEditorVisible = useViewerStore((s) => s.titleBlockEditorVisible);
   const setTitleBlockEditorVisible = useViewerStore((s) => s.setTitleBlockEditorVisible);
 
@@ -137,8 +144,8 @@ export function useDrawingViewModel() {
   // Create graphic override engine with active rules
   const overrideEngine = useMemo(() => {
     const rules = getActiveOverrideRules();
-    return new GraphicOverrideEngine(rules);
-  }, [getActiveOverrideRules, activePresetId, customOverrideRules, overridesEnabled]);
+    return new GraphicOverrideEngine(rules, lineweights);
+  }, [getActiveOverrideRules, activePresetId, customOverrideRules, overridesEnabled, lineweights]);
 
   // Build entity color map from mesh material colors (for "Use IFC Materials" mode)
   const entityColorMap = useMemo(() => {
@@ -299,6 +306,7 @@ export function useDrawingViewModel() {
     drawing, sourceDrawing, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
     displayOptions, unitDisplayOverrides, typeVisibility,
     activePresetId, overridesEnabled, overrideEngine, entityColorMap,
+    lineweights, lineweightSettings, materialSettings, publicationScale,
     dxfUnderlays, pointCloudClassMask,
     activeSheet, sheetEnabled, titleBlockEditorVisible, setTitleBlockEditorVisible,
     sectionPlane, drawnPlane,

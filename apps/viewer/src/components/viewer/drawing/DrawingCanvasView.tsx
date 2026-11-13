@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { usePublicationFillPreview } from '@/hooks/usePublicationFillPreview';
 import { Spinner } from '@/components/ui/spinner';
 
 /** The Drawing panel's canvas region (#5494): the drawing with its markup and
@@ -17,6 +18,7 @@ import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
 
 export function DrawingCanvasView({ vm, layers }: { vm: DrawingViewModel; layers: DrawingLayers }) {
+  const fillPreview = usePublicationFillPreview();
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, displayOptions } = vm;
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
@@ -63,6 +65,7 @@ export function DrawingCanvasView({ vm, layers }: { vm: DrawingViewModel; layers
           overrideEngine={vm.overrideEngine}
           overridesEnabled={vm.overridesEnabled}
           entityColorMap={vm.entityColorMap}
+          fillPreview={fillPreview}
           useIfcMaterials={vm.activePresetId === 'preset-3d-colors'}
           measureMode={vm.measure2DMode}
           measureStart={vm.measure2DStart}

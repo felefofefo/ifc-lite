@@ -118,6 +118,7 @@ export const sheetsPdfEn = {
   'sheetsPdf.pdfView.scaleLabel': 'Scale',
   'sheetsPdf.pdfView.displayedScaleOption': 'As displayed (about 1:{scale})',
   'sheetsPdf.pdfView.displayedScaleUnavailable': 'As displayed (not available)',
+  'sheetsPdf.pdfView.savedScale': 'Saved scale (1:{scale})',
   'sheetsPdf.pdfView.customOption': 'Custom',
   'sheetsPdf.pdfView.customScaleError': 'Enter a whole number greater than zero, for example 75.',
   'sheetsPdf.pdfView.sectionCutNote': 'The active section cut is applied. Cut edges print with a heavy line weight.',

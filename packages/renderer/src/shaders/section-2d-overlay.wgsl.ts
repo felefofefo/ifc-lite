@@ -166,7 +166,7 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           @location(1) color:       vec4<f32>,
           // Per-polygon hatch: x=patternId, y=spacingPx, z=angleRad, w=widthPx
           @location(2) hatchA:      vec4<f32>,
-          // x=secondaryAngleRad, y=override mask (CAP_HATCH_OVERRIDE), z,w unused
+          // x=secondaryAngleRad, y=override mask (CAP_HATCH_OVERRIDE), z,w cut-plane coordinates
           @location(3) hatchB:      vec4<f32>,
           @location(4) hatchStroke: vec4<f32>,
         }
@@ -178,6 +178,7 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           @location(2) @interpolate(flat) hatchA:      vec4<f32>,
           @location(3) @interpolate(flat) hatchB:      vec4<f32>,
           @location(4) @interpolate(flat) hatchStroke: vec4<f32>,
+          @location(5) cutPosition: vec2<f32>,
         }
 
         @vertex
@@ -192,6 +193,7 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           output.hatchA = input.hatchA;
           output.hatchB = input.hatchB;
           output.hatchStroke = input.hatchStroke;
+          output.cutPosition = input.hatchB.zw;
           return output;
         }
 
@@ -259,8 +261,17 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           @location(1) objectId: vec4<f32>,
         }
 
+        fn modelHatchLine(u: f32, spacing: f32, width: f32, pixel: f32) -> f32 {
+          let phase = fract(u / spacing) * spacing;
+          let distance = min(phase, spacing - phase);
+          let coverage = 1.0 - smoothstep(max(0.0, width * 0.5 - pixel * 0.5), width * 0.5 + pixel * 0.5, distance);
+          return mix(coverage * min(1.0, width / pixel), min(1.0, width / spacing), smoothstep(spacing * 0.25, spacing, pixel));
+        }
+
         @fragment
         fn fs_main(input: VertexOutput) -> FragOut {
+          let cutDx = dpdx(input.cutPosition);
+          let cutDy = dpdy(input.cutPosition);
           if (extraClipClipped(extraClip, input.clipPos)) { discard; }
           // Per-polygon hatch (CutPolygon2D.hatch): each field whose override
           // bit is set replaces the uniform cap style; mask 0 (no hatch) keeps
@@ -274,7 +285,21 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           let width     = max(1.0, params.w);
           let angle2    = select(uniforms.params2.x, input.hatchB.x, (mask & 16u) != 0u);
 
-          let h = hatchIntensity(input.position.xy, patternId, spacing, angle, width, angle2);
+          var h = 0.0;
+          if ((mask & 64u) != 0u) {
+            let spacingM = max(params.y, 0.000001);
+            let widthM = max(params.w, 0.000001);
+            if (patternId == 1u || patternId == 2u) {
+              let pixel = max(abs(rotate(cutDx, angle).x) + abs(rotate(cutDy, angle).x), 0.000001);
+              h = modelHatchLine(rotate(input.cutPosition, angle).x, spacingM, widthM, pixel);
+              if (patternId == 2u) {
+                let pixel2 = max(abs(rotate(cutDx, angle2).x) + abs(rotate(cutDy, angle2).x), 0.000001);
+                h = max(h, modelHatchLine(rotate(input.cutPosition, angle2).x, spacingM, widthM, pixel2));
+              }
+            }
+          } else {
+            h = hatchIntensity(input.position.xy, patternId, spacing, angle, width, angle2);
+          }
           // Per-polygon colour (a material-layer slab fills with its own
           // IfcMaterial RGBA) overrides the uniform cap fill when present.
           // Polygons without a colour carry the sentinel alpha -1 and fall back
@@ -282,8 +307,9 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           // whichever base is chosen, so the architectural hatch still works.
           let useVertex = input.color.a >= 0.0;
           let baseFill = select(uniforms.capFillColor, input.color, useVertex);
-          let rgb = mix(baseFill.rgb, stroke.rgb, h * stroke.a);
+          let rgb = select(mix(baseFill.rgb, stroke.rgb, h * stroke.a), stroke.rgb, baseFill.a == 0.0);
           let a   = max(baseFill.a, h * stroke.a);
+          if (a <= 0.0) { discard; }
 
           var out: FragOut;
           out.color    = vec4<f32>(rgb, a);
