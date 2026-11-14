@@ -44,3 +44,14 @@ export function toggledConstructionProjection(
 ): boolean {
   return !constructionProjectionEnabled(preference, plane);
 }
+
+
+/** Older plans used the Projection preference for both bands. */
+export function overheadProjectionEnabled(
+  preference: boolean | undefined,
+  projection: ConstructionProjectionPreference | undefined,
+  plane: PlaneForProjection & { custom?: unknown },
+): boolean {
+  return plane.axis === 'down' && !plane.custom
+    && (preference ?? constructionProjectionEnabled(projection, plane));
+}

@@ -22,6 +22,9 @@ import {
   renameSavedSectionCut,
   saveCurrentSectionCut,
   setDrawingPublicationScale,
+  setDrawingProjectionDisplay,
+  setDrawingViewTemplate,
+  clearDeletedDrawingViewTemplate,
   useSavedSectionCuts,
 } from './savedSectionCutsStore.js';
 
@@ -93,6 +96,64 @@ describe('saved section cuts (#5514)', () => {
     state().updateDrawing2DDisplayOptions({ scale: 100 });
     applySavedSectionCut(id);
     assert.equal(state().drawing2DDisplayOptions.scale, 125);
+  });
+
+  it('starts new views without a template and clears a template without losing custom rules', () => {
+    state().setActiveTool('section');
+    const rule = { id: 'keep', name: 'Keep', enabled: true, priority: 1,
+      criteria: { type: 'all' as const }, style: { strokeColor: '#123456' } };
+    useViewerStore.setState({ activePresetId: 'drawing-template:previous', customOverrideRules: [rule] });
+    try {
+      const id = saveCurrentSectionCut('Detail');
+      assert.equal(state().activePresetId, null);
+      setDrawingViewTemplate('drawing-template:detail');
+      assert.equal(useSavedSectionCuts.getState().cuts[0]?.graphics?.presetId, 'drawing-template:detail');
+      setDrawingViewTemplate(null);
+      applySavedSectionCut(id);
+      assert.equal(state().activePresetId, null);
+      assert.deepEqual(state().customOverrideRules, [rule]);
+    } finally {
+      state().clearCustomRules();
+    }
+  });
+
+  it('clears a deleted template from every linked view and preserves other assignments', () => {
+    state().setActiveTool('section');
+    const deleted = 'drawing-template:deleted';
+    const first = saveCurrentSectionCut('First');
+    setDrawingViewTemplate(deleted);
+    const second = saveCurrentSectionCut('Second');
+    setDrawingViewTemplate(deleted);
+    const other = saveCurrentSectionCut('Other');
+    setDrawingViewTemplate('drawing-template:keep');
+    applySavedSectionCut(second);
+    clearDeletedDrawingViewTemplate(deleted);
+    assert.equal(state().activePresetId, null);
+    const { cuts } = useSavedSectionCuts.getState();
+    assert.equal(cuts.find(cut => cut.id === first)?.graphics?.presetId, null);
+    assert.equal(cuts.find(cut => cut.id === second)?.graphics?.presetId, null);
+    assert.equal(cuts.find(cut => cut.id === other)?.graphics?.presetId, 'drawing-template:keep');
+  });
+
+  it('restores separate projection choices and depth for each view', () => {
+    state().setActiveTool('section');
+    state().updateDrawing2DDisplayOptions({ showOverheadProjection: undefined });
+    const first = saveCurrentSectionCut('First');
+    setDrawingProjectionDisplay({ showConstructionProjection: false, showOverheadProjection: true, constructionProjectionDepth: 2 });
+    const second = saveCurrentSectionCut('Second');
+    setDrawingProjectionDisplay({ showConstructionProjection: true, showOverheadProjection: false, constructionProjectionDepth: 4 });
+    try {
+      applySavedSectionCut(first);
+      assert.equal(state().drawing2DDisplayOptions.showConstructionProjection, false);
+      assert.equal(state().drawing2DDisplayOptions.showOverheadProjection, true);
+      assert.equal(state().drawing2DDisplayOptions.constructionProjectionDepth, 2);
+      applySavedSectionCut(second);
+      assert.equal(state().drawing2DDisplayOptions.showConstructionProjection, true);
+      assert.equal(state().drawing2DDisplayOptions.showOverheadProjection, false);
+      assert.equal(state().drawing2DDisplayOptions.constructionProjectionDepth, 4);
+    } finally {
+      state().updateDrawing2DDisplayOptions({ showConstructionProjection: null, showOverheadProjection: undefined, constructionProjectionDepth: null });
+    }
   });
 
   it('reopens project views with independent scale, depth and graphic overrides', () => {

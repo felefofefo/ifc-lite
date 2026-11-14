@@ -19,9 +19,9 @@
 
 import type { StateCreator } from 'zustand';
 
-export type DrawingInspectorTab = 'overrides' | 'sheet' | 'underlays' | 'scan' | 'visibility' | 'annotations' | 'patterns';
+export type DrawingInspectorTab = 'display' | 'projection' | 'overrides' | 'sheet' | 'underlays' | 'scan' | 'visibility' | 'annotations' | 'patterns';
 
-const TAB_IDS: ReadonlySet<string> = new Set<DrawingInspectorTab>(['overrides', 'sheet', 'underlays', 'scan', 'visibility', 'annotations', 'patterns']);
+const TAB_IDS: ReadonlySet<string> = new Set<DrawingInspectorTab>(['display', 'projection', 'overrides', 'sheet', 'underlays', 'scan', 'visibility', 'annotations', 'patterns']);
 const STORAGE_KEY = 'ifc-lite:drawing-inspector-v1';
 
 /** Matches the settings drawers' previous fixed `w-72`. */

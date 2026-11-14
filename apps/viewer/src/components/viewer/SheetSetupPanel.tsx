@@ -27,7 +27,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
+import { DrawingSettingSwitch } from './drawing/DrawingSettingSwitch';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -158,11 +158,10 @@ export function SheetSetupPanel({ onOpenTitleBlockEditor }: SheetSetupPanelProps
       {/* The inspector tab (#5495) carries the title; this row keeps only the
           functional enable/disable toggle, not a redundant close button. */}
       <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/50">
-        <Label className="text-xs font-medium">{t('sheetsPdf.sheetSetup.enabledToggleLabel')}</Label>
-        <Switch
-          checked={sheetEnabled}
-          onCheckedChange={handleEnableSheet}
-        />
+        <div className="w-full">
+          <DrawingSettingSwitch label={t('sheetsPdf.sheetSetup.enabledToggleLabel')}
+            checked={sheetEnabled} onCheckedChange={handleEnableSheet} />
+        </div>
       </div>
 
       {/* Content */}
@@ -363,23 +362,10 @@ export function SheetSetupPanel({ onOpenTitleBlockEditor }: SheetSetupPanelProps
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="px-4 py-3 space-y-3">
-                  {/* Scale Bar Toggle */}
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">{t('sheetsPdf.sheetSetup.scaleBarLabel')}</Label>
-                    <Switch
-                      checked={activeSheet?.scaleBar.visible ?? true}
-                      onCheckedChange={toggleScaleBar}
-                    />
-                  </div>
-
-                  {/* North Arrow Toggle */}
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">{t('sheetsPdf.sheetSetup.northArrowLabel')}</Label>
-                    <Switch
-                      checked={(activeSheet?.northArrow.style ?? 'simple') !== 'none'}
-                      onCheckedChange={toggleNorthArrow}
-                    />
-                  </div>
+                  <DrawingSettingSwitch label={t('sheetsPdf.sheetSetup.scaleBarLabel')}
+                    checked={activeSheet?.scaleBar.visible ?? true} onCheckedChange={toggleScaleBar} />
+                  <DrawingSettingSwitch label={t('sheetsPdf.sheetSetup.northArrowLabel')}
+                    checked={(activeSheet?.northArrow.style ?? 'simple') !== 'none'} onCheckedChange={toggleNorthArrow} />
                 </div>
               </CollapsibleContent>
             </Collapsible>

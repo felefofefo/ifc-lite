@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useTranslation } from '@/i18n';
-import { isViewCodeAvailable } from '@/lib/drawing/view-markers';
-import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { isViewCodeAvailable, nextViewCode } from '@/lib/drawing/view-markers';
+import { renameSavedSectionCut, savedViewKind, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 
 export function ViewIdentityDialog({ name: initialName, code: initialCode, id, close, save }: {
   name: string; code: string; id?: string; close: () => void; save: (name: string, code: string) => void;
@@ -38,4 +38,17 @@ export function ViewIdentityDialog({ name: initialName, code: initialCode, id, c
       </form>
     </DialogContent>
   </Dialog>;
+}
+
+export function RenameViewIdentityDialog({ id, close }: { id: string; close: () => void }) {
+  const views = useSavedSectionCuts(s => s.cuts);
+  const view = views.find(candidate => candidate.id === id);
+  if (!view) return null;
+  return <ViewIdentityDialog
+    id={id}
+    name={view.name}
+    code={view.code ?? nextViewCode(savedViewKind(view), views)}
+    close={close}
+    save={(name, code) => renameSavedSectionCut(id, name, code)}
+  />;
 }

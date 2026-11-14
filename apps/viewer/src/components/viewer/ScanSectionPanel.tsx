@@ -14,6 +14,7 @@
  */
 
 import React from 'react';
+import { DrawingSettingSwitch } from './drawing/DrawingSettingSwitch';
 import { Label } from '@/components/ui/label';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
@@ -61,15 +62,8 @@ export function ScanSectionPanel({
       {/* The inspector tab (#5495) carries the title; no panel-owned header. */}
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
-        <label className="flex items-center justify-between gap-2 cursor-pointer">
-          <span className="text-xs font-medium">{t('scanSectionPanel.showScanPointsLabel')}</span>
-          <input
-            type="checkbox"
-            checked={showScanSection}
-            onChange={(e) => updateDisplayOptions({ showScanSection: e.target.checked })}
-            className="accent-primary"
-          />
-        </label>
+        <DrawingSettingSwitch label={t('scanSectionPanel.showScanPointsLabel')} checked={showScanSection}
+          onCheckedChange={checked => updateDisplayOptions({ showScanSection: checked })} />
 
         {!hasPointCloud && (
           <p className="text-xs text-muted-foreground px-0.5">
@@ -112,28 +106,10 @@ export function ScanSectionPanel({
           />
         </div>
 
-        <label className="flex items-center justify-between gap-2 cursor-pointer">
-          <span className="text-xs">{t('scanSectionPanel.includeInExportLabel')}</span>
-          <input
-            type="checkbox"
-            checked={scanSectionIncludeInExport}
-            onChange={(e) => updateDisplayOptions({ scanSectionIncludeInExport: e.target.checked })}
-            className="accent-primary"
-          />
-        </label>
-
-        <label
-          className="flex items-center justify-between gap-2 cursor-pointer"
-          title={t('scanSectionPanel.outlineTitle')}
-        >
-          <span className="text-xs">{t('scanSectionPanel.outlineLabel')}</span>
-          <input
-            type="checkbox"
-            checked={scanSectionOutline}
-            onChange={(e) => updateDisplayOptions({ scanSectionOutline: e.target.checked })}
-            className="accent-primary"
-          />
-        </label>
+        <DrawingSettingSwitch label={t('scanSectionPanel.includeInExportLabel')} checked={scanSectionIncludeInExport}
+          onCheckedChange={checked => updateDisplayOptions({ scanSectionIncludeInExport: checked })} />
+        <DrawingSettingSwitch label={t('scanSectionPanel.outlineLabel')} title={t('scanSectionPanel.outlineTitle')}
+          checked={scanSectionOutline} onCheckedChange={checked => updateDisplayOptions({ scanSectionOutline: checked })} />
 
         {scanSectionOutline && (
           <div className="flex flex-col gap-1">

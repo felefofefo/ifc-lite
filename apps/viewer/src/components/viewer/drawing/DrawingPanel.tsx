@@ -23,7 +23,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Palette, PanelLeft, RefreshCw, Video } from 'lucide-react';
+import { Box, PanelLeft, RefreshCw, Video } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -43,11 +43,9 @@ import { DrawingCanvasView } from './DrawingCanvasView';
 import { DrawingStatusLine } from './DrawingStatusLine';
 import { DrawingInspector } from './DrawingInspector';
 import type { VerticalViewKind } from './PlaceVerticalView';
-import { supportsDrawingProjection } from '@/lib/drawing/view-placement';
 import { DrawingViewsBrowser } from './DrawingViewsBrowser';
 import { DrawingSectionCutMenu } from './DrawingSectionCutMenu';
 import { useBottomStripHeaderSlot } from '../bottom-strip-header-slot';
-import { constructionProjectionEnabled } from '@/lib/drawing/construction-projection';
 
 /** Labels need ~1180px for one row; icons alone fit from ~640px; below that
  *  the rarest items overflow (see DrawingToolbar). */
@@ -185,12 +183,6 @@ export function DrawingPanel(): React.ReactElement {
         <PanelLeft className="h-3.5 w-3.5" />
         {tier !== 'narrow' && t('section2d.views.title')}
       </Button>
-      {selected3D && <Button variant="ghost" size={tier === 'narrow' ? 'icon-xs' : 'sm'}
-        aria-pressed={vm.openDrawer === 'overrides'} aria-label={t('section2d.drawers.overrides')}
-        onClick={() => vm.toggleDrawer('overrides')} className={tier === 'narrow' ? undefined : 'h-7 gap-1 px-2 text-xs'}>
-        <Palette className="h-3.5 w-3.5" />
-        {tier !== 'narrow' && t('section2d.drawers.overrides')}
-      </Button>}
       <DrawingMaterials settings={vm.materialSettings} compact={tier === 'narrow'} />
       <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale} settings={vm.lineweightSettings}
         compact={tier === 'narrow'} onScaleChange={setDrawingPublicationScale} />
@@ -252,28 +244,8 @@ export function DrawingPanel(): React.ReactElement {
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
         selectHint={t(navigationPreset === 'trackpad' ? 'section2d.tip.trackpad' : 'section2d.tip.pan')}
         hasMarkup={vm.hasMarkup} onClearMarkup={vm.clearAllAnnotations2D}
-        display={{
-          symbolic: displayOptions.useSymbolicRepresentations,
-          ifcAnnotations: displayOptions.showIfcAnnotations,
-          projection: constructionProjectionEnabled(displayOptions.showConstructionProjection, sectionPlane),
-          overlay3D: displayOptions.show3DOverlay,
-          printPreview: displayOptions.showPrintPreview,
-        }}
-        ifcAnnotationsAvailable={sectionPlane.axis === 'down'}
-        projectionAvailable={supportsDrawingProjection(sectionPlane)}
-        onToggleSymbolic={vm.toggleSymbolicRepresentations}
-        onToggleIfcAnnotations={vm.toggleIfcAnnotations}
-        onToggleProjection={vm.toggleConstructionProjection}
-        onToggleOverlay3D={vm.toggle3DOverlay}
-        onTogglePrintPreview={vm.togglePrintPreview}
-        openDrawer={vm.openDrawer}
-        drawerActivity={{
-          overrides: vm.activePresetId !== null,
-          sheet: vm.sheetEnabled,
-          underlays: vm.dxfUnderlays.length > 0,
-          scan: layers.scanSectionLayer.hasPointCloud && displayOptions.showScanSection,
-        }}
-        onToggleDrawer={vm.toggleDrawer}
+        settingsOpen={vm.openDrawer !== null}
+        onToggleSettings={() => vm.openDrawer ? vm.closeDrawer() : vm.toggleDrawer('display')}
         zoomPercent={Math.round(vm.viewTransform.scale * 100)}
         onZoomIn={vm.zoomIn} onZoomOut={vm.zoomOut} onFit={vm.fitToView}
         pinned={vm.isPinned} onTogglePinned={vm.togglePinned}

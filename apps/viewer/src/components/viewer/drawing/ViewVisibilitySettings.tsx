@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { useState } from 'react';
+import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTranslation } from '@/i18n';
@@ -25,19 +26,18 @@ export function ViewVisibilitySettings({ annotations = false }: { annotations?: 
     try { updateViewSettings(cut.id, patch); setFailed(false); } catch { setFailed(true); }
   }
   return <div className="h-full space-y-3 overflow-y-auto p-3 text-xs">
-    {annotations && <label className="flex items-center gap-2">
-      <input type="checkbox" checked={ifcAnnotations} onChange={e => {
-        const showIfcAnnotations = e.target.checked;
-        if (cut?.display) save({ display: { ...cut.display, showIfcAnnotations } });
-        useViewerStore.getState().updateDrawing2DDisplayOptions({ showIfcAnnotations });
-      }} />{t('section2d.display.ifcAnnotations')}
-    </label>}
+    {annotations && (
+      <DrawingSettingSwitch label={t('section2d.display.ifcAnnotations')} checked={ifcAnnotations}
+        onCheckedChange={showIfcAnnotations => {
+          if (cut?.display) save({ display: { ...cut.display, showIfcAnnotations } });
+          useViewerStore.getState().updateDrawing2DDisplayOptions({ showIfcAnnotations });
+        }} />
+    )}
     {!cut && <p className="text-muted-foreground">{t('section2d.viewSettings.selectSaved')}</p>}
     {annotations && cut && savedViewKind(cut) === 'plan' && (['section', 'elevation'] as const).map(kind =>
-      <label key={kind} className="flex items-center gap-2">
-        <input type="checkbox" checked={markers[kind]} onChange={e => save({ markers: { ...markers, [kind]: e.target.checked } })} />
-        {t(kind === 'section' ? 'section2d.viewSettings.showSections' : 'section2d.viewSettings.showElevations')}
-      </label>)}
+      <DrawingSettingSwitch key={kind} checked={markers[kind]}
+        label={t(kind === 'section' ? 'section2d.viewSettings.showSections' : 'section2d.viewSettings.showElevations')}
+        onCheckedChange={checked => save({ markers: { ...markers, [kind]: checked } })} />)}
     {!annotations && cut && <>
       <p className="text-muted-foreground">{t('section2d.viewSettings.visibilityHelp')}</p>
       <Button variant="outline" size="sm" onClick={() => save({ visibility: captureViewVisibility(useViewerStore.getState()) })}>

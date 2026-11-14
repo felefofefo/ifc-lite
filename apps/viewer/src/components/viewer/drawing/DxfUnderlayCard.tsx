@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import React, { useState } from 'react';
+import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { Eye, EyeOff, Trash2, ChevronDown, ChevronRight, AlertTriangle, Crosshair } from 'lucide-react';
 import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
@@ -205,24 +206,14 @@ export function UnderlayCard({
         const isAuto = state.georeferenced === undefined;
         const effectiveChecked = resolveEffectiveGeoreferenced(state, georeferenceAvailable);
         return (
-          <label
-            className="flex items-center justify-between gap-2 cursor-pointer px-1"
-            title={
-              isAuto
-                ? t('drawingUnderlay.dxf.georefAutoHint', { state: t(effectiveChecked ? 'drawingUnderlay.dxf.onState' : 'drawingUnderlay.dxf.offState') })
-                : t('drawingUnderlay.dxf.georefManualHint')
-            }
-          >
-            <span className="text-2xs text-muted-foreground">
-              {t('drawingUnderlay.dxf.georefToggleLabel')}{isAuto ? t('drawingUnderlay.dxf.georefAutoSuffix') : ''}
-            </span>
-            <input
-              type="checkbox"
-              checked={effectiveChecked}
-              onChange={(e) => setDxfUnderlayGeoreferenced(state.id, e.target.checked)}
-              className="accent-primary"
-            />
-          </label>
+          <DrawingSettingSwitch
+            title={isAuto
+              ? t('drawingUnderlay.dxf.georefAutoHint', { state: t(effectiveChecked ? 'drawingUnderlay.dxf.onState' : 'drawingUnderlay.dxf.offState') })
+              : t('drawingUnderlay.dxf.georefManualHint')}
+            label={t('drawingUnderlay.dxf.georefToggleLabel') + (isAuto ? t('drawingUnderlay.dxf.georefAutoSuffix') : '')}
+            checked={effectiveChecked}
+            onCheckedChange={checked => setDxfUnderlayGeoreferenced(state.id, checked)}
+          />
         );
       })()}
 

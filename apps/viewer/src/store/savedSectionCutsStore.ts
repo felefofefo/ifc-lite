@@ -40,7 +40,7 @@ export interface SavedSectionCutPlane {
 export const SAVED_VIEW_KINDS = ['plan', 'section', 'elevation', '3d'] as const;
 export type SavedViewKind = typeof SAVED_VIEW_KINDS[number];
 type ViewDisplay = Pick<ViewerState['drawing2DDisplayOptions'],
-  'showConstructionProjection' | 'constructionProjectionDepth' | 'showHiddenLines' | 'showHatching' |
+  'showConstructionProjection' | 'showOverheadProjection' | 'constructionProjectionDepth' | 'showHiddenLines' | 'showHatching' |
   'useSymbolicRepresentations' | 'showIfcAnnotations' | 'showSurfacePatterns3D' | 'distantElements'>;
 
 export interface SavedSectionCut {
@@ -187,6 +187,7 @@ export function saveCurrentSectionCut(name: string, kind?: SavedViewKind, scale?
   cut.code = validateViewCode(savedViewKind(cut), code);
   commitCuts({ cuts: [...useSavedSectionCuts.getState().cuts, cut], activeCutId: cut.id,
     drawingPlaneId: savedViewKind(cut) === '3d' ? undefined : drawingPlaneToSave(useViewerStore.getState()).id });
+  useViewerStore.setState({ activePresetId: null });
   return cut.id;
 }
 
@@ -235,9 +236,10 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     planElevation: existing?.planElevation !== undefined && drawingPlane.axis === 'down'
       ? cutElevationForPosition(drawingPlane.position) ?? existing.planElevation : undefined,
     publicationScale: scale ?? (kind !== '3d' && state.sheetEnabled && state.activeSheet ? state.activeSheet.scale.factor : display.scale),
-    graphics: { presetId: state.activePresetId, enabled: state.overridesEnabled, rules: structuredClone(state.customOverrideRules) },
+    graphics: { presetId: existing ? state.activePresetId : null, enabled: state.overridesEnabled, rules: structuredClone(state.customOverrideRules) },
     display: {
       showConstructionProjection: newPlane ? true : display.showConstructionProjection,
+      showOverheadProjection: newPlane ? undefined : display.showOverheadProjection,
       constructionProjectionDepth: newPlane ? null : display.constructionProjectionDepth,
       showSurfacePatterns3D: display.showSurfacePatterns3D ?? false,
       distantElements: newPlane ? undefined : display.distantElements,
@@ -309,16 +311,15 @@ export function applySavedSectionCut(id: string, restoreCamera = true): void {
     if (state.activeTool === 'section') state.setActiveTool('select');
   }
   if (cut.visibility) useViewerStore.setState(restoreViewVisibility(state, cut.visibility));
-  if (cut.graphics) {
-    useViewerStore.setState({
-      activePresetId: cut.graphics.presetId, overridesEnabled: true,
-      customOverrideRules: structuredClone(cut.graphics.rules),
-    });
-  }
-  if (cut.display) state.updateDrawing2DDisplayOptions({
-    ...cut.display, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
+  useViewerStore.setState({
+    activePresetId: cut.graphics?.presetId ?? null,
+    overridesEnabled: true,
+    customOverrideRules: structuredClone(cut.graphics?.rules ?? []),
   });
-  else state.updateDrawing2DDisplayOptions({ distantElements: undefined });
+  if (cut.display) state.updateDrawing2DDisplayOptions({
+    ...cut.display, showOverheadProjection: cut.display.showOverheadProjection, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
+  });
+  else state.updateDrawing2DDisplayOptions({ distantElements: undefined, showOverheadProjection: undefined });
   useSavedSectionCuts.setState({ activeCutId: id,
     drawingPlaneId: savedViewKind(cut) === '3d' ? undefined : useViewerStore.getState().sectionPlane.id });
   if (cut.publicationScale) {
@@ -421,13 +422,26 @@ export function setDrawingViewTemplate(id: string | null): void {
   const { activeCutId, cuts } = useSavedSectionCuts.getState();
   const active = cuts.find(cut => cut.id === activeCutId);
   if (active) updateViewSettings(active.id, { graphics: {
-    ...active.graphics, presetId: id ?? 'preset-3d-colors', enabled: true,
-    rules: active.graphics?.rules ?? structuredClone(state.customOverrideRules),
+    presetId: id, enabled: true,
+    rules: structuredClone(state.customOverrideRules),
   } });
-  useViewerStore.setState({ activePresetId: id ?? 'preset-3d-colors', overridesEnabled: true });
+  useViewerStore.setState({ activePresetId: id, overridesEnabled: true });
 }
 
-export function setDrawingProjectionDisplay(patch: Partial<Pick<ViewDisplay, 'showHiddenLines' | 'distantElements'>>): void {
+export function clearDeletedDrawingViewTemplate(id: string): void {
+  const { cuts } = useSavedSectionCuts.getState();
+  if (cuts.some(cut => cut.graphics?.presetId === id)) {
+    commitCuts({ cuts: cuts.map(cut => cut.graphics?.presetId === id
+      ? { ...cut, graphics: { ...cut.graphics, presetId: null }, updatedAt: Date.now() }
+      : cut) });
+  }
+  if (useViewerStore.getState().activePresetId === id) {
+    useViewerStore.setState({ activePresetId: null });
+  }
+}
+
+export function setDrawingProjectionDisplay(patch: Partial<Pick<ViewDisplay, 'showHiddenLines' | 'distantElements' | 'constructionProjectionDepth'
+  | 'showConstructionProjection' | 'showOverheadProjection'>>): void {
   const state = useViewerStore.getState();
   const { activeCutId, cuts } = useSavedSectionCuts.getState();
   const active = cuts.find(view => view.id === activeCutId);

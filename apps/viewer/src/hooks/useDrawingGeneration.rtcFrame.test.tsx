@@ -313,7 +313,9 @@ describe('2D drawing RTC publication and races (#4799)', () => {
         await turns(3);
       });
       assert.ok(publications.length > 0, 'the retried drawing must publish');
-      assert.deepEqual(publications.at(-1)?.lines.map((line) => line.line), [
+      const drawing = publications.at(-1)!;
+      assert.ok(drawing.cutPolygons.some((polygon) => polygon.entityId === 1), 'the wall cut fill remains');
+      assert.deepEqual(drawing.lines.filter((line) => line.category === 'silhouette').map((line) => line.line), [
         { start: { x: 0, y: 0 }, end: { x: 2, y: 0 } },
         { start: { x: 2, y: 0 }, end: { x: 2, y: 2 } },
       ]);
@@ -369,15 +371,16 @@ describe('2D drawing RTC publication and races (#4799)', () => {
         await turns(4);
       });
       assert.equal(publications.length, 1, 'only the current frame B may publish');
-      const bLines = publications[0].lines.map((line) => line.line);
-      assert.deepEqual(bLines, [
+      const bLines = publications[0].lines;
+      const bSymbols = bLines.filter((line) => line.category === 'silhouette').map((line) => line.line);
+      assert.deepEqual(bSymbols, [
         { start: { x: 0, y: 0 }, end: { x: 2, y: 0 } },
         { start: { x: 2, y: 0 }, end: { x: 2, y: 2 } },
       ], 'the published drawing must contain frame B\'s two-segment symbol');
 
       await act(async () => { await harness.run(); });
       assert.equal(requests.length, 2, 'a repeated B drawing must reuse B, not stale A');
-      assert.deepEqual(publications.at(-1)?.lines.map((line) => line.line), bLines);
+      assert.deepEqual(publications.at(-1)?.lines, bLines);
     } finally {
       restore();
     }

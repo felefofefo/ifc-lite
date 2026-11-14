@@ -2,19 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * Named section cuts, selectable as the Drawing panel's source (#5514,
- * charter #5478). Replaces the header's plain cut label with a menu:
- * apply, rename, or delete a saved cut.
- * Applying a cut writes `sectionPlane` (`store/savedSectionCutsStore.ts`),
- * so BCF viewpoint capture and the floor-plan command pick it up through
- * the same Section/Drawing contract every other section writer uses —
- * this component only manages the named list, not their reuse.
- */
-
+import { useState } from 'react';
 import { ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useDialogs } from '@/components/ui/confirm-dialog';
+import { RenameViewIdentityDialog } from './ViewIdentityFields';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +16,6 @@ import { useTranslation } from '@/i18n';
 import {
   applySavedSectionCut,
   removeSavedSectionCut,
-  renameSavedSectionCut,
   useSavedSectionCuts,
 } from '@/store/savedSectionCutsStore';
 
@@ -38,65 +28,66 @@ export interface DrawingSectionCutMenuProps {
 
 export function DrawingSectionCutMenu({ cutLabel, displayLabel }: DrawingSectionCutMenuProps) {
   const { t } = useTranslation();
-  const { promptDialog } = useDialogs();
   const cuts = useSavedSectionCuts((s) => s.cuts);
   const activeCutId = useSavedSectionCuts((s) => s.activeCutId);
 
-  const handleRename = async (id: string, currentName: string) => {
-    const name = (await promptDialog({ description: t('section2d.savedCuts.renamePrompt'), defaultValue: currentName }))?.trim();
-    if (name) renameSavedSectionCut(id, name);
-  };
+  const [open, setOpen] = useState(false);
+  const [renameId, setRenameId] = useState<string>();
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost" size="sm" className="h-6 min-w-0 gap-1 px-1.5 text-xs font-medium text-foreground tabular-nums"
-          aria-label={t('section2d.savedCuts.menuLabel', { label: cutLabel })}
-        >
-          <span className="truncate">{displayLabel ?? cutLabel}</span>
-          <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuLabel className="text-xs">{t('section2d.savedCuts.savedGroup')}</DropdownMenuLabel>
-        {cuts.length === 0 && (
-          <div className="px-2 py-1.5 text-xs text-muted-foreground">{t('section2d.savedCuts.empty')}</div>
-        )}
-        {cuts.map((cut) => (
-          <div
-            key={cut.id}
-            data-testid="saved-section-cut-row"
-            className="flex items-center gap-1 rounded-sm px-1 py-0.5 hover:bg-accent"
+    <>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost" size="sm" className="h-6 min-w-0 gap-1 px-1.5 text-xs font-medium text-foreground tabular-nums"
+            aria-label={t('section2d.savedCuts.menuLabel', { label: cutLabel })}
           >
-            <button
-              type="button"
-              title={t('section2d.savedCuts.applyTitle')}
-              aria-current={activeCutId === cut.id ? 'true' : undefined}
-              onClick={() => applySavedSectionCut(cut.id)}
-              className="min-w-0 flex-1 truncate rounded-sm px-1 py-1 text-left text-xs"
+            <span className="truncate">{displayLabel ?? cutLabel}</span>
+            <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-64"
+          onCloseAutoFocus={event => { if (renameId) event.preventDefault(); }}>
+          <DropdownMenuLabel className="text-xs">{t('section2d.savedCuts.savedGroup')}</DropdownMenuLabel>
+          {cuts.length === 0 && (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">{t('section2d.savedCuts.empty')}</div>
+          )}
+          {cuts.map((cut) => (
+            <div
+              key={cut.id}
+              data-testid="saved-section-cut-row"
+              className="flex items-center gap-1 rounded-sm px-1 py-0.5 hover:bg-accent"
             >
-              {cut.name}
-            </button>
-            <button
-              type="button"
-              title={t('section2d.savedCuts.renameTitle')}
-              onClick={() => handleRename(cut.id, cut.name)}
-              className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-            <button
-              type="button"
-              title={t('section2d.savedCuts.deleteTitle')}
-              onClick={() => removeSavedSectionCut(cut.id)}
-              className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </div>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+              <button
+                type="button"
+                title={t('section2d.savedCuts.applyTitle')}
+                aria-current={activeCutId === cut.id ? 'true' : undefined}
+                onClick={() => applySavedSectionCut(cut.id)}
+                className="min-w-0 flex-1 truncate rounded-sm px-1 py-1 text-left text-xs"
+              >
+                {cut.name}
+              </button>
+              <button
+                type="button"
+                title={t('section2d.savedCuts.renameTitle')}
+                onClick={() => { setOpen(false); setRenameId(cut.id); }}
+                className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                title={t('section2d.savedCuts.deleteTitle')}
+                onClick={() => removeSavedSectionCut(cut.id)}
+                className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {renameId && <RenameViewIdentityDialog id={renameId} close={() => setRenameId(undefined)} />}
+    </>
   );
 }

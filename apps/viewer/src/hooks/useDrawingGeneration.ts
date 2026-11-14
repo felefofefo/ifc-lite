@@ -18,12 +18,12 @@ import type { IfcSourceBytes } from '@ifc-lite/parser';
 
 import { useCallback, useEffect, useRef } from 'react';
 import {
+  boundsExtendLine,
   Drawing2DGenerator,
   createSectionConfig,
   currentFloorBands,
   storeyFloorsFromMeshes,
   type Drawing2D,
-  type DrawingLine,
   type SectionConfig,
   type ProfileEntry,
 } from '@ifc-lite/drawing-2d';
@@ -47,7 +47,7 @@ import { FIRST_SECTION_PLANE_NAME } from '@/lib/section/section-plane-set';
 import { restoredCutPosition } from '@/lib/section/section-distance';
 import { markActiveDrawingGenerationCompleted } from '@/lib/drawing/active-canvas-snapshot';
 import { supportsDrawingProjection, verticalProjectionDepth } from '@/lib/drawing/view-placement';
-import { constructionProjectionEnabled } from '@/lib/drawing/construction-projection';
+import { constructionProjectionEnabled, overheadProjectionEnabled } from '@/lib/drawing/construction-projection';
 // The winding-robust Rust `meshOutline2d` binding (issue #979) is gitignored →
 // CI-built, so reference it defensively: against an older wasm bundle it's
 // undefined and projection falls back to the TS mesh silhouette. The wasm
@@ -115,7 +115,7 @@ interface UseDrawingGenerationParams {
       bitangent: [number, number, number];
     };
   };
-  displayOptions: { showHiddenLines: boolean; useSymbolicRepresentations: boolean; show3DOverlay: boolean; scale: number; showConstructionProjection: boolean | null; constructionProjectionDepth?: number | null };
+  displayOptions: { showHiddenLines: boolean; useSymbolicRepresentations: boolean; show3DOverlay: boolean; scale: number; showConstructionProjection: boolean | null; showOverheadProjection?: boolean; constructionProjectionDepth?: number | null };
   /**
    * Class-level Visibility toggles (Spaces, Openings, Site, Virtual Elements,
    * Spatial Zones, Annotations). Global, not 3D-only — see the filter in
@@ -174,7 +174,6 @@ export function useDrawingGeneration({
   // Only re-parse when model or display options change
   const symbolicCacheRef = useRef<{
     lines: SymbolicDrawingLine[];
-    entities: Set<number>;
     sourceId: string | null;
     useSymbolic: boolean;
   } | null>(null);
@@ -231,16 +230,16 @@ export function useDrawingGeneration({
       setDrawingProgress(0, 'Initializing...');
     }
 
-    // Parse symbolic representations if enabled (for hybrid mode)
+    // Parse IFC plan symbols for the drawing overlay.
     // OPTIMIZATION: Cache symbolic data - it doesn't change with section position
     let symbolicLines: SymbolicDrawingLine[] = [];
-    let entitiesWithSymbols = new Set<number>();
 
     // Cache by source identity plus the exact parse frame. Equal byte lengths
     // and sibling federation models are intentionally not interchangeable.
     const modelCacheKey = drawingRtcContextKey;
 
-    const useSymbolic = displayOptions.useSymbolicRepresentations && !!ifcDataStore?.source;
+    const useSymbolic = displayOptions.useSymbolicRepresentations && !!ifcDataStore?.source
+      && sectionPlane.axis === 'down' && !sectionPlane.custom;
 
     // Check if we can use cached symbolic data
     const cache = symbolicCacheRef.current;
@@ -255,7 +254,6 @@ export function useDrawingGeneration({
       if (cacheValid) {
         // Use cached data - FAST PATH
         symbolicLines = cache.lines;
-        entitiesWithSymbols = cache.entities;
       } else {
         // Need to parse - only on first load or when model changes
         try {
@@ -277,19 +275,16 @@ export function useDrawingGeneration({
           // symbolic parsing would require iterating over each model separately.
           const symbolic = await roomDrawingSymbolic(ifcDataStore!, drawingRtcContext!);
           symbolicLines = symbolic.lines;
-          entitiesWithSymbols = symbolic.entities;
 
           // Cache the parsed data
           symbolicCacheRef.current = {
             lines: symbolicLines,
-            entities: entitiesWithSymbols,
             sourceId: modelCacheKey,
             useSymbolic,
           };
         } catch (error) {
           console.warn('Symbolic parsing failed:', error);
           symbolicLines = [];
-          entitiesWithSymbols = new Set<number>();
         }
       }
     } else if (!useSymbolic) {
@@ -302,7 +297,12 @@ export function useDrawingGeneration({
     const projectionSupported = supportsDrawingProjection(sectionPlane);
     const manualDepth = displayOptions.constructionProjectionDepth;
     const boundedProjection = typeof manualDepth === 'number' && Number.isFinite(manualDepth) && manualDepth >= 0;
-    const projectionOn = projectionSupported && constructionProjectionEnabled(displayOptions.showConstructionProjection, sectionPlane)
+    const normalProjectionOn = constructionProjectionEnabled(displayOptions.showConstructionProjection, sectionPlane);
+    const overheadProjectionOn = overheadProjectionEnabled(
+      displayOptions.showOverheadProjection, displayOptions.showConstructionProjection, sectionPlane,
+    );
+    const planProjection = sectionPlane.axis === 'down' && !sectionPlane.custom;
+    const projectionOn = projectionSupported && (normalProjectionOn || overheadProjectionOn)
       && (!boundedProjection || manualDepth > 0);
 
     // ── Construction projection profiles (issue #979) ────────────────────────
@@ -611,6 +611,8 @@ export function useDrawingGeneration({
           // hide geometry behind them (#6615). Overhead stays dashed separately.
           includeHiddenLines: projectionOn,
           includeProjection: projectionOn,
+          includeNormalProjection: normalProjectionOn,
+          includeOverheadProjection: planProjection ? overheadProjectionOn : undefined,
           includeProjectionPolygons,
           includeEdges: projectionOn,
           mergeLines: true,
@@ -623,256 +625,44 @@ export function useDrawingGeneration({
       if (!isCurrent()) return;
 
       let completedDrawing = result;
-      // If we have symbolic representations, create a hybrid drawing
-      if (symbolicLines.length > 0 && entitiesWithSymbols.size > 0) {
-        // Get entity IDs that actually appear in the section cut (these are being cut by the plane)
-        const cutEntityIds = new Set<number>();
+      if (useSymbolic && symbolicLines.length > 0) {
+        // Plan symbols come from the primary IFC (model index 0). Match owners
+        // in that model only, so the same ID in another model cannot make a
+        // symbol appear on the wrong storey or for a hidden object.
+        const cutOwners = new Set<number>();
         for (const line of result.lines) {
-          if (line.entityId !== undefined) {
-            cutEntityIds.add(line.entityId);
-          }
+          if (line.modelIndex === 0 && line.category === 'cut') cutOwners.add(line.entityId);
         }
-        // Also check cut polygons for entity IDs
-        for (const poly of result.cutPolygons ?? []) {
-          if ((poly as { entityId?: number }).entityId !== undefined) {
-            cutEntityIds.add((poly as { entityId?: number }).entityId!);
-          }
+        for (const polygon of result.cutPolygons) {
+          if (polygon.modelIndex === 0) cutOwners.add(polygon.entityId);
         }
 
-        // When the user toggles `sectionPlane.flipped` on a cardinal axis,
-        // the cutter negates the 2D U axis (see `projectTo2D` in
-        // @ifc-lite/drawing-2d/math.ts and `data[6] = flipU` in the GPU
-        // cutter). Symbolic primitives come out of WASM in the cutter's
-        // UNFLIPPED basis — for the plan ('y') case `(line.x = worldX − rtc,
-        // line.y = −worldY + rtc)` — so on a flipped section the cut
-        // polygons land at −X while the symbolic lines stay at +X. The
-        // result the user reported: annotations sitting NEXT TO the model
-        // as if they were mirrored across the model's centre, instead of
-        // staying with the cut. Mirror symbolic X here to match the cutter
-        // for cardinal flipped sections. Custom face-pick planes use
-        // `projectTo2DBasis` (no U flip), so leave them untouched —
-        // symbolic alignment on an arbitrary basis is a separate problem
-        // and out of scope for this fix.
-        const mirrorSymbolicX = sectionPlane.flipped && !sectionPlane.custom;
-        const orientedSymbolicLines: SymbolicDrawingLine[] = mirrorSymbolicX
-          ? symbolicLines.map((line) => ({
-              ...line,
+        // IFC annotations and grid axes have their own drawing overlay.
+        const visibleSymbols = symbolicLines.filter(line =>
+          line.modelIndex === 0 && cutOwners.has(line.entityId)
+          && line.ifcType !== 'IfcAnnotation' && line.ifcType !== 'IfcGridAxis',
+        );
+        const planSymbols = sectionPlane.flipped
+          ? visibleSymbols.map(symbol => ({
+              ...symbol,
               line: {
-                start: { x: -line.line.start.x, y: line.line.start.y },
-                end:   { x: -line.line.end.x,   y: line.line.end.y   },
+                start: { x: -symbol.line.start.x, y: symbol.line.start.y },
+                end: { x: -symbol.line.end.x, y: symbol.line.end.y },
               },
             }))
-          : symbolicLines;
+          : visibleSymbols;
 
-        // Cull annotations to a thin view-depth slab IN FRONT of the cut.
-        //
-        // IfcAnnotation / IfcGridAxis polylines (dimensions, room tags, grid
-        // bubbles) live at a single elevation but have no body geometry —
-        // the `cutEntityIds.has(line.entityId)` filter below never matches
-        // them, so without this they render regardless of where the
-        // section sits.
-        //
-        // Reduce every cut mode (cardinal X/Y/Z + face-pick custom plane)
-        // to a single half-space test against a unit normal + signed
-        // distance. For cardinal axes the normal is the basis vector and
-        // distance is `position` (already in shifted-bounds coords, the
-        // same space the symbolic centroids land in). For custom planes
-        // the WASM cutter already uses `normal`/`distance` verbatim, so
-        // re-use both here for consistency with the cap.
-        //
-        // The kept window is `−ANNOTATION_VIEW_DEPTH ≤ signedDist ≤ 0` on
-        // the −normal side — the side BELOW a down-looking camera, where
-        // IFC dimensions live (authored at the storey's floor elevation,
-        // not at the cut height). Flipped sections look at the same world
-        // from the opposite side, so the slab mirrors to
-        // `0 ≤ signedDist ≤ ANNOTATION_VIEW_DEPTH`.
-        //
-        // Anything on the wrong side of the cut, or farther than the view
-        // depth on the right side, is dropped — without the upper bound,
-        // dimensions from every storey beyond the cut stacked on top of
-        // each other because the half-space alone is unbounded along the
-        // camera axis.
-        //
-        // Annotations missing a recoverable centroid (older WASM build,
-        // or a degenerate polyline) are kept — over-rendering is preferable
-        // to silently dropping authored dimensions when the runtime can't
-        // classify them.
-        const cullNormal: [number, number, number] = sectionPlane.custom
-          ? sectionPlane.custom.normal
-          : axis === 'x' ? [1, 0, 0]
-          : axis === 'y' ? [0, 1, 0]
-          : [0, 0, 1];
-        const cullDistance = sectionPlane.custom ? sectionPlane.custom.distance : position;
-        const annotationCulled = orientedSymbolicLines.filter((line) => {
-          const isAnnotationLike = line.ifcType === 'IfcAnnotation' || line.ifcType === 'IfcGridAxis';
-          if (!isAnnotationLike) return true;
-          const wx = line.worldX;
-          const wy = line.worldY;
-          const wz = line.worldZ;
-          if (wx === undefined || wy === undefined || wz === undefined) return true;
-          const signedDist =
-            wx * cullNormal[0] +
-            wy * cullNormal[1] +
-            wz * cullNormal[2] -
-            cullDistance;
-          if (sectionPlane.flipped) {
-            return signedDist >= 0 && signedDist <= ANNOTATION_VIEW_DEPTH;
-          }
-          return signedDist <= 0 && signedDist >= -ANNOTATION_VIEW_DEPTH;
-        });
-
-        // Only include symbolic lines for entities that are ACTUALLY being cut
-        // This filters out symbols from other floors/levels not intersected by the section plane
-        const relevantSymbolicLines = annotationCulled.filter(line =>
-          line.entityId !== undefined && cutEntityIds.has(line.entityId)
-        );
-
-        // Get the set of entities that have both symbols AND are being cut
-        const entitiesWithRelevantSymbols = new Set<number>();
-        for (const line of relevantSymbolicLines) {
-          if (line.entityId !== undefined) {
-            entitiesWithRelevantSymbols.add(line.entityId);
-          }
+        if (planSymbols.length > 0) {
+          completedDrawing = {
+            ...result,
+            lines: [...result.lines, ...planSymbols],
+            bounds: planSymbols.reduce((bounds, symbol) => boundsExtendLine(bounds, symbol.line), result.bounds),
+            stats: {
+              ...result.stats,
+              silhouetteLineCount: result.stats.silhouetteLineCount + planSymbols.length,
+            },
+          };
         }
-
-        // Align symbolic geometry with section cut geometry using bounding box matching
-        // Plan representations often have different local origins than Body representations
-        // So we compute per-entity transforms to align Plan bbox center with section cut bbox center
-
-        // Build per-entity bounding boxes for section cut
-        const sectionCutBounds = new Map<number, { minX: number; minY: number; maxX: number; maxY: number }>();
-        const updateBounds = (entityId: number, x: number, y: number) => {
-          const bounds = sectionCutBounds.get(entityId) ?? { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-          bounds.minX = Math.min(bounds.minX, x);
-          bounds.minY = Math.min(bounds.minY, y);
-          bounds.maxX = Math.max(bounds.maxX, x);
-          bounds.maxY = Math.max(bounds.maxY, y);
-          sectionCutBounds.set(entityId, bounds);
-        };
-        for (const line of result.lines) {
-          if (line.entityId === undefined) continue;
-          updateBounds(line.entityId, line.line.start.x, line.line.start.y);
-          updateBounds(line.entityId, line.line.end.x, line.line.end.y);
-        }
-        // Include cut polygon vertices in bounds computation
-        for (const poly of result.cutPolygons ?? []) {
-          const entityId = (poly as { entityId?: number }).entityId;
-          if (entityId === undefined) continue;
-          for (const pt of poly.polygon.outer) {
-            updateBounds(entityId, pt.x, pt.y);
-          }
-          for (const hole of poly.polygon.holes) {
-            for (const pt of hole) {
-              updateBounds(entityId, pt.x, pt.y);
-            }
-          }
-        }
-
-        // Build per-entity bounding boxes for symbolic
-        const symbolicBounds = new Map<number, { minX: number; minY: number; maxX: number; maxY: number }>();
-        for (const line of relevantSymbolicLines) {
-          if (line.entityId === undefined) continue;
-          const bounds = symbolicBounds.get(line.entityId) ?? { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-          bounds.minX = Math.min(bounds.minX, line.line.start.x, line.line.end.x);
-          bounds.minY = Math.min(bounds.minY, line.line.start.y, line.line.end.y);
-          bounds.maxX = Math.max(bounds.maxX, line.line.start.x, line.line.end.x);
-          bounds.maxY = Math.max(bounds.maxY, line.line.start.y, line.line.end.y);
-          symbolicBounds.set(line.entityId, bounds);
-        }
-
-        // Compute per-entity alignment transforms (center-to-center offset)
-        const alignmentOffsets = new Map<number, { dx: number; dy: number }>();
-        for (const entityId of entitiesWithRelevantSymbols) {
-          const scBounds = sectionCutBounds.get(entityId);
-          const symBounds = symbolicBounds.get(entityId);
-          if (scBounds && symBounds) {
-            const scCenterX = (scBounds.minX + scBounds.maxX) / 2;
-            const scCenterY = (scBounds.minY + scBounds.maxY) / 2;
-            const symCenterX = (symBounds.minX + symBounds.maxX) / 2;
-            const symCenterY = (symBounds.minY + symBounds.maxY) / 2;
-            alignmentOffsets.set(entityId, {
-              dx: scCenterX - symCenterX,
-              dy: scCenterY - symCenterY,
-            });
-          }
-        }
-
-        // Apply alignment offsets to symbolic lines
-        const alignedSymbolicLines = relevantSymbolicLines.map(line => {
-          const offset = line.entityId !== undefined ? alignmentOffsets.get(line.entityId) : undefined;
-          if (offset) {
-            return {
-              ...line,
-              line: {
-                start: { x: line.line.start.x + offset.dx, y: line.line.start.y + offset.dy },
-                end: { x: line.line.end.x + offset.dx, y: line.line.end.y + offset.dy },
-              },
-            };
-          }
-          return line;
-        });
-
-        // Filter out section cut lines for entities that have relevant symbolic representations
-        const filteredLines = result.lines.filter((line: DrawingLine) =>
-          line.entityId === undefined || !entitiesWithRelevantSymbols.has(line.entityId)
-        );
-
-        // Also filter cut polygons for entities with relevant symbols
-        const filteredCutPolygons = result.cutPolygons?.filter((poly: { entityId?: number }) =>
-          poly.entityId === undefined || !entitiesWithRelevantSymbols.has(poly.entityId)
-        ) ?? [];
-
-        // Combine filtered section cuts with aligned symbolic lines
-        const combinedLines = [...filteredLines, ...alignedSymbolicLines];
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const line of combinedLines) {
-          minX = Math.min(minX, line.line.start.x, line.line.end.x);
-          minY = Math.min(minY, line.line.start.y, line.line.end.y);
-          maxX = Math.max(maxX, line.line.start.x, line.line.end.x);
-          maxY = Math.max(maxY, line.line.start.y, line.line.end.y);
-        }
-        for (const poly of [...filteredCutPolygons, ...(result.projectionPolygons ?? [])]) {
-          for (const pt of poly.polygon.outer) {
-            minX = Math.min(minX, pt.x);
-            minY = Math.min(minY, pt.y);
-            maxX = Math.max(maxX, pt.x);
-            maxY = Math.max(maxY, pt.y);
-          }
-          for (const hole of poly.polygon.holes) {
-            for (const pt of hole) {
-              minX = Math.min(minX, pt.x);
-              minY = Math.min(minY, pt.y);
-              maxX = Math.max(maxX, pt.x);
-              maxY = Math.max(maxY, pt.y);
-            }
-          }
-        }
-
-        // Keep the opaque layer-base backstop (3D overlay only) in step with the
-        // filtered per-layer fills, so an entity replaced by a symbolic rep does
-        // not leave a base with no colour fills behind it.
-        const filteredLayerBasePolygons = result.layerBaseCutPolygons?.filter(
-          (poly: { entityId?: number }) =>
-            poly.entityId === undefined || !entitiesWithRelevantSymbols.has(poly.entityId),
-        );
-
-        const hybridDrawing: Drawing2D = {
-          ...result,
-          lines: combinedLines,
-          cutPolygons: filteredCutPolygons,
-          layerBaseCutPolygons: filteredLayerBasePolygons,
-          bounds: {
-            min: { x: isFinite(minX) ? minX : result.bounds.min.x, y: isFinite(minY) ? minY : result.bounds.min.y },
-            max: { x: isFinite(maxX) ? maxX : result.bounds.max.x, y: isFinite(maxY) ? maxY : result.bounds.max.y },
-          },
-          stats: {
-            ...result.stats,
-            cutLineCount: combinedLines.length,
-          },
-        };
-
-        completedDrawing = hybridDrawing;
       }
       setDrawing(completedDrawing, sectionPlane); markActiveDrawingGenerationCompleted(completedDrawing);
 

@@ -324,7 +324,7 @@ function useDrawingExport({
   const cutPolygonStyleContext = useCallback((scale = displayOptions.scale): CutPolygonStyleContext => {
     const row = lineweightTable ? lineweightsAtScale(lineweightTable, scale) : lineweights;
     const context: CutPolygonStyleContext = {
-      useIfcMaterials: (activePresetId === 'preset-3d-colors' || activePresetId?.startsWith('drawing-template:') === true), entityColorMap, overridesEnabled,
+      useIfcMaterials: (activePresetId === null || activePresetId === 'preset-3d-colors' || activePresetId?.startsWith('drawing-template:') === true), entityColorMap, overridesEnabled,
       overrideEngine: row ? new GraphicOverrideEngine(overrideEngine.getRules(), row) : overrideEngine,
       getElementProperties: makePropertiesGetter(storeModels, ifcDataStore),
     };

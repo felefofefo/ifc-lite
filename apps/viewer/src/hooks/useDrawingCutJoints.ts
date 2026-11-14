@@ -10,12 +10,12 @@ import { drawingProjectId } from '@/lib/drawing/drawing-project';
 import { materialIdForCut } from '@/lib/drawing/material-hatches';
 import { useDrawingMaterials } from './useDrawingMaterials';
 
-export function useDrawingCutJoints() {
+export function useDrawingCutJointMaterial() {
   const models = useViewerStore(state => state.models);
   const legacyStore = useViewerStore(state => state.ifcDataStore);
   const projectId = useViewerStore(drawingProjectId);
   const { joinUnassigned } = useDrawingMaterials(projectId);
-  return useCallback((polygons: DrawingPolygon[]) => suppressCutJoints(polygons, polygon => {
+  return useCallback((polygon: DrawingPolygon) => {
     const ref = resolveEntityRef(polygon.entityId);
     const material = polygon.materialId === undefined ? undefined : resolveEntityRef(polygon.materialId);
     const store = ref.modelId === 'legacy' ? legacyStore : models.get(ref.modelId)?.ifcDataStore;
@@ -28,5 +28,10 @@ export function useDrawingCutJoints() {
       return `${ref.modelId}:unassigned:${ifcClass.toLowerCase()}`;
     }
     return undefined;
-  }), [models, legacyStore, joinUnassigned]);
+  }, [models, legacyStore, joinUnassigned]);
+}
+
+export function useDrawingCutJoints() {
+  const materialKey = useDrawingCutJointMaterial();
+  return useCallback((polygons: DrawingPolygon[]) => suppressCutJoints(polygons, materialKey), [materialKey]);
 }

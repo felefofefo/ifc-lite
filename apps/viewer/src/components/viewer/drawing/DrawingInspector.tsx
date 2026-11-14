@@ -2,32 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * The Drawing panel's inspector column (#5495): Overrides / Sheet / Underlays
- * / Scan as tabs BESIDE the canvas, replacing `DrawingSettingsPanel`,
- * `SheetSetupPanel`, `DxfUnderlayPanel` and `ScanSectionPanel`'s own
- * `w-72 border-l` drawers (and their own close-button headers — the active
- * tab now carries that). One persisted store field decides which tab is
- * open (`useDrawingViewModel`'s `openDrawer`/`toggleDrawer`/`closeDrawer`,
- * backed by `drawingInspectorSlice`); toggling the already-open tab in the
- * toolbar collapses the column.
- *
- * Resizable (drag the left edge) and collapsible; both persist. Below
- * `DRAWING_INSPECTOR_OVERLAY_BELOW` the Drawing panel itself is too narrow
- * for a beside column to leave a usable canvas — a floating Drawing window
- * or the mobile layout — so the inspector overlays the canvas as a sheet
- * instead; that is the one place this component covers the canvas, and only
- * there.
- */
-
 import React, { useCallback, useRef } from 'react';
-import { Eye, FileText, Layers, Palette, ScanLine, SwatchBook, Tag } from 'lucide-react';
+import { Eye, FileText, Layers, Palette, ScanLine, Settings2, SwatchBook, Tag } from 'lucide-react';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n/en';
 import { DrawingPatterns } from './DrawingPatterns';
+import { DrawingProjectionSettings } from './DrawingProjectionSettings';
+import { DrawingSettingSwitch } from './DrawingSettingSwitch';
+import { constructionProjectionEnabled, overheadProjectionEnabled } from '@/lib/drawing/construction-projection';
+import { supportsDrawingProjection } from '@/lib/drawing/view-placement';
+import { setViewSurfacePatterns } from '@/store/savedSectionCutsStore';
 import { ViewVisibilitySettings } from './ViewVisibilitySettings';
 import { DrawingSettingsPanel } from '../DrawingSettingsPanel';
 import { DrawingUnderlaysPanel } from './DrawingUnderlaysPanel';
@@ -44,6 +31,8 @@ import type { useDrawingLayers } from './useDrawingLayers';
 export const DRAWING_INSPECTOR_OVERLAY_BELOW = 720;
 
 const TABS: ReadonlyArray<{ id: DrawingDrawer; icon: typeof Palette; labelKey: TranslationKey }> = [
+  { id: 'display', icon: Eye, labelKey: 'section2d.display.group' },
+  { id: 'projection', icon: Settings2, labelKey: 'section2d.projection.settings' },
   { id: 'overrides', icon: Palette, labelKey: 'section2d.drawers.overrides' },
   { id: 'sheet', icon: FileText, labelKey: 'section2d.drawers.sheet' },
   { id: 'underlays', icon: Layers, labelKey: 'section2d.drawers.underlays' },
@@ -63,7 +52,6 @@ export interface DrawingInspectorProps {
 
 export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInspectorProps): React.ReactElement | null {
   const { t } = useTranslation();
-  const tab = vm.openDrawer;
   const width = useViewerStore((s) => s.drawingInspectorWidth);
   const setWidth = useViewerStore((s) => s.setDrawingInspectorWidth);
   const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -86,8 +74,18 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
     window.addEventListener('pointerup', up);
   }, [width, setWidth]);
 
-  const tabs = view3D ? TABS.filter(({ id }) => id === 'overrides' || id === 'visibility' || id === 'patterns') : TABS;
-  if (!tab || !tabs.some(({ id }) => id === tab)) return null;
+  if (!vm.openDrawer) return null;
+
+  const { sectionPlane, displayOptions } = vm;
+  const symbolicAvailable = sectionPlane.axis === 'down' && !sectionPlane.custom;
+  const projectionAvailable = supportsDrawingProjection(sectionPlane);
+  const showProjection = constructionProjectionEnabled(displayOptions.showConstructionProjection, sectionPlane);
+  const showSurfacePatterns = displayOptions.showSurfacePatterns3D ?? false;
+  const tabs = TABS.filter(({ id }) => {
+    if (id === 'projection') return view3D || projectionAvailable;
+    return !view3D || id === 'display' || id === 'overrides' || id === 'visibility' || id === 'patterns';
+  });
+  const tab = tabs.some(({ id }) => id === vm.openDrawer) ? vm.openDrawer : 'display';
 
   const overlay = panelWidth > 0 && panelWidth < DRAWING_INSPECTOR_OVERLAY_BELOW;
 
@@ -106,6 +104,35 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
         </Select>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
+        <TabsContent value="display" className="m-0 h-full overflow-auto p-3">
+          <div className="space-y-1">
+            {view3D ? (
+              <DrawingSettingSwitch label={t('section2d.patterns.surface3d')}
+                checked={showSurfacePatterns} onCheckedChange={setViewSurfacePatterns} />
+            ) : <>
+              {symbolicAvailable && (
+                <DrawingSettingSwitch label={t('section2d.display.symbolic')} title={t('section2d.symbolic.planOverlay')}
+                  checked={displayOptions.useSymbolicRepresentations} onCheckedChange={vm.toggleSymbolicRepresentations} />
+              )}
+              {projectionAvailable && (
+                <DrawingSettingSwitch label={t('section2d.display.projection')}
+                  checked={showProjection} onCheckedChange={vm.toggleConstructionProjection} />
+              )}
+              {symbolicAvailable && (
+                <DrawingSettingSwitch label={t('section2d.display.overheadProjection')}
+                  checked={overheadProjectionEnabled(displayOptions.showOverheadProjection, displayOptions.showConstructionProjection, sectionPlane)}
+                  onCheckedChange={vm.toggleOverheadProjection} />
+              )}
+              <DrawingSettingSwitch label={t('section2d.display.overlay3d')} title={t('section2d.overlay.toggleTitle')}
+                checked={displayOptions.show3DOverlay} onCheckedChange={vm.toggle3DOverlay} />
+              <DrawingSettingSwitch label={t('section2d.display.printPreview')}
+                checked={displayOptions.showPrintPreview} onCheckedChange={vm.togglePrintPreview} />
+            </>}
+          </div>
+        </TabsContent>
+        <TabsContent value="projection" className="m-0 h-full overflow-auto p-3">
+          <DrawingProjectionSettings hiddenLinesOnly={view3D} />
+        </TabsContent>
         <TabsContent value="overrides" className="m-0 h-full">
           <DrawingSettingsPanel lineweights={vm.lineweights} />
         </TabsContent>

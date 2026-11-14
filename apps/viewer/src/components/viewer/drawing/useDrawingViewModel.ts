@@ -11,9 +11,9 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type React from 'react';
-import { GraphicOverrideEngine } from '@ifc-lite/drawing-2d';
+import { GraphicOverrideEngine, suppressCutJoints, suppressDrawingCutJoints } from '@ifc-lite/drawing-2d';
 import { useViewerStore } from '@/store';
-import { selectActiveSavedView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { selectActiveSavedView, setDrawingProjectionDisplay, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
 import { useMeasure2D } from '@/hooks/useMeasure2D';
@@ -25,10 +25,10 @@ import { useViewControls } from '@/hooks/useViewControls';
 import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import type { CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveDrawingPaperTheme } from './paper-theme';
-import { toggledConstructionProjection } from '@/lib/drawing/construction-projection';
+import { overheadProjectionEnabled, toggledConstructionProjection } from '@/lib/drawing/construction-projection';
 import { useDrawingLineweights } from './DrawingLineweights';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
-import { useDrawingCutJoints } from '@/hooks/useDrawingCutJoints';
+import { useDrawingCutJointMaterial } from '@/hooks/useDrawingCutJoints';
 import { applyDistantZone } from '@/lib/drawing/distant-elements';
 import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
@@ -45,10 +45,24 @@ export function useDrawingViewModel() {
   const models = useViewerStore((s) => s.models);
   const lineweightSettings = useDrawingLineweights();
   const materialSettings = useDrawingMaterials(lineweightSettings.projectId);
-  const joinCutPolygons = useDrawingCutJoints();
-  const joinedDrawing = useMemo(() => sourceDrawing && ({
-    ...sourceDrawing, cutPolygons: joinCutPolygons(sourceDrawing.cutPolygons),
-  }), [sourceDrawing, joinCutPolygons]);
+  const cutJointMaterial = useDrawingCutJointMaterial();
+  const joinedDrawing = useMemo(() => {
+    if (!sourceDrawing) return sourceDrawing;
+    const { plane } = sourceDrawing.config;
+    const geometry = plane.axis === 'y' && !plane.customPlane
+      ? suppressDrawingCutJoints(sourceDrawing, cutJointMaterial)
+      : { cutPolygons: suppressCutJoints(sourceDrawing.cutPolygons, cutJointMaterial), lines: sourceDrawing.lines };
+    if (geometry.lines === sourceDrawing.lines) return { ...sourceDrawing, cutPolygons: geometry.cutPolygons };
+    return {
+      ...sourceDrawing,
+      ...geometry,
+      stats: {
+        ...sourceDrawing.stats,
+        projectionLineCount: geometry.lines.filter(line => line.category === 'projection').length,
+        hiddenLineCount: geometry.lines.filter(line => line.visibility === 'hidden').length,
+      },
+    };
+  }, [sourceDrawing, cutJointMaterial]);
   const { drawing: rasterDrawing, hasReferences: hasRasterReferences, referenceCount: visibleRasterReferenceCount, referenceCorners } = useDrawingWithReferences(joinedDrawing);
   const setDrawing = useViewerStore((s) => s.setDrawing2D);
   const status = useViewerStore((s) => s.drawing2DStatus);
@@ -242,11 +256,26 @@ export function useDrawingViewModel() {
   }, [displayOptions.showIfcAnnotations, updateDisplayOptions]);
 
   const toggleConstructionProjection = useCallback(() => {
-    // An explicit choice: it holds on every cut, unlike the plan-only default.
-    updateDisplayOptions({ showConstructionProjection: toggledConstructionProjection(displayOptions.showConstructionProjection, sectionPlane) });
+    const { showConstructionProjection, showOverheadProjection } = displayOptions;
+    setDrawingProjectionDisplay({
+      showConstructionProjection: toggledConstructionProjection(showConstructionProjection, sectionPlane),
+      ...(sectionPlane.axis === 'down' && !sectionPlane.custom && showOverheadProjection === undefined
+        ? { showOverheadProjection: overheadProjectionEnabled(undefined, showConstructionProjection, sectionPlane) }
+        : {}),
+    });
     setDrawing(null);
     setDrawingStatus('idle');
-  }, [displayOptions.showConstructionProjection, sectionPlane, updateDisplayOptions, setDrawing, setDrawingStatus]);
+  }, [displayOptions, sectionPlane, setDrawing, setDrawingStatus]);
+
+  const toggleOverheadProjection = useCallback(() => {
+    setDrawingProjectionDisplay({
+      showOverheadProjection: !overheadProjectionEnabled(
+        displayOptions.showOverheadProjection, displayOptions.showConstructionProjection, sectionPlane,
+      ),
+    });
+    setDrawing(null);
+    setDrawingStatus('idle');
+  }, [displayOptions, sectionPlane, setDrawing, setDrawingStatus]);
 
   const toggle3DOverlay = useCallback(() => {
     updateDisplayOptions({ show3DOverlay: !displayOptions.show3DOverlay });
@@ -334,7 +363,7 @@ export function useDrawingViewModel() {
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,
     selectedAnnotation2D, clearAllAnnotations2D, markupCounts, hasMarkup,
-    toggleIfcAnnotations, toggleConstructionProjection, toggle3DOverlay, toggleSymbolicRepresentations,
+    toggleIfcAnnotations, toggleConstructionProjection, toggleOverheadProjection, toggle3DOverlay, toggleSymbolicRepresentations,
     togglePrintPreview, paperTheme,
   };
 }

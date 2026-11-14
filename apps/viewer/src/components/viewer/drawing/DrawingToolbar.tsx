@@ -2,25 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * The Drawing panel's toolbar row (#5494, #8802 R3b), in three groups split
- * by dividers: the markup tools (a radio group, the active one filled), the
- * display toggles (checkbox-marked, tinted when on), and the settings
- * drawers; the view cluster (zoom, Fit, pin) sits at the right. Width tiers:
- * `wide` shows labels, `compact` collapses them to icons, `narrow` moves
- * only the rarest items (drawers, pin, clear) into one short menu and drops
- * the +/- zoom steps (wheel and pinch still zoom).
- */
-
-import { DrawingProjectionSettings } from './DrawingProjectionSettings';
-import { Box, BoxSelect, Cloud, Eye, FileText, Hexagon, Layers, Maximize2, MoreHorizontal, MousePointer2, Palette, Pin, PinOff, Printer, Ruler, ScanLine, Shapes, Trash2, Type, ZoomIn, ZoomOut } from 'lucide-react';
+import { Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Pin, PinOff, Ruler, Settings2, Trash2, Type, ZoomIn, ZoomOut } from 'lucide-react';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n/en';
-import type { DrawingDrawer } from './useDrawingViewModel';
-import { DrawerToggle, IconAction, ToggleChip, ToolSegment, ToolbarDivider } from './DrawingToolbarControls';
+import { DrawerToggle, IconAction, ToolSegment, ToolbarDivider } from './DrawingToolbarControls';
 
 export type DrawingWidthTier = 'wide' | 'compact' | 'narrow';
 
@@ -32,14 +20,6 @@ const TOOLS: ReadonlyArray<{ tool: Annotation2DTool; icon: typeof Ruler; labelKe
   { tool: 'cloud', icon: Cloud, labelKey: 'section2d.tools.cloud' },
 ];
 
-const DRAWERS: ReadonlyArray<{ id: DrawingDrawer; icon: typeof Palette; labelKey: TranslationKey }> = [
-  { id: 'overrides', icon: Palette, labelKey: 'section2d.drawers.overrides' },
-  { id: 'sheet', icon: FileText, labelKey: 'section2d.drawers.sheet' },
-  { id: 'underlays', icon: Layers, labelKey: 'section2d.drawers.underlays' },
-  { id: 'visibility', icon: Eye, labelKey: 'section2d.drawers.visibility' },
-  { id: 'scan', icon: ScanLine, labelKey: 'section2d.drawers.scan' },
-];
-
 export interface DrawingToolbarProps {
   view3D?: boolean;
   tier: DrawingWidthTier;
@@ -49,20 +29,8 @@ export interface DrawingToolbarProps {
   selectHint: string;
   hasMarkup: boolean;
   onClearMarkup: () => void;
-  display: { symbolic: boolean; ifcAnnotations: boolean; projection: boolean; overlay3D: boolean; printPreview: boolean };
-  /** IFC annotations overlay only on plan (Down) cuts. */
-  ifcAnnotationsAvailable: boolean;
-  /** Construction projection is not available on a custom (face-picked) plane. */
-  projectionAvailable: boolean;
-  onToggleSymbolic: () => void;
-  onToggleIfcAnnotations: () => void;
-  onToggleProjection: () => void;
-  onToggleOverlay3D: () => void;
-  onTogglePrintPreview: () => void;
-  openDrawer: DrawingDrawer | null;
-  /** Per drawer: its feature is active (preset applied, sheet on, underlays loaded, scan shown). */
-  drawerActivity: Partial<Record<DrawingDrawer, boolean>>;
-  onToggleDrawer: (drawer: DrawingDrawer) => void;
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
   zoomPercent: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -78,11 +46,13 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
   const pinLabel = p.pinned ? t('section2d.pin.unpinTitle') : t('section2d.pin.pinTitle');
 
   const toolbarClass = 'flex shrink-0 flex-wrap items-center gap-x-1 gap-y-1 border-b px-2 py-1';
-  if (p.view3D) return (
-    <div className={toolbarClass}>
-      <DrawingProjectionSettings available hiddenLinesOnly />
-    </div>
+  const settingsLabel = t('section2d.inspector.viewSettings');
+  const settingsButton = (
+    <DrawerToggle icon={Settings2} label={settingsLabel} tip={settingsLabel}
+      open={p.settingsOpen} active={false} showLabel={!narrow} onToggle={p.onToggleSettings}
+    />
   );
+  if (p.view3D) return <div className={toolbarClass}>{settingsButton}</div>;
 
   return (
     <div className={toolbarClass}>
@@ -100,44 +70,7 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
 
       <ToolbarDivider />
 
-      <fieldset aria-label={t('section2d.display.group')} className="inline-flex items-center gap-0.5">
-        <ToggleChip
-          icon={p.display.symbolic ? Shapes : Box} label={t('section2d.display.symbolic')}
-          tip={p.display.symbolic ? t('section2d.symbolic.planTitle') : t('section2d.symbolic.cutTitle')}
-          on={p.display.symbolic} showLabel={showLabels} onToggle={p.onToggleSymbolic}
-        />
-        <ToggleChip
-          icon={BoxSelect} label={t('section2d.display.projection')}
-          tip={!p.projectionAvailable ? t('section2d.display.projectionUnavailable')
-            : p.display.projection ? t('section2d.construction.hideTitle') : t('section2d.construction.showTitle')}
-          on={p.display.projection} disabled={!p.projectionAvailable} showLabel={showLabels} onToggle={p.onToggleProjection}
-        />
-        <DrawingProjectionSettings available={p.projectionAvailable} />
-        <ToggleChip
-          icon={Eye} label={t('section2d.display.overlay3d')} tip={t('section2d.overlay.toggleTitle')}
-          on={p.display.overlay3D} showLabel={showLabels} onToggle={p.onToggleOverlay3D}
-        />
-        <ToggleChip
-          icon={Printer} label={t('section2d.display.printPreview')}
-          tip={p.display.printPreview ? t('section2d.printPreview.hideTitle') : t('section2d.printPreview.showTitle')}
-          on={p.display.printPreview} showLabel={showLabels} onToggle={p.onTogglePrintPreview}
-        />
-      </fieldset>
-
-      {!narrow && (
-        <>
-          <ToolbarDivider />
-          <fieldset aria-label={t('section2d.drawers.group')} className="inline-flex items-center gap-0.5">
-            {DRAWERS.map(({ id, icon, labelKey }) => (
-              <DrawerToggle
-                key={id} icon={icon} label={t(labelKey)}
-                tip={p.drawerActivity[id] ? t('section2d.drawers.activeTip', { label: t(labelKey) }) : t(labelKey)}
-                open={p.openDrawer === id} active={!!p.drawerActivity[id]} showLabel={showLabels} onToggle={() => p.onToggleDrawer(id)}
-              />
-            ))}
-          </fieldset>
-        </>
-      )}
+      {settingsButton}
 
       <div className="ml-auto inline-flex items-center gap-0.5">
         {!narrow && <IconAction icon={ZoomOut} label={t('section2d.zoom.out')} onClick={p.onZoomOut} />}
@@ -157,12 +90,6 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52 text-xs">
-              {DRAWERS.map(({ id, icon: Icon, labelKey }) => (
-                <DropdownMenuCheckboxItem key={id} checked={p.openDrawer === id} onCheckedChange={() => p.onToggleDrawer(id)} className="text-xs">
-                  <Icon className="mr-2 h-3.5 w-3.5" />{t(labelKey)}
-                </DropdownMenuCheckboxItem>
-              ))}
-              <DropdownMenuSeparator />
               <DropdownMenuCheckboxItem checked={p.pinned} onCheckedChange={p.onTogglePinned} className="text-xs">
                 <Pin className="mr-2 h-3.5 w-3.5" />{t('section2d.pin.label')}
               </DropdownMenuCheckboxItem>

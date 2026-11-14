@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * The Drawing panel's named-cut menu (#5514): list saved cuts and apply, rename, or delete one. Asserted on the OUTPUT — menu contents and
+ * The Drawing panel's named-cut menu (#5514): list saved views and apply, rename, or delete one. Asserted on the OUTPUT — menu contents and
  * the store after each action — never on the wiring.
  */
 
@@ -12,7 +12,6 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
 import { cleanup, click, render, type as typeInput, waitFor } from '@/test/render.js';
-import { loadDialogs } from '@/test/dialog-host.js';
 import { useViewerStore } from '@/store';
 import { useSavedSectionCuts, saveCurrentSectionCut } from '@/store/savedSectionCutsStore';
 import { DrawingSectionCutMenu } from './DrawingSectionCutMenu.js';
@@ -42,11 +41,11 @@ afterEach(() => {
 });
 
 describe('DrawingSectionCutMenu (#5514)', () => {
-  it('shows the empty state with no saved cuts', () => {
+  it('shows the empty state with no saved views', () => {
     render(<DrawingSectionCutMenu cutLabel="Down 50.0" />);
     openMenu();
     assert.equal(rows().length, 0);
-    assert.ok(document.body.textContent?.includes('No saved cuts yet'));
+    assert.ok(document.body.textContent?.includes('No saved views yet'));
   });
 
   it('lists a saved cut and applies it on click, opening the Section tool', () => {
@@ -72,7 +71,7 @@ describe('DrawingSectionCutMenu (#5514)', () => {
     render(<DrawingSectionCutMenu cutLabel="Down 50.0" />);
     openMenu();
     const row = rows().find((r) => r.textContent?.includes('Doomed cut'))!;
-    const deleteButton = row.querySelector('button[title="Delete saved cut"]')!;
+    const deleteButton = row.querySelector('button[title="Delete saved view"]')!;
     click(deleteButton);
     assert.equal(useSavedSectionCuts.getState().cuts.length, 0);
   });
@@ -80,20 +79,23 @@ describe('DrawingSectionCutMenu (#5514)', () => {
   it('leaves saving to the Drawing view list', () => {
     render(<DrawingSectionCutMenu cutLabel="Down 50.0" />);
     openMenu();
-    assert.doesNotMatch(document.body.textContent ?? '', /Save current cut/);
+    assert.doesNotMatch(document.body.textContent ?? '', /Save current view/);
   });
 
-  it('renames a saved cut via its row\'s prompt', async () => {
-    const { ConfirmDialogHost } = await loadDialogs();
+  it('edits the saved view name and code in the shared dialog', async () => {
     const id = saveCurrentSectionCut('Before');
-    render(<><DrawingSectionCutMenu cutLabel="Down 50.0" /><ConfirmDialogHost /></>);
+    render(<DrawingSectionCutMenu cutLabel="Down 50.0" />);
     openMenu();
     const row = rows().find((r) => r.textContent?.includes('Before'))!;
-    click(row.querySelector('button[title="Rename saved cut"]')!);
-    const dialog = document.querySelector('[role="alertdialog"]');
+    click(row.querySelector('button[title="Rename saved view"]')!);
+    const dialog = document.querySelector('[role="dialog"]');
     assert.ok(dialog);
-    typeInput(dialog.querySelector('input')!, 'After');
+    assert.match(dialog.textContent ?? '', /View name and code/);
+    const [name, code] = dialog.querySelectorAll('input');
+    typeInput(name, 'After');
+    typeInput(code, 'P-99');
     click(dialog.querySelector('button[type="submit"]')!);
-    await waitFor(() => useSavedSectionCuts.getState().cuts.find((c) => c.id === id)?.name === 'After', 'saved cut is renamed');
+    await waitFor(() => useSavedSectionCuts.getState().cuts.find((c) => c.id === id)?.name === 'After', 'saved view is renamed');
+    assert.equal(useSavedSectionCuts.getState().cuts.find(c => c.id === id)?.code, 'P-99');
   });
 });

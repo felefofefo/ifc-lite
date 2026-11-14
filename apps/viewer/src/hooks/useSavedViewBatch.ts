@@ -102,7 +102,7 @@ export function useSavedViewBatch(sourceDrawing: Drawing2D | null, builders: Dra
       vectorFills: caps || surfaces ? {
         caps, surfaces,
         style: {
-          useIfcMaterials: live.activePresetId === 'preset-3d-colors' || live.activePresetId?.startsWith('drawing-template:') === true,
+          useIfcMaterials: live.activePresetId === null || live.activePresetId === 'preset-3d-colors' || live.activePresetId?.startsWith('drawing-template:') === true,
           entityColorMap: new Map(), overridesEnabled: live.overridesEnabled, overrideEngine, getElementProperties,
           fills: (polygon, fallbackColor) => {
             const paints = polygon.isCut && !live.drawing2DDisplayOptions.showHatching ? undefined : hatchStyle(polygon, fallbackColor);

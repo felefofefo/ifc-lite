@@ -65,6 +65,9 @@ export interface GeneratorOptions {
   includeHiddenLines: boolean;
   /** Include projection lines (visible geometry beyond cut) */
   includeProjection: boolean;
+  /** Include the solid and dashed overhead projection bands independently. */
+  includeNormalProjection?: boolean;
+  includeOverheadProjection?: boolean;
   /** Generate visible surface regions for publication fills. */
   includeProjectionPolygons?: boolean;
   /** Include silhouettes and feature edges */
@@ -318,8 +321,12 @@ export class Drawing2DGenerator {
         }
       }
 
-      if (config.clipProjectionBands && config.plane.axis === 'y' && !config.plane.customPlane) {
+      if (opts.includeNormalProjection !== false && config.clipProjectionBands && config.plane.axis === 'y' && !config.plane.customPlane) {
         projectionLines = removeCoveredOverhead(projectionLines);
+      }
+      if (opts.includeNormalProjection === false || opts.includeOverheadProjection === false) {
+        projectionLines = projectionLines.filter(line =>
+          line.overhead ? opts.includeOverheadProjection !== false : opts.includeNormalProjection !== false);
       }
       report('edges', 1);
     }
@@ -381,7 +388,7 @@ export class Drawing2DGenerator {
       report('merging', 1);
     }
 
-    const projectionPolygons = opts.includeProjection && opts.includeProjectionPolygons
+    const projectionPolygons = opts.includeProjection && opts.includeNormalProjection !== false && opts.includeProjectionPolygons
       ? buildProjectionPolygons(meshes, cutPolygons, config.plane, config.projectionBelowDepth ?? config.projectionDepth) : [];
     const bounds = this.computeBounds(allLines, projectionPolygons);
     const processingTimeMs = performance.now() - startTime;

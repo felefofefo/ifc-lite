@@ -39,7 +39,7 @@ export function usePublicationFillPreview(retainNativeCaps = false, surface3D = 
   return useMemo(() => {
     const properties = makePropertiesGetter(models, legacyStore);
     const context: CutPolygonStyleContext = {
-      useIfcMaterials: (preset === 'preset-3d-colors' || preset?.startsWith('drawing-template:') === true),
+      useIfcMaterials: (preset === null || preset === 'preset-3d-colors' || preset?.startsWith('drawing-template:') === true),
       entityColorMap: new Map(), overridesEnabled: overrides,
       overrideEngine: new GraphicOverrideEngine(rules ?? useViewerStore.getState().getActiveOverrideRules()),
       getElementProperties: properties, darkPaper,

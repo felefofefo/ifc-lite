@@ -5,7 +5,7 @@ import '@/test/setup-dom.js';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
-import { render, click, type, advance, cleanup } from '@/test/render';
+import { render, click, type, cleanup } from '@/test/render';
 import { useViewerStore } from '@/store';
 
 async function projectionSettings() {
@@ -22,14 +22,20 @@ async function open(unit = 'm', hiddenLinesOnly = false) {
   const DrawingProjectionSettings = await projectionSettings();
   useViewerStore.setState({ unitDisplayOverrides: { LENGTHUNIT: unit },
     drawing2DDisplayOptions: { ...initial.drawing2DDisplayOptions, constructionProjectionDepth: null } });
-  const ui = render(<DrawingProjectionSettings available hiddenLinesOnly={hiddenLinesOnly} />);
-  const trigger = ui.querySelector<HTMLButtonElement>('button[aria-label="Projection settings"]'); assert.ok(trigger);
-  click(trigger); await advance(0);
-  const popup = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Projection settings"]'); assert.ok(popup);
-  return popup;
+  const ui = render(<DrawingProjectionSettings hiddenLinesOnly={hiddenLinesOnly} />);
+  const section = ui.querySelector<HTMLElement>('section[aria-label="Projection settings"]');
+  assert.ok(section);
+  return section;
 }
-function checkbox(popup: HTMLElement) {
-  const control = popup.querySelector<HTMLInputElement>('input[type="checkbox"]:not([aria-label="Hidden Lines"])'); assert.ok(control); return control;
+function settingSwitch(popup: HTMLElement, name: string) {
+  const label = [...popup.querySelectorAll<HTMLLabelElement>('label')].find(label => label.textContent === name);
+  assert.ok(label);
+  const control = popup.querySelector<HTMLButtonElement>(`[role="switch"][id="${label.htmlFor}"]`);
+  assert.ok(control);
+  return control;
+}
+function autoSwitch(popup: HTMLElement) {
+  return settingSwitch(popup, 'Automatic depth');
 }
 function distance(popup: HTMLElement) {
   const input = popup.querySelector<HTMLInputElement>('input[type="number"]'); assert.ok(input); return input;
@@ -37,21 +43,21 @@ function distance(popup: HTMLElement) {
 
 test('projection settings switch Auto/manual and accept zero as cut-only depth (#6615)', async () => {
   const popup = await open();
-  assert.equal(checkbox(popup).checked, true);
+  assert.equal((autoSwitch(popup).getAttribute('aria-checked') === 'true'), true);
   assert.equal(popup.querySelector('input[type="number"]'), null);
-  click(checkbox(popup));
+  click(autoSwitch(popup));
   assert.equal(distance(popup).value, '3');
   type(distance(popup), '0');
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.constructionProjectionDepth, 0);
   assert.equal(distance(popup).getAttribute('aria-invalid'), 'false', 'zero is a valid cut-only band');
-  click(checkbox(popup));
+  click(autoSwitch(popup));
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.constructionProjectionDepth, null);
   assert.equal(popup.querySelector('input[type="number"]'), null, 'Auto removes the manual distance');
 });
 
 for (const [unit, display, metres] of [['mm', '2500', 2.5], ['cm', '125', 1.25], ['ft', '10', 3.048]] as const) {
   test(`projection distance uses ${unit} display and canonical metre storage (#6615)`, async () => {
-    const popup = await open(unit); click(checkbox(popup));
+    const popup = await open(unit); click(autoSwitch(popup));
     assert.equal(distance(popup).getAttribute('aria-label'), `Depth (${unit})`);
     type(distance(popup), display);
     assert.ok(Math.abs(useViewerStore.getState().drawing2DDisplayOptions.constructionProjectionDepth! - metres) < 1e-10);
@@ -62,7 +68,7 @@ for (const [unit, display, metres] of [['mm', '2500', 2.5], ['cm', '125', 1.25],
 }
 
 test('negative, empty and nonfinite edits show validation and retain the last valid depth (#6615)', async () => {
-  const popup = await open(); click(checkbox(popup)); type(distance(popup), '2');
+  const popup = await open(); click(autoSwitch(popup)); type(distance(popup), '2');
   for (const input of ['-1', '', '1e999']) {
     type(distance(popup), input);
     assert.equal(distance(popup).getAttribute('aria-invalid'), 'true');
@@ -74,28 +80,18 @@ test('negative, empty and nonfinite edits show validation and retain the last va
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.constructionProjectionDepth, 4);
 });
 
-test('unavailable face-picked projection settings cannot be opened (#6615)', async () => {
-  const DrawingProjectionSettings = await projectionSettings();
-  const ui = render(<DrawingProjectionSettings available={false} />);
-  const trigger = ui.querySelector<HTMLButtonElement>('button'); assert.ok(trigger);
-  assert.equal(trigger.disabled, true);
-  click(trigger);
-  assert.equal(document.querySelector('[role="dialog"][aria-label="Projection settings"]'), null);
-});
-
 test('invalid runtime depths cannot switch the displayed manual band to Auto (#6615)', async () => {
-  const popup = await open(); click(checkbox(popup)); type(distance(popup), '2');
+  const popup = await open(); click(autoSwitch(popup)); type(distance(popup), '2');
   for (const constructionProjectionDepth of [-1, NaN, Infinity]) {
     act(() => useViewerStore.getState().updateDrawing2DDisplayOptions({ constructionProjectionDepth, showHiddenLines: true }));
-    assert.equal(checkbox(popup).checked, false, 'the manual control remains active');
+    assert.equal((autoSwitch(popup).getAttribute('aria-checked') === 'true'), false, 'the manual control remains active');
     assert.equal(distance(popup).value, '2', 'the displayed metric distance retains the valid band');
   }
 });
 
 test('Hidden Lines can be disabled without changing Projection depth', async () => {
   const popup = await open();
-  const control = popup.querySelector<HTMLInputElement>('[aria-label="Hidden Lines"]');
-  assert.ok(control);
+  const control = settingSwitch(popup, 'Hidden Lines');
   act(() => useViewerStore.getState().updateDrawing2DDisplayOptions({ showHiddenLines: true }));
   click(control);
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showHiddenLines, false);
@@ -104,9 +100,9 @@ test('Hidden Lines can be disabled without changing Projection depth', async () 
 
 test('3D projection settings expose only the Hidden Lines control', async () => {
   const popup = await open('m', true);
-  const controls = [...popup.querySelectorAll<HTMLInputElement>('input')];
-  assert.deepEqual(controls.map(control => control.getAttribute('aria-label')), ['Hidden Lines']);
+  assert.equal(popup.querySelectorAll('[role="switch"]').length, 1);
+  const control = settingSwitch(popup, 'Hidden Lines in export');
   act(() => useViewerStore.getState().updateDrawing2DDisplayOptions({ showHiddenLines: true }));
-  click(controls[0]!);
+  click(control);
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showHiddenLines, false);
 });

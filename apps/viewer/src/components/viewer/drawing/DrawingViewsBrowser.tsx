@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { useTranslation } from '@/i18n';
 import { toast } from '@/components/ui/toast';
-import { ViewIdentityDialog } from './ViewIdentityFields';
+import { RenameViewIdentityDialog, ViewIdentityDialog } from './ViewIdentityFields';
 import { drawingLineweightScales, type LineweightTable } from '@/lib/drawing/lineweight-table';
 import { nextViewCode } from '@/lib/drawing/view-markers';
 import { NewPlanDialog } from './NewPlanDialog';
@@ -19,7 +19,7 @@ import type { VerticalViewKind } from './PlaceVerticalView';
 import { useViewerStore } from '@/store';
 import {
   applySavedSectionCut, canSaveDrawingView, duplicateSavedSectionCut, removeSavedSectionCut,
-  renameSavedSectionCut, SAVED_VIEW_KINDS, saveCurrentSectionCut, savedViewKind, setDrawingPublicationScale, updateSavedSectionCut,
+  SAVED_VIEW_KINDS, saveCurrentSectionCut, savedViewKind, setDrawingPublicationScale, updateSavedSectionCut,
   useSavedSectionCuts, type SavedViewKind,
 } from '@/store/savedSectionCutsStore';
 
@@ -37,7 +37,7 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
   const [query, setQuery] = useState('');
   const [newPlan, setNewPlan] = useState(false);
   const [kind, setKind] = useState<SavedViewKind>();
-  const [identity, setIdentity] = useState<{ name: string; code: string; id?: string; save: (name: string, code: string) => void }>();
+  const [identity, setIdentity] = useState<string | { name: string; code: string; save: (name: string, code: string) => void }>();
   const [failed, setFailed] = useState(false);
   const visible = cuts.filter(({ name, code }) => `${code ?? ''} ${name}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const selectedKind = kind ?? (axis === 'down' ? 'plan' : 'section');
@@ -63,7 +63,9 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
         <h2 className="text-xs font-medium">{t('section2d.views.title')}</h2>
         <Button size="icon-xs" variant="ghost" aria-label={t('section2d.views.close')} onClick={close}><X className="h-3.5 w-3.5" /></Button>
       </div>
-      {identity && <ViewIdentityDialog {...identity} close={() => setIdentity(undefined)} />}
+      {typeof identity === 'string'
+        ? <RenameViewIdentityDialog id={identity} close={() => setIdentity(undefined)} />
+        : identity && <ViewIdentityDialog {...identity} close={() => setIdentity(undefined)} />}
       <div className="space-y-2 p-2">
         <Button size="sm" variant="outline" className="w-full" disabled={!canCreatePlan}
           onClick={() => setNewPlan(true)}>{t('section2d.create.plan')}</Button>
@@ -135,8 +137,7 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
                       setQuery('');
                     });
                   }}><Copy className="h-3.5 w-3.5" /></Button>
-                  <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} title={t('section2d.savedCuts.renameTitle')} aria-label={t('section2d.savedCuts.renameTitle')} onClick={() => setIdentity({ name: cut.name, code: cut.code ?? nextViewCode(entry, cuts), id: cut.id,
-                    save: (name, code) => renameSavedSectionCut(cut.id, name, code) })}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} title={t('section2d.savedCuts.renameTitle')} aria-label={t('section2d.savedCuts.renameTitle')} onClick={() => setIdentity(cut.id)}><Pencil className="h-3.5 w-3.5" /></Button>
                   <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} title={t('section2d.savedCuts.deleteTitle')} aria-label={t('section2d.savedCuts.deleteTitle')} onClick={async () => {
                     if (await confirmDialog({ description: t('section2d.views.delete', { name: cut.name }), destructive: true })) edit(() => removeSavedSectionCut(cut.id));
                   }}><Trash2 className="h-3.5 w-3.5" /></Button>

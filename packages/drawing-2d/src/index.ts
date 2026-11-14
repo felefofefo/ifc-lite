@@ -163,7 +163,7 @@ export type {
 // HATCH GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { suppressCutJoints } from './cut-joints.js';
+export { suppressCutJoints, suppressDrawingCutJoints } from './cut-joints.js';
 export { patternSegments, surfacePatternSegments, type PatternLine } from './pat-lines.js';
 export { HatchGenerator } from './hatch-generator.js';
 export type { HatchLine, HatchResult, CustomHatchSettings } from './hatch-generator.js';

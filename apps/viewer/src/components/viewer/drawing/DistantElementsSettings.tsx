@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { useTranslation } from '@/i18n';
+import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { Input } from '@/components/ui/input';
 import { DEFAULT_DISTANT, type DistantElements } from '@/lib/drawing/distant-elements';
 
@@ -10,10 +11,8 @@ export function DistantElementsSettings({ value, onChange }: {
 }) {
   const { t } = useTranslation();
   return <fieldset className="space-y-2 border-t pt-2">
-    <label className="flex items-center gap-2">
-      <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked ? { ...DEFAULT_DISTANT } : undefined)} />
-      {t('section2d.distant.label')}
-    </label>
+    <DrawingSettingSwitch label={t('section2d.distant.label')} checked={!!value}
+      onCheckedChange={enabled => onChange(enabled ? { ...DEFAULT_DISTANT } : undefined)} />
     {value && <>
       <label className="flex items-center justify-between gap-2">{t('section2d.distant.offset')}
         <Input className="h-7 w-20" type="number" min="0.01" step="any" value={value.offset}
@@ -29,8 +28,10 @@ export function DistantElementsSettings({ value, onChange }: {
           onChange={e => { if (e.target.validity.valid) onChange({ ...value, weight: e.target.value ? e.target.valueAsNumber : undefined }); }} />
       </label>
       <div className="flex items-center justify-between gap-2">
-        <label className="flex items-center gap-2"><input type="checkbox" checked={!!value.color}
-          onChange={e => onChange({ ...value, color: e.target.checked ? '#999999' : undefined })} />{t('section2d.distant.color')}</label>
+        <div className="min-w-0 flex-1">
+          <DrawingSettingSwitch label={t('section2d.distant.color')} checked={!!value.color}
+            onCheckedChange={enabled => onChange({ ...value, color: enabled ? '#999999' : undefined })} />
+        </div>
         {value.color && <input type="color" aria-label={t('section2d.distant.color')} value={value.color}
           onChange={e => onChange({ ...value, color: e.target.value })} />}
       </div>

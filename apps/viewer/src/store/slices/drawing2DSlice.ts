@@ -180,6 +180,7 @@ export interface Drawing2DState {
      * on every cut. Resolve it with `constructionProjectionEnabled`.
      */
     showConstructionProjection: boolean | null;
+    showOverheadProjection?: boolean;
     /** Manual background depth in metres; null selects automatic bands (#6615). */
     constructionProjectionDepth: number | null;
     /**
@@ -413,7 +414,7 @@ export const getDefaultDrawing2DState = (): Drawing2DState => ({
   drawing2DDisplayOptions: getDefaultDisplayOptions(),
   // Graphic overrides
   graphicOverridePresets: BUILT_IN_PRESETS,
-  activePresetId: 'preset-3d-colors', // Default to IFC Materials
+  activePresetId: null,
   customOverrideRules: [],
   overridesEnabled: true,
   overridesPanelVisible: false,

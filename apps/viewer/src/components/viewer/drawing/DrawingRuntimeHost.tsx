@@ -104,10 +104,10 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   const surfaceOverrides = graphicRules.some(({ style }) => hasHatchPaint(style.surfaceHatch));
   const includeProjectionPolygons = panelVisible && displayOptions.showHatching
     && (surfaceOverrides || Object.values(hatches).some((style) => hasHatchPaint(style?.surface)));
-  const { showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, constructionProjectionDepth } = displayOptions;
+  const { showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth } = displayOptions;
   const generationOptions = useMemo(() => ({
-    showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, constructionProjectionDepth,
-  }), [showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, constructionProjectionDepth]);
+    showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth,
+  }), [showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth]);
   const { generateDrawing, isRegenerating } = useDrawingGeneration({
     geometryResult, ifcDataStore, sectionPlane, displayOptions: generationOptions, typeVisibility, includeProjectionPolygons,
     // Both sets hold global ids, so they cover every federated model.
