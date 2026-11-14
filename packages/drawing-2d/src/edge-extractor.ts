@@ -304,12 +304,12 @@ export class EdgeExtractor {
         line: { start, end },
         category: 'projection',
         visibility,
+        ...(visibility === 'hidden' ? { overhead: true } : {}),
         entityId: edge.entityId,
         ifcType: edge.ifcType,
         modelIndex: edge.modelIndex,
         // Per-endpoint VIEW depth (issue #2639, see projection-bands.ts):
-        // negated flip-adjusted depth, clamped at the cut plane. The
-        // classifier lerps depth..depthEnd along the line.
+        // negated flip-adjusted depth, clamped at the cut plane.
         depth: Math.max(0, -dA),
         depthEnd: Math.max(0, -dB),
       });

@@ -177,6 +177,23 @@ describe('visible surface polygons', () => {
     expect([...areas.entries()].sort()).toEqual([[41, 4], [42, 8]]);
   });
 
+  it('keeps the same world-anchored hatch frame across a tilted face’s triangulation', async () => {
+    const roof = { ...wedge([10, 20, 0]),
+      positions: new Float32Array([0,0,-2,4,0,-2,4,2,-3,0,2,-3]),
+      indices: new Uint32Array([0,1,2,0,2,3]),
+    };
+    const drawing = await new Drawing2DGenerator().generate([roof],
+      { plane, projectionDepth: 6, scale: 100, includeHiddenLines: false, creaseAngle: 30 },
+      { useGPU: false, includeProjectionPolygons: true });
+    expect(drawing.projectionPolygons).toHaveLength(2);
+    for (const polygon of drawing.projectionPolygons) {
+      const transform = polygon.surfacePatternTransform!;
+      expect(transform[0]).toBeCloseTo(1);
+      expect(transform[3]).toBeCloseTo(Math.hypot(1, 0.5));
+      expect(transform[5]).toBeCloseTo(-4 / Math.hypot(1, 0.5));
+    }
+  });
+
   it('splits intersecting slopes where their depth order changes', async () => {
     const slope = (a: number, b: number, expressId: number): MeshData => ({
       ...wedge(), expressId, materialId: expressId,

@@ -51,7 +51,7 @@ export function mergeDrawingLines(
   const groups = new Map<string, DrawingLine[]>();
 
   for (const line of lines) {
-    const key = `${line.modelIndex}:${line.entityId}:${line.category}:${line.visibility}:${line.openSurfaceCut ?? false}`;
+    const key = `${line.modelIndex}:${line.entityId}:${line.category}:${line.visibility}:${line.overhead ?? false}:${line.openSurfaceCut ?? false}`;
     if (!groups.has(key)) {
       groups.set(key, []);
     }

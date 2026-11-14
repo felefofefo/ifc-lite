@@ -29,7 +29,7 @@ async function open(unit = 'm') {
   return popup;
 }
 function checkbox(popup: HTMLElement) {
-  const control = popup.querySelector<HTMLInputElement>('input[type="checkbox"]'); assert.ok(control); return control;
+  const control = popup.querySelector<HTMLInputElement>('input[type="checkbox"]:not([aria-label="Hidden Lines"])'); assert.ok(control); return control;
 }
 function distance(popup: HTMLElement) {
   const input = popup.querySelector<HTMLInputElement>('input[type="number"]'); assert.ok(input); return input;
@@ -90,4 +90,14 @@ test('invalid runtime depths cannot switch the displayed manual band to Auto (#6
     assert.equal(checkbox(popup).checked, false, 'the manual control remains active');
     assert.equal(distance(popup).value, '2', 'the displayed metric distance retains the valid band');
   }
+});
+
+test('Hidden Lines can be disabled without changing Projection depth', async () => {
+  const popup = await open();
+  const control = popup.querySelector<HTMLInputElement>('[aria-label="Hidden Lines"]');
+  assert.ok(control);
+  act(() => useViewerStore.getState().updateDrawing2DDisplayOptions({ showHiddenLines: true }));
+  click(control);
+  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showHiddenLines, false);
+  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.constructionProjectionDepth, null);
 });

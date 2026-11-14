@@ -32,8 +32,13 @@ fn surfacePatternColor(base: vec4<f32>, id: u32, p: vec3<f32>, n: vec3<f32>, dx:
       let normal = abs(n);
       var u = vec3<f32>(1.0, 0.0, 0.0);
       var v = vec3<f32>(0.0, 1.0, 0.0);
-      if (normal.y >= max(normal.x, normal.z)) { v = vec3<f32>(0.0, 0.0, 1.0); }
-      else if (normal.x > normal.z) { u = vec3<f32>(0.0, 0.0, 1.0); }
+      if (normal.y + 0.00001 >= max(normal.x, normal.z)) { v = vec3<f32>(0.0, 0.0, 1.0); }
+      else if (normal.x > normal.z + 0.00001) { u = vec3<f32>(0.0, 0.0, 1.0); }
+      // Build the UV frame in the actual face plane so angled surfaces keep
+      // their pattern scale and perspective foreshortening.
+      u = normalize(u - dot(u, n) * n);
+      let tangentV = cross(n, u);
+      v = select(-tangentV, tangentV, dot(tangentV, v) >= 0.0);
       let background = select(base.rgb, unpack4x8unorm(max(bg, 1u) - 1u).bgr, bg != 0u);
       if (kind > 2.0) {
         let offset = u32(kind) - 3u;

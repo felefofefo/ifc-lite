@@ -25,9 +25,10 @@
  * `metadataComment`.
  */
 
-import { patternSegments, type PatternLine } from './pat-lines.js';
+import { patternSegments, surfacePatternSegments, type PatternLine } from './pat-lines.js';
 import type { Drawing2D, DrawingLine, DrawingPolygon, LineCategory, Point2D } from './types.js';
 import { isPolygonCutLine, makeEntityKey } from './types.js';
+import { isOccludedDrawingLine } from './projection-bands.js';
 import { getLineStyle, getHatchPattern } from './styles.js';
 import { applyDxfPlacement } from './dxf/convert.js';
 import { DEFAULT_DXF_PLACEMENT, type DxfPlacement, type DxfUnderlay } from './dxf/types.js';
@@ -44,7 +45,7 @@ export interface DXFHatchLayer {
 }
 
 export interface DXFExportOptions {
-  /** Include lines whose `visibility === 'hidden'` (default true, matching SVG). */
+  /** Include occluded lines (default true, matching SVG). */
   showHiddenLines?: boolean;
   /** R12 writes cut boundaries; R2007 supports native solid hatches and UTF-8. Defaults to R12. */
   version?: 'R12' | 'R2007';
@@ -154,7 +155,11 @@ export class DXFExporter {
 
     const writePaint = (polygon: DrawingPolygon, outer: Point2D[], holes: Point2D[][], item: DXFHatchLayer) => {
       if (!styledWriter) return;
-      if (item.pattern === 'custom') {
+      if (item.pattern !== 'solid' && polygon.surfacePatternTransform) {
+        for (const { start, end } of surfacePatternSegments(polygon, { ...item, pattern: item.pattern })) {
+          styledWriter.addLine(map(start), map(end), fillLayer, undefined, { color: item.color, lineWeight: item.lineWeight ?? 0.13 });
+        }
+      } else if (item.pattern === 'custom') {
         for (const { start, end } of patternSegments(polygon.polygon, item.families ?? [], item.spacing)) {
           styledWriter.addLine(map(start), map(end), fillLayer, undefined, { color: item.color, lineWeight: item.lineWeight ?? 0.13 });
         }
@@ -214,7 +219,7 @@ export class DXFExporter {
     }
 
     for (const line of drawing.lines) {
-      if (!showHiddenLines && line.visibility === 'hidden') continue;
+      if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
       if (strokeStyle && styledWriter && (options.objectStyles || line.visibility !== 'hidden')) {
         if (isPolygonCutLine(line) && outlined.has(makeEntityKey(line.modelIndex, line.entityId))) continue;
         const role = line.category === 'cut' ? 'cut' : 'projection';

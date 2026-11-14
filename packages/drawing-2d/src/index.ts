@@ -111,13 +111,13 @@ export {
   signedDepth,
   signedAxisDepth,
   bandVisibility,
+  isOccludedDrawingLine,
   projectPointForPlane,
   getViewDirectionForPlane,
   outlineToProjectionLines,
 } from './projection-bands.js';
 export type { ProjectionBand, ProjectionBandDepths } from './projection-bands.js';
 
-// Current-floor scoping + feature-element exclusion (issue #979 follow-up)
 export { currentFloorBands, storeyFloorsFromMeshes } from './storey-bands.js';
 export type { StoreyFloorMesh } from './storey-bands.js';
 export { isFeatureElementType } from './feature-elements.js';
@@ -163,7 +163,7 @@ export type {
 // HATCH GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { patternSegments, type PatternLine } from './pat-lines.js';
+export { patternSegments, surfacePatternSegments, type PatternLine } from './pat-lines.js';
 export { HatchGenerator } from './hatch-generator.js';
 export type { HatchLine, HatchResult, CustomHatchSettings } from './hatch-generator.js';
 

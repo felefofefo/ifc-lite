@@ -11,7 +11,7 @@
  * (`drawCutPolygonsPdf`) runs inside the export job.
  */
 
-import { HatchGenerator, patternSegments } from '@ifc-lite/drawing-2d';
+import { HatchGenerator, patternSegments, surfacePatternSegments } from '@ifc-lite/drawing-2d';
 import type { jsPDF } from 'jspdf';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
 import { getFillColorForType } from '@/components/viewer/drawing/ifc-fill-colors';
@@ -29,6 +29,7 @@ export interface PdfCutPolygon {
   style: CutPolygonStyle;
   /** Page-space rings that survived (outer first when drawn). */
   rings: Point[][];
+  mapSurfacePoint?: (x: number, y: number) => Point;
   /**
    * The outer ring is drawable and encloses area, and every hole of two or
    * more points is drawable (jsPDF cannot draw the others; any other hole
@@ -80,11 +81,12 @@ export function prepareCutPolygonsPdf(
   // Everything is checked on page coordinates: that is what jsPDF receives,
   // and a huge but finite model value can still overflow there.
   const page = (ring: Point[]) => ring.map((p) => mapPoint(p.x, p.y));
-  return styleCutPolygons(polygons, ctx, ({ polygon: { outer, holes } }) => {
+  return styleCutPolygons(polygons, ctx, ({ polygon: { outer, holes }, surfacePatternTransform }) => {
     const pageOuter = page(outer);
     const pageHoles = holes.map(page);
     return {
       rings: [pageOuter, ...pageHoles].filter(drawableRing),
+      mapSurfacePoint: surfacePatternTransform ? mapPoint : undefined,
       fillable: drawableRing(pageOuter) && enclosesArea(pageOuter)
         && pageHoles.every((ring) => ring.length < 2 || drawableRing(ring)),
     };
@@ -143,7 +145,7 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: 
   };
 
   const hatch = new HatchGenerator();
-  for (const { polygon, rings, fillable, style } of polygons) {
+  for (const { polygon, rings, fillable, style, mapSurfacePoint } of polygons) {
     if (!fillable) continue;
     const paints = style.fills ?? [{ pattern: 'solid' as const, color: style.fillColor, spacing: 0, lineWeight: undefined }];
     for (const paint of paints) {
@@ -165,6 +167,16 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: 
       if (shape.polygon.outer.some(({ x, y }) => Math.hypot(x, y) / spacing > 100_000)) {
         throw new RangeError('This PDF scale and hatch spacing generate too many lines.');
       }
+      doc.setGState(doc.GState({ 'stroke-opacity': opacity }));
+      doc.setLineWidth(paint.lineWeight ?? 0.13);
+      doc.setLineDashPattern([], 0);
+      if (mapSurfacePoint) {
+        for (const { start, end } of surfacePatternSegments(polygon, { ...paint, pattern: paint.pattern })) {
+          const a = mapSurfacePoint(start.x, start.y), b = mapSurfacePoint(end.x, end.y);
+          if (isPagePoint(a) && isPagePoint(b)) doc.line(a.x, a.y, b.x, b.y);
+        }
+        continue;
+      }
       const segments = paint.pattern === 'custom'
         ? patternSegments({ outer: rings[0].map(p => ({ x: p.x, y: -p.y })), holes: rings.slice(1).map(r => r.map(p => ({ x: p.x, y: -p.y }))) },
           paint.families ?? [], spacing).map(({ start, end }) => ({ line: {
@@ -175,9 +187,6 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: 
         type: paint.pattern, spacing, angle: 45, secondaryAngle: -45,
         origin: polygon.isCut ? undefined : { x: -origin.x, y: -origin.y },
       }).lines;
-      doc.setGState(doc.GState({ 'stroke-opacity': opacity }));
-      doc.setLineWidth(paint.lineWeight ?? 0.13);
-      doc.setLineDashPattern([], 0);
       for (const { line: { start, end } } of segments) {
         doc.line(start.x + origin.x, start.y + origin.y, end.x + origin.x, end.y + origin.y);
       }

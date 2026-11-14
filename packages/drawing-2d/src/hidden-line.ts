@@ -302,7 +302,13 @@ export class HiddenLineClassifier {
     const ix = Math.max(0, Math.min(width - 1, Math.floor(px)));
     const iy = Math.max(0, Math.min(height - 1, Math.floor(py)));
 
-    const bufferDepth = buffer[iy * width + ix];
+    const index = iy * width + ix;
+    // Compare depths at the same point. A sloping face can be nearer at
+    // the pixel centre than at the edge being tested, hiding its own edge.
+    const bufferDepth = buffer[index]
+      + raster.depthSlopeX[index] * (px - ix - 0.5)
+      + raster.depthSlopeY[index] * (py - iy - 0.5);
+    if (bufferDepth < -depthBias) return true;
 
     // Line is visible if it's at or in front of the depth buffer
     return lineDepth <= bufferDepth + depthBias;

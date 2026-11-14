@@ -2,44 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * Named section cuts (#5514, charter #5478): a small library of saved cut
- * geometries a user can name, re-apply, rename, and delete. Listed in the
- * Drawing panel as the drawing's source; applying one becomes THE visible
- * cut (`useViewerStore`'s `sectionPlane`), so BCF viewpoint capture
- * (`useSectionViewpointCapture.ts`, reads `drawing2D.config.plane`) and the
- * floor-plan command (`useFloorplanView.ts`, reads/writes the same
- * `sectionPlane`) get it for free — neither has to know saved cuts exist.
- *
- * Lives in its OWN zustand store, not a `ViewerState` slice, for two
- * reasons:
- *
- *  1. `store/index.ts` and `slices/sectionSlice.ts` are both already at
- *     their `check-module-size` ratchet with zero headroom (#5478 house
- *     rule: never raise a budget). A same-shaped contribution to either
- *     would fail CI on line count alone; splitting `sectionSlice.ts` to buy
- *     room is a larger, riskier PR than this feature justifies.
- *  2. A saved cut is a document the user authored, like a `BasketView`
- *     preset (`pinboardSlice.ts`) — the same reasoning that keeps
- *     `basketViews` out of the `'all-models-cleared'` teardown arm applies
- *     here without qualification: this store is never torn down by a model
- *     swap. Its geometry (axis/position/custom) can go stale relative to a
- *     very different model's bounds, exactly like a `BasketView`'s
- *     `entityRefs` can — a soft UX question, not a correctness bug, and one
- *     the existing precedent already accepts.
- *
- * A saved cut is a SET (#7545): every plane that was cutting, which of them was
- * active, the zoom the user last used and the exact camera, so applying it brings
- * back the view and not only the geometry. A set of one plane is what a saved cut
- * always was, so the Drawing panel's list, rename and delete keep working.
- *
- * The only coupling to the main store is one-directional and explicit:
- * `saveCurrentSectionCut` reads the live plane set, and `applySavedSectionCut`
- * installs it through `installSectionPlanes` (fresh ids, unique names, un-hidden)
- * and opens the Section tool - so a saved cut re-enters the Section/Drawing
- * contract (`store/section-active.ts`) exactly like every other section writer.
- */
+/** Named drawing views and their project-scoped publication settings. */
 
+import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { create } from 'zustand';
 import { COMMON_SCALES, formatScaleFactorLabel, type DrawingScale, type GraphicOverrideRule } from '@ifc-lite/drawing-2d';
 import type { CameraViewpoint, SectionBox, SectionCapStyle, SectionPlane, SectionPlaneAxis } from './types.js';
@@ -76,7 +41,7 @@ export const SAVED_VIEW_KINDS = ['plan', 'section', 'elevation', '3d'] as const;
 export type SavedViewKind = typeof SAVED_VIEW_KINDS[number];
 type ViewDisplay = Pick<ViewerState['drawing2DDisplayOptions'],
   'showConstructionProjection' | 'constructionProjectionDepth' | 'showHiddenLines' | 'showHatching' |
-  'useSymbolicRepresentations' | 'showIfcAnnotations' | 'showSurfacePatterns3D'>;
+  'useSymbolicRepresentations' | 'showIfcAnnotations' | 'showSurfacePatterns3D' | 'distantElements'>;
 
 export interface SavedSectionCut {
   id: string;
@@ -262,6 +227,7 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
       showConstructionProjection: newPlane ? true : display.showConstructionProjection,
       constructionProjectionDepth: newPlane ? null : display.constructionProjectionDepth,
       showSurfacePatterns3D: display.showSurfacePatterns3D ?? false,
+      distantElements: newPlane ? undefined : display.distantElements,
       showHiddenLines: display.showHiddenLines, showHatching: display.showHatching,
       useSymbolicRepresentations: display.useSymbolicRepresentations, showIfcAnnotations: display.showIfcAnnotations,
     },
@@ -302,7 +268,7 @@ export function duplicateSavedSectionCut(id: string, name: string): string | und
  * why), opens the Section tool so the user can see and edit what they just applied,
  * and then restores the exact camera, or frames the saved zoom when there is none.
  */
-export function applySavedSectionCut(id: string): void {
+export function applySavedSectionCut(id: string, restoreCamera = true): void {
   const cut = useSavedSectionCuts.getState().cuts.find((c) => c.id === id);
   if (!cut) return;
   const state = useViewerStore.getState();
@@ -322,7 +288,7 @@ export function applySavedSectionCut(id: string): void {
   if (planes.length) {
     state.installSectionPlanes(planes, cut.activeIndex);
     state.setSectionVisible(true);
-    if (useViewerStore.getState().activeTool !== 'section') state.setActiveTool('section');
+    if (restoreCamera && useViewerStore.getState().activeTool !== 'section') state.setActiveTool('section');
   } else if (cut.kind === '3d') {
     state.clearSectionPlanes();
     if (state.activeTool === 'section') state.setActiveTool('select');
@@ -330,11 +296,14 @@ export function applySavedSectionCut(id: string): void {
   if (cut.visibility) useViewerStore.setState(restoreViewVisibility(state, cut.visibility));
   if (cut.graphics) {
     useViewerStore.setState({
-      activePresetId: cut.graphics.presetId, overridesEnabled: cut.graphics.enabled,
+      activePresetId: cut.graphics.presetId, overridesEnabled: true,
       customOverrideRules: structuredClone(cut.graphics.rules),
     });
   }
-  if (cut.display) state.updateDrawing2DDisplayOptions({ ...cut.display, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false });
+  if (cut.display) state.updateDrawing2DDisplayOptions({
+    ...cut.display, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
+  });
+  else state.updateDrawing2DDisplayOptions({ distantElements: undefined });
   useSavedSectionCuts.setState({ activeCutId: id });
   if (cut.publicationScale) {
     const factor = cut.publicationScale;
@@ -342,6 +311,7 @@ export function applySavedSectionCut(id: string): void {
     else setDrawingPublicationScale(COMMON_SCALES.find((scale) => scale.factor === factor)
       ?? { factor, name: `1:${formatScaleFactorLabel(factor)}`, useCase: '' });
   }
+  if (!restoreCamera) return;
   const live = useViewerStore.getState();
   if (cut.viewpoint && live.cameraCallbacks.applyViewpoint) live.cameraCallbacks.applyViewpoint(cut.viewpoint, true);
   else if (cut.zoom) void zoomToSectionTarget(live, cut.zoom);
@@ -368,12 +338,12 @@ export function renameSavedSectionCut(id: string, name: string, code?: string): 
   updateViewSettings(id, { name: trimmed, code: validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
 }
 
-export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display'>>): void {
+export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics'>>): void {
   const { cuts } = useSavedSectionCuts.getState();
   commitCuts({ cuts: cuts.map(cut => cut.id === id ? { ...cut, ...settings, updatedAt: Date.now() } : cut) });
 }
 
-export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: boolean): void {
+export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: boolean, distantElements?: DistantElements | null): void {
   const { cuts } = useSavedSectionCuts.getState();
   const cut = cuts.find(view => view.id === id);
   const plane = cut?.planes[cut.activeIndex];
@@ -381,8 +351,12 @@ export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: bool
   if (!cut || !plane || !custom || plane.axis === 'down' || plane.box) return;
   const planes = [...cut.planes];
   planes[cut.activeIndex] = { ...plane, axis: 'front', flipped: false, custom };
-  commitCuts({ cuts: cuts.map(view => view.id === id
-    ? { ...view, planes, markerTrace: trace, viewpoint: null, zoom: null, updatedAt: Date.now() } : view) });
+  const display = distantElements === undefined ? cut.display : {
+    ...(cut.display ?? useViewerStore.getState().drawing2DDisplayOptions),
+    distantElements: distantElements ?? undefined,
+  };
+  const edited = { ...cut, planes, markerTrace: trace, display, viewpoint: null, zoom: null, updatedAt: Date.now() };
+  commitCuts({ cuts: cuts.map(view => view.id === id ? edited : view) });
 }
 
 export function removeSavedSectionCut(id: string): void {
@@ -395,4 +369,23 @@ export function setViewSurfacePatterns(showSurfacePatterns3D: boolean): void {
   const cut = cuts.find(view => view.id === activeCutId);
   if (cut?.display) updateViewSettings(cut.id, { display: { ...cut.display, showSurfacePatterns3D } });
   useViewerStore.getState().updateDrawing2DDisplayOptions({ showSurfacePatterns3D });
+}
+
+export function setDrawingViewTemplate(id: string | null): void {
+  const state = useViewerStore.getState();
+  const { activeCutId, cuts } = useSavedSectionCuts.getState();
+  const active = cuts.find(cut => cut.id === activeCutId);
+  if (active) updateViewSettings(active.id, { graphics: {
+    ...active.graphics, presetId: id ?? 'preset-3d-colors', enabled: true,
+    rules: active.graphics?.rules ?? structuredClone(state.customOverrideRules),
+  } });
+  useViewerStore.setState({ activePresetId: id ?? 'preset-3d-colors', overridesEnabled: true });
+}
+
+export function setDrawingProjectionDisplay(patch: Partial<Pick<ViewDisplay, 'showHiddenLines' | 'distantElements'>>): void {
+  const state = useViewerStore.getState();
+  const { activeCutId, cuts } = useSavedSectionCuts.getState();
+  const active = cuts.find(view => view.id === activeCutId);
+  if (active) updateViewSettings(active.id, { display: { ...state.drawing2DDisplayOptions, ...active.display, ...patch } });
+  state.updateDrawing2DDisplayOptions(patch);
 }

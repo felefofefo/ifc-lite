@@ -7,6 +7,7 @@ import type { DrawingPolygon, Point2D, Polygon2D, SectionPlaneConfig } from './t
 import { isFeatureElementType } from './feature-elements.js';
 import { projectPointForPlane, signedDepth } from './projection-bands.js';
 import { clipMeshToProjectionWindow } from './projection-clip.js';
+import { vec3Cross, vec3Dot, vec3Normalize, vec3Sub } from './math.js';
 import { getVertex, type RasterVertex } from './raster-core.js';
 
 const TOLERANCE = 1e-8;
@@ -114,15 +115,48 @@ function meshFaces(mesh: MeshData, plane: SectionPlaneConfig, maxDepth: number):
   const source = { entityId: mesh.expressId, ifcType: mesh.ifcType ?? 'Unknown', modelIndex: mesh.modelIndex ?? 0,
     isCut: false, materialId: mesh.materialId, sourceColor: mesh.color };
   const { positions, indices, origin } = clipped;
+  const world = [];
   const projected: RasterVertex[] = [];
   for (let i = 0; i < positions.length / 3; i++) {
     const p = getVertex(positions, i, origin);
+    world.push(p);
     projected.push({ ...projectPointForPlane(p, plane), depth: Math.max(0, -signedDepth(p, plane)) });
   }
   const faces: Face[] = [];
   for (let i = 0; i + 2 < indices.length; i += 3) {
-    const item = face([projected[indices[i]], projected[indices[i + 1]], projected[indices[i + 2]]], source);
-    if (item) faces.push(item);
+    const [i0, i1, i2] = [indices[i], indices[i + 1], indices[i + 2]];
+    const item = face([projected[i0], projected[i1], projected[i2]], source);
+    if (!item) continue;
+
+    // Use the same world-oriented tangent frame as the 3D surface shader.
+    const p = world[i0];
+    const n = vec3Normalize(vec3Cross(vec3Sub(world[i1], p), vec3Sub(world[i2], p)));
+    const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+    const horizontal = ay + 1e-5 >= Math.max(ax, az);
+    const alongZ = !horizontal && ax > az + 1e-5;
+    const axisU = alongZ ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
+    const axisV = horizontal ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
+    const component = vec3Dot(axisU, n);
+    const u = vec3Normalize(vec3Sub(axisU, { x: n.x * component, y: n.y * component, z: n.z * component }));
+    const perpendicular = vec3Cross(n, u);
+    const sign = vec3Dot(perpendicular, axisV) < 0 ? -1 : 1;
+    const v = { x: perpendicular.x * sign, y: perpendicular.y * sign, z: perpendicular.z * sign };
+
+    const origin = projected[i0];
+    const projectedU = projectPointForPlane({ x: p.x + u.x, y: p.y + u.y, z: p.z + u.z }, plane);
+    const projectedV = projectPointForPlane({ x: p.x + v.x, y: p.y + v.y, z: p.z + v.z }, plane);
+    const ux = projectedU.x - origin.x, uy = projectedU.y - origin.y;
+    const vx = projectedV.x - origin.x, vy = projectedV.y - origin.y;
+    const det = ux * vy - uy * vx;
+    if (Math.abs(det) < TOLERANCE) {
+      faces.push(item);
+      continue;
+    }
+    const a = vy / det, b = -uy / det, c = -vx / det, d = ux / det;
+    item.source = { ...source, surfacePatternTransform: [
+      a, b, c, d, vec3Dot(p, u) - a * origin.x - c * origin.y, vec3Dot(p, v) - b * origin.x - d * origin.y,
+    ] };
+    faces.push(item);
   }
   return faces;
 }
@@ -184,7 +218,7 @@ export function buildProjectionPolygons(
       visible = visible.flatMap(ring => subtract(ring, nearer));
       if (!visible.length) break;
     }
-    for (const outer of visible) polygons.push({ ...target.source, polygon: { outer, holes: [] } });
+    for (const outer of visible) polygons.push({ ...target.source, polygon: { outer, holes: [] }, vertexDepths: outer.map(target.depth) });
   });
   return polygons.reverse();
 }

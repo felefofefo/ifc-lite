@@ -134,14 +134,13 @@ export type { LineCategory, VisibilityState };
  * A classified line segment in the 2D drawing
  */
 export interface DrawingLine {
-  /** 2D line geometry */
   line: Line2D;
-  /** Line classification */
   category: LineCategory;
   /** A `cut` line through an open surface (#8664): no polygon outlines it, so draw it. */
   openSurfaceCut?: true;
-  /** Visibility after hidden line removal */
   visibility: VisibilityState;
+  /** Above-cut projection, drawn dashed by convention. */
+  overhead?: true;
   /** Source IFC entity expressId */
   entityId: number;
   /** IFC type name (e.g., "IfcWall") */
@@ -162,13 +161,13 @@ export interface DrawingLine {
    * along the 2D line per sample; omitted means constant depth.
    */
   depthEnd?: number;
+  distant?: boolean;
 }
 
 /**
  * A polygon from a section cut or a visible projected surface (used for hatching)
  */
 export interface DrawingPolygon {
-  /** 2D polygon geometry */
   polygon: Polygon2D;
   /** Source IFC entity expressId */
   entityId: number;
@@ -176,8 +175,10 @@ export interface DrawingPolygon {
   ifcType: string;
   /** Model index for multi-model federation */
   modelIndex: number;
-  /** True if from section cut, false if projection */
   isCut: boolean;
+  distant?: boolean;
+  vertexDepths?: number[];
+  surfacePatternTransform?: [a: number, b: number, c: number, d: number, x: number, y: number];
   /** Per-layer fill and identity. `color` (RGBA 0–1) is present only when the entity cut into
    *  >1 layer (an `IfcMaterialLayerSet` wall/slab, a frame+glass window), so each layer fills
    *  with its own colour; absent for single-material elements (keep the per-`ifcType` / per-entity

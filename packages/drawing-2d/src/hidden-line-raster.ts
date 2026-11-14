@@ -18,11 +18,9 @@
  * for cardinal and custom planes alike.
  *
  * The vertex fetch, the projected-extent walk and the barycentric test are
- * shared with the shaded colour raster via `raster-core.ts`. The per-pixel
- * loop below is NOT shared: this one maps the extent onto `width - 1` (pixel
- * CENTRES sit on the bounds edges), which is right for sampling a buffer and
- * wrong for an image whose rectangle must cover the extent exactly, so
- * `color-raster.ts` maps edge-to-edge instead.
+ * shared with the shaded colour raster via `raster-core.ts`. Depth
+ * rasterization and line samples share fractional pixel coordinates; the
+ * colour raster maps its image edge-to-edge.
  *
  * Internal module: not exported from the package index.
  */
@@ -37,6 +35,8 @@ import { getVertex, barycentricCoords, computeProjectedBounds } from './raster-c
 export interface DepthRaster {
   /** Per-pixel minimum view depth; Infinity where nothing rasterized. */
   buffer: Float32Array;
+  depthSlopeX: Float32Array;
+  depthSlopeY: Float32Array;
   width: number;
   height: number;
   bounds: Bounds2D;
@@ -99,7 +99,11 @@ export function buildDepthRaster(
   const buffer = new Float32Array(width * height);
   buffer.fill(Infinity);
 
-  const raster: DepthRaster = { buffer, width, height, bounds: b };
+  const raster: DepthRaster = {
+    buffer, width, height, bounds: b,
+    depthSlopeX: new Float32Array(buffer.length),
+    depthSlopeY: new Float32Array(buffer.length),
+  };
 
   for (const mesh of meshes) {
     rasterizeMesh(raster, mesh, plane, occluderDepth, depthBias);
@@ -155,7 +159,7 @@ function rasterizeTriangle(
   p2: RasterVertex,
   depthBias: number,
 ): void {
-  const { buffer, width, height, bounds } = raster;
+  const { buffer, depthSlopeX, depthSlopeY, width, height, bounds } = raster;
 
   const toPixelX = (x: number) => ((x - bounds.min.x) / (bounds.max.x - bounds.min.x)) * (width - 1);
   const toPixelY = (y: number) =>
@@ -164,6 +168,17 @@ function rasterizeTriangle(
   const px0 = { x: toPixelX(p0.x), y: toPixelY(p0.y), depth: p0.depth };
   const px1 = { x: toPixelX(p1.x), y: toPixelY(p1.y), depth: p1.depth };
   const px2 = { x: toPixelX(p2.x), y: toPixelY(p2.y), depth: p2.depth };
+
+  const dx1 = px1.x - px0.x;
+  const dy1 = px1.y - px0.y;
+  const dx2 = px2.x - px0.x;
+  const dy2 = px2.y - px0.y;
+  const determinant = dx1 * dy2 - dx2 * dy1;
+  if (Math.abs(determinant) < 1e-5) return;
+  const dz1 = px1.depth - px0.depth;
+  const dz2 = px2.depth - px0.depth;
+  const slopeX = (dz1 * dy2 - dz2 * dy1) / determinant;
+  const slopeY = (dx1 * dz2 - dx2 * dz1) / determinant;
 
   const minX = Math.max(0, Math.floor(Math.min(px0.x, px1.x, px2.x)));
   const maxX = Math.min(width - 1, Math.ceil(Math.max(px0.x, px1.x, px2.x)));
@@ -186,6 +201,8 @@ function rasterizeTriangle(
         const idx = py * width + px;
         if (depth < buffer[idx]) {
           buffer[idx] = depth;
+          depthSlopeX[idx] = slopeX;
+          depthSlopeY[idx] = slopeY;
         }
       }
     }

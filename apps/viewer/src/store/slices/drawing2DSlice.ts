@@ -7,6 +7,7 @@
  * viewing 2D architectural drawings (floor plans, sections, elevations) from the 3D model.
  */
 
+import type { DistantElements } from '@/lib/drawing/distant-elements';
 import type { StateCreator } from 'zustand';
 import type { Drawing2D, DxfPlacement, DxfUnderlay, GraphicOverrideRule, GraphicOverridePreset } from '@ifc-lite/drawing-2d';
 import { BUILT_IN_PRESETS } from '@ifc-lite/drawing-2d';
@@ -155,6 +156,7 @@ export interface Drawing2DState {
   /** Display options */
   drawing2DDisplayOptions: {
     showHiddenLines: boolean;
+    distantElements?: DistantElements;
     showHatching: boolean;
     showSurfacePatterns3D?: boolean;
     showAnnotations: boolean;

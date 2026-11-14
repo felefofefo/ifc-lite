@@ -126,6 +126,8 @@ export interface GraphicStyle {
   lineWeight?: LineWeightPreset | number;
   /** Line style (dash pattern) */
   lineStyle?: LineStylePreset | DashPattern;
+  projectionLineWeight?: LineWeightPreset | number;
+  projectionLineStyle?: LineStylePreset | DashPattern;
   /** Line cap style */
   lineCap?: 'butt' | 'round' | 'square';
   /** Line join style */
@@ -151,6 +153,7 @@ export interface GraphicStyle {
   hatchColor?: string;
   /** Hatch line weight in mm */
   hatchLineWeight?: number;
+  surfaceHatchLineWeight?: number;
 
   // ─── Visibility ────────────────────────────────────────────────────────────
   /** Whether element is visible */
@@ -185,6 +188,8 @@ export interface GraphicOverrideRule {
   criteria: OverrideCriteria | OverrideCriterion;
   /** Style to apply */
   style: GraphicStyle;
+  /** Viewer-owned saved Search filter definition. */
+  savedFilter?: unknown;
   /** Category for organization */
   category?: string;
   /** Tags for filtering */

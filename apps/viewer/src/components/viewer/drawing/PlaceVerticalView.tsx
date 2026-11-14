@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import type { Point2D } from '@ifc-lite/drawing-2d';
+import { DEFAULT_DISTANT, type DistantElements } from '@/lib/drawing/distant-elements';
 import { Button } from '@/components/ui/button';
 import { ViewIdentityDialog } from './ViewIdentityFields';
 import { nextViewCode, type MarkerTrace } from '@/lib/drawing/view-markers';
@@ -17,15 +18,16 @@ export type VerticalViewKind = 'section' | 'elevation';
 
 export function PlaceVerticalView({ kind, vm, close, edit }: {
   kind: VerticalViewKind; vm: DrawingViewModel; close: () => void;
-  edit?: { id: string; start: Point2D; end: Point2D; reverse: boolean };
+  edit?: { id: string; start: Point2D; end: Point2D; reverse: boolean; distant?: DistantElements };
 }) {
   const { t } = useTranslation();
   const [start, setStart] = useState<Point2D | undefined>(edit?.start);
   const [cursor, setCursor] = useState<Point2D>();
   const [end, setEnd] = useState<Point2D | undefined>(edit?.end);
   const [reverse, setReverse] = useState(edit?.reverse ?? false);
+  const [distant, setDistant] = useState<DistantElements | null>(edit?.distant ?? null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const drag = useRef<{ id: number; grip: 'line' | 'start' | 'end'; trace: MarkerTrace; x: number; y: number; scale: number } | null>(null);
+  const drag = useRef<{ id: number; grip: 'line' | 'start' | 'end' | 'distant'; trace: MarkerTrace; distant: DistantElements | null; x: number; y: number; scale: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [naming, setNaming] = useState(false);
   const { drawing, drawnPlane, viewTransform, sheetEnabled, activeSheet, isPinned, cachedSheetTransformRef } = vm;
@@ -69,16 +71,18 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     angle: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + (reverse ? -90 : 90),
   } : null;
 
+  const direction = arrow && { x: Math.cos(arrow.angle * Math.PI / 180), y: Math.sin(arrow.angle * Math.PI / 180) };
+  const offset = distant && direction && { x: direction.x * distant.offset * scale, y: direction.y * distant.offset * scale };
   const custom = start && end && verticalViewPlane(start, end, drawnPlane.flipped, reverse);
   const world = (point: Point2D) => ({ x: drawnPlane.flipped ? -point.x : point.x, y: point.y });
 
-  function beginDrag(event: PointerEvent<SVGElement>, grip: 'line' | 'start' | 'end') {
+  function beginDrag(event: PointerEvent<SVGElement>, grip: 'line' | 'start' | 'end' | 'distant') {
     const svg = svgRef.current;
     if (!edit || !svg || !start || !end || event.button !== 0 || drag.current || !(scale > 0)) return;
     event.stopPropagation();
     event.preventDefault();
     svg.setPointerCapture(event.pointerId);
-    drag.current = { id: event.pointerId, grip, trace: [start, end], x: event.clientX, y: event.clientY, scale };
+    drag.current = { id: event.pointerId, grip, trace: [start, end], distant, x: event.clientX, y: event.clientY, scale };
     setDragging(true);
   }
 
@@ -86,10 +90,18 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     const current = drag.current;
     if (!current || current.id !== event.pointerId) return;
     event.stopPropagation();
-    const trace = dragVerticalViewTrace(current.trace, current.grip, {
+    const delta = {
       x: (event.clientX - current.x) / current.scale,
       y: (event.clientY - current.y) / current.scale,
-    });
+    };
+    if (current.grip === 'distant') {
+      if (current.distant && arrow) {
+        const r = arrow.angle * Math.PI / 180;
+        setDistant({ ...current.distant, offset: Math.max(0.01, current.distant.offset + delta.x * Math.cos(r) + delta.y * Math.sin(r)) });
+      }
+      return;
+    }
+    const trace = dragVerticalViewTrace(current.trace, current.grip, delta);
     if (trace) {
       setStart(trace[0]);
       setEnd(trace[1]);
@@ -101,6 +113,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     if (!current || current.id !== event.pointerId) return;
     event.stopPropagation();
     if (canceled) {
+      setDistant(current.distant);
       setStart(current.trace[0]);
       setEnd(current.trace[1]);
     } else {
@@ -128,6 +141,11 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       }}>
       {a && !edit && <circle cx={a.x} cy={a.y} r="3" fill="currentColor" />}
       {a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="currentColor" strokeWidth="2" strokeDasharray={end ? undefined : '6 4'} />}
+      {edit && a && b && offset && <g className="cursor-grab" onPointerDown={event => beginDrag(event, 'distant')}>
+        <line x1={a.x + offset.x} y1={a.y + offset.y} x2={b.x + offset.x} y2={b.y + offset.y} stroke="transparent" strokeWidth="20" />
+        <line x1={a.x + offset.x} y1={a.y + offset.y} x2={b.x + offset.x} y2={b.y + offset.y}
+          stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 5" />
+      </g>}
       {edit && a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth="22"
         className={dragging ? 'cursor-grabbing' : 'cursor-grab'} onPointerDown={event => beginDrag(event, 'line')} />}
       {arrow && <path transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}
@@ -143,12 +161,16 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
       <span aria-live="polite">{t(edit ? 'section2d.create.dragLine'
         : end ? 'section2d.create.confirmLine' : start ? 'section2d.create.second' : 'section2d.create.first')}</span>
+      {edit && <label className="flex items-center gap-1">
+        <input type="checkbox" checked={!!distant} onChange={e => setDistant(e.target.checked ? { ...DEFAULT_DISTANT } : null)} />
+        {distant ? t('section2d.distant.offsetLabel', { offset: distant.offset.toFixed(2) }) : t('section2d.distant.label')}
+      </label>}
       <Button size="sm" variant="outline" disabled={!start} onClick={() => setReverse(value => !value)}>{t('sectionPlanes.flip.label')}</Button>
       <Button size="sm" variant="ghost" onClick={close}>{t('section2d.create.cancel')}</Button>
       <Button size="sm" disabled={!custom || naming || dragging} onClick={() => {
         if (!edit) { setNaming(true); return; }
         if (!start || !end || useSavedSectionCuts.getState().projectId !== project) return;
-        editSavedViewTrace(edit.id, [world(start), world(end)], drawnPlane.flipped !== reverse);
+        editSavedViewTrace(edit.id, [world(start), world(end)], drawnPlane.flipped !== reverse, distant);
         close();
       }}>{t('section2d.views.save')}</Button>
 

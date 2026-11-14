@@ -178,7 +178,7 @@ export function DrawingPanel(): React.ReactElement {
       <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale} settings={vm.lineweightSettings}
         compact={tier === 'narrow'} onScaleChange={setDrawingPublicationScale} />
       <DrawingExportMenu
-        hasDrawing={!!vm.exportableDrawing} compact={tier === 'narrow'}
+        batch={layers.batch} hasDrawing={!!vm.exportableDrawing} compact={tier === 'narrow'}
         onExportSvg={layers.handleExportSVG} onExportDxf={layers.handleExportDXF}
         onExportPdf={layers.handleExportPDF} onPrint={layers.handlePrint}
         displayedScale={displayOptions.scale || 100}

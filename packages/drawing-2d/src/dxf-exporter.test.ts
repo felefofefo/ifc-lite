@@ -204,6 +204,20 @@ describe('DXFExporter', () => {
     expect(doc.entities).toHaveLength(0);
   });
 
+  it('retains dashed overhead projection while hiding occluded projection', () => {
+    const drawing = emptyDrawing();
+    drawing.lines = [
+      makeLine({ category: 'projection', visibility: 'hidden' }),
+      makeLine({
+        category: 'projection', visibility: 'hidden', overhead: true,
+        line: { start: { x: 0, y: 1 }, end: { x: 1, y: 1 } },
+      }),
+    ];
+    const doc = parseDxf(exportToDXF(drawing, { showHiddenLines: false }));
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ kind: 'line', layer: 'IFC-HIDDEN', y1: 1 });
+  });
+
   it('writes the DASHED linetype for the hidden layer', () => {
     const drawing = emptyDrawing();
     drawing.lines = [makeLine({ category: 'hidden', visibility: 'hidden' })];

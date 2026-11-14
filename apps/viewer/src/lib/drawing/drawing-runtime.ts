@@ -11,6 +11,8 @@
  */
 
 import { useSyncExternalStore } from 'react';
+import type { GraphicOverrideRule } from '@ifc-lite/drawing-2d';
+import type { SectionPlane } from '@/store/types';
 import type { CoordinateInfo, GeometryResult } from '@ifc-lite/geometry';
 
 export interface DrawingRuntime {
@@ -21,6 +23,10 @@ export interface DrawingRuntime {
   generateDrawing: (isRegenerate?: boolean) => Promise<void>;
   isRegenerating: boolean;
   viewFilterFailed?: boolean;
+  viewId?: string | null;
+  viewPlane?: SectionPlane;
+  viewRulesPending?: boolean;
+  graphicRules?: GraphicOverrideRule[];
 }
 
 const NO_RUNTIME: DrawingRuntime = {

@@ -13,6 +13,7 @@ import { useReferenceImagesForDrawing } from '@/hooks/useReferenceImagesForDrawi
 import React, { useRef, useState, useEffect } from 'react';
 import {
   GraphicOverrideEngine,
+  isOccludedDrawingLine,
   type Drawing2D,
   type ElementData,
   isPolygonCutLine,
@@ -315,7 +316,7 @@ export function Drawing2DCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const pen = lineweights ? drawingPublicationStrokeStyle(lineweights, { overrideEngine, overridesEnabled, getElementProperties }) : undefined;
+    const pen = lineweights ? drawingPublicationStrokeStyle(lineweights, { overrideEngine, overridesEnabled, getElementProperties }, fillPreview?.distant) : undefined;
     const cutFill = (polygon: DrawingPolygon, darkPaper = false) => {
       const { fillColor, fillOpacity } = resolveCutPolygonStyle(polygon, {
         useIfcMaterials, entityColorMap, overridesEnabled, overrideEngine, getElementProperties, darkPaper,
@@ -765,7 +766,7 @@ export function Drawing2DCanvas({
 
         for (const line of drawing.lines) {
           if (isPolygonCutLine(line)) continue;
-          if (!showHiddenLines && line.visibility === 'hidden') continue;
+          if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
 
           const { start, end } = line.line;
           if (!isFinite(start.x) || !isFinite(start.y) || !isFinite(end.x) || !isFinite(end.y)) continue;
@@ -1119,7 +1120,7 @@ export function Drawing2DCanvas({
         if (isPolygonCutLine(line)) continue;
 
         // Skip hidden lines if not showing
-        if (!showHiddenLines && line.visibility === 'hidden') continue;
+        if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
 
         // Skip lines with invalid coordinates (NaN, Infinity, or far outside bounds)
         const { start, end } = line.line;

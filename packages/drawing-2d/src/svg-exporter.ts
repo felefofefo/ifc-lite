@@ -20,6 +20,7 @@ import type {
   Bounds2D,
   LineCategory,
 } from './types.js';
+import { isOccludedDrawingLine } from './projection-bands.js';
 import type { HatchLine } from './hatch-generator.js';
 import { HatchGenerator } from './hatch-generator.js';
 import {
@@ -152,9 +153,8 @@ export class SVGExporter {
       svg += this.createHatchingLayer(drawing.cutPolygons, transform, scale.factor);
     }
 
-    // Layer: Hidden lines
     if (showHiddenLines) {
-      const hiddenLines = drawing.lines.filter((l) => l.visibility === 'hidden');
+      const hiddenLines = drawing.lines.filter(isOccludedDrawingLine);
       if (hiddenLines.length > 0) {
         svg += this.createLineLayer('hidden-lines', hiddenLines, transform, 'Hidden Lines');
       }
@@ -162,7 +162,7 @@ export class SVGExporter {
 
     // Layer: Projection lines
     const projectionLines = drawing.lines.filter(
-      (l) => l.category === 'projection' && l.visibility !== 'hidden'
+      (l) => l.category === 'projection' && !isOccludedDrawingLine(l)
     );
     if (projectionLines.length > 0) {
       svg += this.createLineLayer('projection-lines', projectionLines, transform, 'Projection');
@@ -179,7 +179,7 @@ export class SVGExporter {
     }
 
     // Layer: Cut lines (top)
-    const cutLines = drawing.lines.filter((l) => l.category === 'cut');
+    const cutLines = drawing.lines.filter((l) => l.category === 'cut' && !isOccludedDrawingLine(l));
     if (cutLines.length > 0) {
       svg += this.createLineLayer('cut-lines', cutLines, transform, 'Cut Lines');
     }
@@ -301,7 +301,7 @@ export class SVGExporter {
   }
 
   private renderLine(line: DrawingLine, transform: Transform2D): string {
-    const style = getLineStyle(line.category, line.ifcType);
+    const style = getLineStyle(line.overhead ? 'hidden' : line.category, line.ifcType);
     const p0 = transformPoint(line.line.start, transform);
     const p1 = transformPoint(line.line.end, transform);
 

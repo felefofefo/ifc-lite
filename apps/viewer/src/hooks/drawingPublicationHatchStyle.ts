@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { distantColor, type DistantElements } from '@/lib/drawing/distant-elements';
 import { GraphicOverrideEngine, type DrawingPolygon, type DXFHatchLayer, type ElementData, type GraphicOverrideRule } from '@ifc-lite/drawing-2d';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import type { EntityRef, FederatedModel } from '@/store/types';
@@ -18,6 +19,7 @@ export function drawingPublicationHatchStyle(
   getProperties: (entityId: number) => ElementData['properties'],
   resolveEntityRef: (entityId: number) => EntityRef,
   patterns: readonly ImportedPattern[] = [],
+  distant?: DistantElements,
 ) {
   const imported = new Map(patterns.map(p => [p.id, p]));
   const cutRules = rules.filter(({ enabled, style }) => enabled &&
@@ -26,7 +28,7 @@ export function drawingPublicationHatchStyle(
       || style.hatchSpacing !== undefined || style.hatchLineWeight !== undefined));
   const hasAssignments = !!assignments && Object.keys(assignments).length > 0;
   const cutEngine = new GraphicOverrideEngine(cutRules);
-  const surfaceRules = rules.filter(({ enabled, style }) => enabled && hasHatchPaint(style.surfaceHatch));
+  const surfaceRules = rules.filter(({ enabled, style }) => enabled && (hasHatchPaint(style.surfaceHatch) || style.surfaceHatchLineWeight !== undefined));
   const surfaceEngine = new GraphicOverrideEngine(surfaceRules);
   const hasSurface = hasAssignments && Object.values(assignments).some(style => hasHatchPaint(style?.surface));
   const materialCache = new Map<string, MaterialHatchStyle | undefined>();
@@ -79,13 +81,16 @@ export function drawingPublicationHatchStyle(
         if (!backgroundPattern) background.pattern = 'solid';
       }
       if (polygon.isCut && style.hatchSpacing !== undefined && Number.isFinite(style.hatchSpacing) && style.hatchSpacing >= 0.1) spacing = style.hatchSpacing;
-      if (polygon.isCut && style.hatchLineWeight !== undefined && Number.isFinite(style.hatchLineWeight) && style.hatchLineWeight > 0) lineWeight = style.hatchLineWeight;
+      const weight = polygon.isCut ? style.hatchLineWeight : style.surfaceHatchLineWeight;
+      if (weight !== undefined && Number.isFinite(weight) && weight > 0) lineWeight = weight;
     }
 
     if (background.color) background.pattern ??= 'solid';
     return [background, foreground].flatMap<DXFHatchLayer>(({ pattern, color }) => {
       if (!pattern || pattern === 'none') return [];
-      const paint = { color: color ?? '#666666', spacing: spacing * scale / 1000, lineWeight };
+      const ink = color ?? '#666666';
+      const paint = { color: polygon.distant && distant ? distantColor(ink, distant) : ink, spacing: spacing * scale / 1000,
+        lineWeight: polygon.distant && distant ? distant.weight ?? lineWeight : lineWeight };
       if (pattern === 'solid' || pattern === 'diagonal' || pattern === 'cross-hatch') return [{ ...paint, pattern }];
       const definition = imported.get(pattern);
       return definition ? [{ ...paint, pattern: 'custom', spacing: patternRepeatScale(definition) * scale / 1000, families: definition.lines, patternKey: definition.id }] : [];

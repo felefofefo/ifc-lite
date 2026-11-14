@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { patternSegments, type DrawingPolygon, type Point2D } from '@ifc-lite/drawing-2d';
+import { patternSegments, surfacePatternSegments, type DrawingPolygon, type Point2D } from '@ifc-lite/drawing-2d';
 import { styleCutPolygons, type CutPolygonStyleContext } from '@/components/viewer/drawing/cut-polygon-style';
 
 export function svgDash(dash: readonly number[] | undefined, mmToTarget: (mm: number) => number): string {
@@ -37,6 +37,16 @@ export function publicationCutSvg(
         const spacing = mmToTarget(paint.spacing * 1000 / scale);
         const width = mmToTarget(paint.lineWeight ?? 0.13);
         if (!(spacing > 0) || !Number.isFinite(spacing)) continue;
+        if (polygon.surfacePatternTransform && map) {
+          const segments = surfacePatternSegments(polygon, { ...paint, pattern: paint.pattern });
+          const d = segments.map(({ start, end }) => {
+            const a = map(start.x, start.y), b = map(end.x, end.y);
+            return `M${a.x} ${a.y}L${b.x} ${b.y}`;
+          }).join('');
+          fills += `<path d="${d}" fill="none" stroke="${escape(paint.color)}" stroke-width="${width}" ${entity}/>
+`;
+          continue;
+        }
         if (paint.pattern === 'custom') {
           if (!map) continue;
           const ring = (points: Point2D[]) => points.map(p => { const q = map(p.x, p.y); return { x: q.x, y: -q.y }; });

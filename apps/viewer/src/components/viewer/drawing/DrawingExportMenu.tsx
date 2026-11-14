@@ -8,8 +8,9 @@
  *  on-screen scale directly — everything else in the menu stays one click. */
 
 import { useState } from 'react';
-import { ChevronDown, Download, FileDown, FileText, Printer } from 'lucide-react';
+import { ChevronDown, Download, FileDown, FileText, FolderDown, Printer, RefreshCw } from 'lucide-react';
 import type { DrawingSheet } from '@ifc-lite/drawing-2d';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -17,10 +18,12 @@ import { useTranslation } from '@/i18n';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { drawingExportOmissions, DRAWING_OMISSION_LABEL_KEYS, type DrawingExportContent } from '@/lib/export/drawing-export-omissions';
 import { SaveMarkupToModelMenuItem } from '../SaveMarkupToModelButton';
+import type { useSavedViewBatch } from '@/hooks/useSavedViewBatch';
 import { DrawingPdfExportDialog } from './DrawingPdfExportDialog';
 
 export interface DrawingExportMenuProps {
   hasDrawing: boolean;
+  batch?: ReturnType<typeof useSavedViewBatch>;
   /** Icon-only trigger for narrow hosts. */
   compact: boolean;
   onExportSvg: () => void;
@@ -38,7 +41,7 @@ export interface DrawingExportMenuProps {
 }
 
 export function DrawingExportMenu({
-  hasDrawing, compact, onExportSvg, onExportDxf, onExportPdf, onPrint,
+  batch, hasDrawing, compact, onExportSvg, onExportDxf, onExportPdf, onPrint,
   displayedScale, sheetEnabled, activeSheet, markupCounts, visibleUnderlayCount, visibleRasterReferenceCount = 0,
 }: DrawingExportMenuProps) {
   const { t } = useTranslation();
@@ -72,7 +75,7 @@ export function DrawingExportMenu({
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
+            <DropdownMenuTrigger asChild disabled={batch?.busy}>
               {compact ? (
                 <Button variant="ghost" size="icon-xs" aria-label={label}>
                   <Download className="h-3.5 w-3.5" />
@@ -86,9 +89,18 @@ export function DrawingExportMenu({
               )}
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>{label}</TooltipContent>
+          <TooltipContent>{batch?.busy ? t('section2d.export.batchBusy') : label}</TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end" className="min-w-56">
+          {batch && <>
+            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run(true)}>
+              <FolderDown className="mr-2 h-4 w-4" />{t('section2d.export.allViews')}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run(false)}>
+              <RefreshCw className="mr-2 h-4 w-4" />{t('section2d.export.refreshAllViews')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>}
           <DropdownMenuItem onClick={onExportSvg} disabled={!hasDrawing}>
             <Download className="mr-2 h-4 w-4" />{t('section2d.export.svg')}
           </DropdownMenuItem>
@@ -105,6 +117,16 @@ export function DrawingExportMenu({
           <SaveMarkupToModelMenuItem />
         </DropdownMenuContent>
       </DropdownMenu>
+      <Dialog open={!!batch?.progress}>
+        <DialogContent hideCloseButton onEscapeKeyDown={event => event.preventDefault()} onPointerDownOutside={event => event.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>{t('section2d.export.batchBusy')}</DialogTitle>
+            {batch?.progress && <DialogDescription role="status">
+              {t('section2d.export.batchProgress', batch.progress)}
+            </DialogDescription>}
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
       <DrawingPdfExportDialog
         open={pdfDialogOpen} onOpenChange={setPdfDialogOpen}
         displayedScale={displayedScale} sheetEnabled={sheetEnabled} activeSheet={activeSheet}

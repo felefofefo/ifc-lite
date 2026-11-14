@@ -164,6 +164,7 @@ function pushContourLines(
       line: { start: p0, end: p1 },
       category,
       visibility,
+      ...(visibility === 'hidden' ? { overhead: true } : {}),
       entityId: profile.expressId,
       ifcType: profile.ifcType,
       modelIndex: profile.modelIndex,

@@ -218,6 +218,11 @@ export function bandVisibility(band: ProjectionBand): 'visible' | 'hidden' | nul
   }
 }
 
+
+/** True when a stroke is hidden by geometry. Above-cut projection is dashed by convention. */
+export function isOccludedDrawingLine(line: DrawingLine): boolean {
+  return line.visibility === 'hidden' && !line.overhead;
+}
 /**
  * Convert a winding-robust mesh footprint outline (from the Rust
  * `meshOutline2d` binding) into band-classified construction-projection lines
@@ -271,6 +276,7 @@ export function outlineToProjectionLines(
         line: { start: { x: sx, y: sy }, end: { x: ex, y: ey } },
         category: 'projection',
         visibility,
+        ...(visibility === 'hidden' ? { overhead: true } : {}),
         entityId: meta.entityId,
         ifcType: meta.ifcType,
         modelIndex: meta.modelIndex,

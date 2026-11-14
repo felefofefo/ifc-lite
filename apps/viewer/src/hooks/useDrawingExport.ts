@@ -14,6 +14,7 @@ import { useTranslation } from '@/i18n';
 import { recordActivity } from '@/lib/activity/activity-journal';
 import { pdfLineStyleFor } from '@/lib/export/pdf-line-style';
 import {
+  isOccludedDrawingLine,
   GraphicOverrideEngine,
   renderFrame,
   renderTitleBlock,
@@ -21,11 +22,7 @@ import {
   formatScaleFactorLabel,
   makeEntityKey, isPolygonCutLine,
   fitRasterPixels,
-  type RasterFit,
-  type Drawing2D,
-  type DrawingSheet,
-  type TitleBlockExtras,
-  type PdfScaleLayout,
+  type RasterFit, type Drawing2D, type DrawingSheet, type TitleBlockExtras, type PdfScaleLayout,
 } from '@ifc-lite/drawing-2d';
 import { computePdfSectionLayout, makeSectionMapPoint } from '@/hooks/pdfSectionLayout';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
@@ -40,6 +37,7 @@ import type { IfcDataStore } from '@ifc-lite/parser';
 import { resolveEntityRef, useViewerStore } from '@/store';
 import { buildDxfExportTransform, resolveDxfExportGeoreference } from '@/hooks/dxfExportGeoref';
 import { lineweightsAtScale, type LineweightRow, type LineweightTable } from '@/lib/drawing/lineweight-table';
+import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { drawingPublicationStrokeStyle } from './drawingPublicationStrokeStyle';
 import { drawingPublicationHatchStyle } from './drawingPublicationHatchStyle';
 import type { MaterialHatches } from '@/lib/drawing/material-hatches';
@@ -230,6 +228,7 @@ interface UseDrawingExportParams {
   drawing: Drawing2D | null;
   displayOptions: {
     showHiddenLines: boolean;
+    distantElements?: DistantElements;
     showHatching?: boolean;
     scale: number;
     showScanSection: boolean;
@@ -272,6 +271,7 @@ interface UseDrawingExportResult {
   formatDistance: (distance: number) => string;
   handleExportSVG: () => void;
   handleExportDXF: () => void;
+  buildDXF: () => { dxf: string; stem: string; isGeoreferenced: boolean } | undefined;
   /**
    * Export the section as a true-vector PDF at an exact scale (issue #2042).
    * `scaleFactor` is the "N" in "1:N" (e.g. 100 for 1:100); omit to use the
@@ -323,19 +323,19 @@ function useDrawingExport({
   const cutPolygonStyleContext = useCallback((scale = displayOptions.scale): CutPolygonStyleContext => {
     const row = lineweightTable ? lineweightsAtScale(lineweightTable, scale) : lineweights;
     const context: CutPolygonStyleContext = {
-      useIfcMaterials: activePresetId === 'preset-3d-colors', entityColorMap, overridesEnabled,
+      useIfcMaterials: (activePresetId === 'preset-3d-colors' || activePresetId?.startsWith('drawing-template:') === true), entityColorMap, overridesEnabled,
       overrideEngine: row ? new GraphicOverrideEngine(overrideEngine.getRules(), row) : overrideEngine,
       getElementProperties: makePropertiesGetter(storeModels, ifcDataStore),
     };
     if (row) {
-      context.stroke = drawingPublicationStrokeStyle(row, context);
+      context.stroke = drawingPublicationStrokeStyle(row, context, displayOptions.distantElements);
       context.fills = displayOptions.showHatching === false ? () => [] : drawingPublicationHatchStyle(
         materialHatches, scale, storeModels, ifcDataStore,
-        overridesEnabled ? context.overrideEngine.getRules() : [], context.getElementProperties, resolveEntityRef, patterns);
+        overridesEnabled ? context.overrideEngine.getRules() : [], context.getElementProperties, resolveEntityRef, patterns, displayOptions.distantElements);
     }
     return context;
   }, [activePresetId, entityColorMap, overridesEnabled, overrideEngine, storeModels, ifcDataStore,
-    lineweights, lineweightTable, materialHatches, displayOptions.scale, displayOptions.showHatching, patterns]);
+    lineweights, lineweightTable, materialHatches, displayOptions.scale, displayOptions.showHatching, patterns, displayOptions.distantElements]);
 
   // Generate SVG that matches the canvas rendering exactly
   const generateExportSVG = useCallback((): string | null => {
@@ -437,7 +437,7 @@ function useDrawingExport({
       if (isPolygonCutLine(line)) continue;
 
       // Skip hidden lines if not showing
-      if (!displayOptions.showHiddenLines && line.visibility === 'hidden') continue;
+      if (!displayOptions.showHiddenLines && isOccludedDrawingLine(line)) continue;
 
       // Skip lines with invalid coordinates
       const { start, end } = line.line;
@@ -756,7 +756,7 @@ function useDrawingExport({
     svg += '    <g id="drawing-lines">\n';
     for (const line of drawing.lines) {
       if (isPolygonCutLine(line)) continue;
-      if (!displayOptions.showHiddenLines && line.visibility === 'hidden') continue;
+      if (!displayOptions.showHiddenLines && isOccludedDrawingLine(line)) continue;
 
       const { start, end } = line.line;
       if (!isFinite(start.x) || !isFinite(start.y) || !isFinite(end.x) || !isFinite(end.y)) continue;
@@ -865,7 +865,7 @@ function useDrawingExport({
   // The point-cloud scan overlay (issue #1805) is likewise deliberately
   // excluded: it is a raster-like screen aid (tens of thousands of circles),
   // not vector content — SVG export carries it (opt-in) instead.
-  const handleExportDXF = useCallback(() => {
+  const buildDXF = useCallback(() => {
     if (!drawing) return;
     const isCustomPlane = sectionPlane.custom !== undefined;
     // Anchor-model effective georef, INCLUDING user placement edits
@@ -918,18 +918,19 @@ function useDrawingExport({
     });
     const suffix = lineweights ? `-1-${formatScaleFactorLabel(scale)}` : '';
     const stem = `section-${sectionPlane.axis}-${sectionPlane.position}${suffix}`;
-    downloadDxf(dxf, `${stem}.dxf`, 'utf-8');
-    trackExportCompleted({ format: 'dxf', surface: 'drawing_panel' });
-    posthog.capture('drawing_exported', {
-      format: 'dxf',
-      axis: sectionPlane.axis,
-      georeferenced: isGeoreferenced,
-    });
+    return { dxf, stem, isGeoreferenced };
   }, [
     drawing, dxfUnderlays, displayOptions.showHiddenLines, displayOptions.showHatching, displayOptions.showScanSection, scanSection.outline,
     sectionPlane, ifcDataStore, coordinateInfo, storeModels, anchorModelIdOverride, georefMutations, mutationVersion,
     lineweights, cutPolygonStyleContext, sheetEnabled, activeSheet, displayOptions.scale, markers,
   ]);
+  const handleExportDXF = useCallback(() => {
+    const file = buildDXF();
+    if (!file) return;
+    downloadDxf(file.dxf, `${file.stem}.dxf`, 'utf-8');
+    trackExportCompleted({ format: 'dxf', surface: 'drawing_panel' });
+    posthog.capture('drawing_exported', { format: 'dxf', axis: sectionPlane.axis, georeferenced: file.isGeoreferenced });
+  }, [buildDXF, sectionPlane.axis]);
   // Export the drawing as vectors at the requested scale, sizing the page
   // around its extent (see pdf-scale.ts). Sheet exports take the separate
   // branch below so they can include the frame, title block and scale bar.
@@ -1110,7 +1111,7 @@ function useDrawingExport({
           ) {
             continue;
           }
-          if (!displayOptions.showHiddenLines && line.visibility === 'hidden') continue;
+          if (!displayOptions.showHiddenLines && isOccludedDrawingLine(line)) continue;
 
           const { start, end } = line.line;
           const p0 = mapPoint(start.x, start.y);
@@ -1220,7 +1221,7 @@ function useDrawingExport({
   return {
     formatDistance,
     handleExportSVG,
-    handleExportDXF,
+    handleExportDXF, buildDXF,
     handleExportPDF,
     handlePrint,
   };

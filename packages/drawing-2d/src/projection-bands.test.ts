@@ -185,7 +185,7 @@ describe('projectProfiles band tagging', () => {
     expect(below.length).toBeGreaterThan(0);
     expect(overhead.length).toBeGreaterThan(0);
     expect(below.every((l) => l.visibility === 'visible')).toBe(true);
-    expect(overhead.every((l) => l.visibility === 'hidden')).toBe(true);
+    expect(overhead.every((l) => l.visibility === 'hidden' && l.overhead === true)).toBe(true);
     expect(lines.every((l) => l.category === 'projection')).toBe(true);
   });
 
@@ -252,7 +252,7 @@ describe('silhouette footprint under a downward plan view', () => {
     const lines = extractor.edgesToProjectionLines(silhouettes, planPlane, { below: 3, above: 3 });
 
     expect(lines.length).toBeGreaterThanOrEqual(4);
-    expect(lines.every((l) => l.visibility === 'hidden')).toBe(true);
+    expect(lines.every((l) => l.visibility === 'hidden' && l.overhead === true)).toBe(true);
   });
 });
 
@@ -280,7 +280,7 @@ describe('outlineToProjectionLines (Rust meshOutline2d adapter)', () => {
       meta, planPlane, { below: 3, above: 3 },
     );
     expect(below.every((l) => l.visibility === 'visible')).toBe(true);
-    expect(above.every((l) => l.visibility === 'hidden')).toBe(true);
+    expect(above.every((l) => l.visibility === 'hidden' && l.overhead === true)).toBe(true);
   });
 
   it('culls an outline outside both bands', () => {

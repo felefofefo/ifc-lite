@@ -27,6 +27,7 @@ import { resolveDrawingPaperTheme } from './paper-theme';
 import { toggledConstructionProjection } from '@/lib/drawing/construction-projection';
 import { useDrawingLineweights } from './DrawingLineweights';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
+import { applyDistantZone } from '@/lib/drawing/distant-elements';
 import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
 
@@ -57,8 +58,9 @@ export function useDrawingViewModel() {
   const typeVisibility = useViewerStore((s) => s.typeVisibility);
   const activePresetId = useViewerStore((s) => s.activePresetId);
   const overridesEnabled = useViewerStore((s) => s.overridesEnabled);
-  const getActiveOverrideRules = useViewerStore((s) => s.getActiveOverrideRules);
-  const customOverrideRules = useViewerStore((s) => s.customOverrideRules);
+  const graphicRules = runtime.graphicRules;
+  const getActiveOverrideRules = useViewerStore(s => s.getActiveOverrideRules);
+  const legacyRules = useViewerStore(s => s.customOverrideRules);
   const dxfUnderlays = useViewerStore((s) => s.dxfUnderlays);
   const pointCloudClassMask = useViewerStore((s) => s.pointCloudClassMask);
   const activeSheet = useViewerStore((s) => s.activeSheet);
@@ -116,7 +118,10 @@ export function useDrawingViewModel() {
   const models = useViewerStore((s) => s.models);
   const dxfUnderlayData = useDxfUnderlaysForDrawing({enabled:status==='ready', plane:sourceDrawing?.config.plane,
     sectionAxis:drawnPlane.axis,isCustomPlane:drawnPlane.custom!==undefined,flipped:drawnPlane.flipped,coordinateInfo:geometryResult?.coordinateInfo});
-  const drawing = useMemo(()=>drawingWithDxfBounds(rasterDrawing,dxfUnderlayData,hasRasterReferences),[rasterDrawing,dxfUnderlayData,hasRasterReferences]);
+  const drawing = useMemo(() => {
+    const result = drawingWithDxfBounds(rasterDrawing, dxfUnderlayData, hasRasterReferences);
+    return drawnPlane.axis === 'down' ? result : applyDistantZone(result, displayOptions.distantElements);
+  }, [rasterDrawing, dxfUnderlayData, hasRasterReferences, drawnPlane.axis, displayOptions.distantElements]);
   const hasReferences = hasRasterReferences || dxfUnderlayData.some(r=>r.lines.length>0 || r.fills.length>0 || r.texts.length>0);
   // The references' own extent, which Fit always frames (#8802).
   const referenceBounds = useMemo(() => referenceOnlyBounds(sourceDrawing, referenceCorners, dxfUnderlayData), [sourceDrawing, referenceCorners, dxfUnderlayData]);
@@ -141,11 +146,7 @@ export function useDrawingViewModel() {
     closeDrawingInspector();
   }, [closeDrawingInspector]);
 
-  // Create graphic override engine with active rules
-  const overrideEngine = useMemo(() => {
-    const rules = getActiveOverrideRules();
-    return new GraphicOverrideEngine(rules, lineweights);
-  }, [getActiveOverrideRules, activePresetId, customOverrideRules, overridesEnabled, lineweights]);
+  const overrideEngine = useMemo(() => new GraphicOverrideEngine(graphicRules ?? getActiveOverrideRules(), lineweights), [graphicRules, lineweights, getActiveOverrideRules, legacyRules, activePresetId, overridesEnabled]);
 
   // Build entity color map from mesh material colors (for "Use IFC Materials" mode)
   const entityColorMap = useMemo(() => {

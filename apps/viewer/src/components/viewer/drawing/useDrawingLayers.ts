@@ -19,6 +19,7 @@ import { drawingModelCenter } from '@/hooks/dxfDrawingBounds';
 import { dxfPlaneDrawingMapper, dxfDrawingDeltaToPlacement } from '@/hooks/dxfReferencePlane';
 import { useScanSectionLayer } from '@/hooks/useScanSectionLayer';
 import { useDrawingExport } from '@/hooks/useDrawingExport';
+import { useSavedViewBatch } from '@/hooks/useSavedViewBatch';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 export function useDrawingLayers(vm: DrawingViewModel) {
@@ -108,7 +109,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     outline: { enabled: displayOptions.scanSectionOutline, maxGap: displayOptions.scanSectionOutlineMaxGap },
   });
 
-  const { handleExportSVG, handleExportDXF, handleExportPDF, handlePrint } = useDrawingExport({
+  const { handleExportSVG, handleExportDXF, buildDXF, handleExportPDF, handlePrint } = useDrawingExport({
     // Only the drawing on screen exports: a dialog left open while the cut
     // fails must not write the drawing the error now hides.
     drawing: vm.exportableDrawing, lineweights: vm.lineweights, lineweightTable: vm.lineweightSettings.table, materialHatches: vm.materialSettings.hatches, displayOptions, sectionPlane: drawnPlane, activePresetId: vm.activePresetId,
@@ -127,8 +128,10 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     isPinned: vm.isPinned, cachedSheetTransformRef: vm.cachedSheetTransformRef,
   });
 
+  const batch = useSavedViewBatch(vm.sourceDrawing, buildDXF);
+
   return {
-    ifcAnnotationData, dxfUnderlayData, dxfGeoreferenceAvailable, handleCenterDxfUnderlay,
+    batch, ifcAnnotationData, dxfUnderlayData, dxfGeoreferenceAvailable, handleCenterDxfUnderlay,
     scanSectionLayer,
     handleExportSVG, handleExportDXF, handleExportPDF, handlePrint,
   };

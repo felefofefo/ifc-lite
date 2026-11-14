@@ -1,9 +1,9 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Copy, Pencil, Trash2, Upload } from 'lucide-react';
-import { patternSegments } from '@ifc-lite/drawing-2d';
+import { DrawingPatternSwatch } from './DrawingPatternSwatch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -11,17 +11,6 @@ import { useDialogs } from '@/components/ui/confirm-dialog';
 import { useTranslation } from '@/i18n';
 import { useDrawingPatterns } from '@/hooks/useDrawingPatterns';
 import { editPattern, mergeImportedPatterns, parsePat, patternRepeatScale, type ImportedPattern } from '@/lib/drawing/pattern-library';
-
-function PatternSwatch({ pattern }: { pattern: ImportedPattern }) {
-  const path = useMemo(() => {
-    const outer = [{ x: 0, y: 0 }, { x: 32, y: 0 }, { x: 32, y: 22 }, { x: 0, y: 22 }];
-    return patternSegments({ outer, holes: [] }, pattern.lines, patternRepeatScale(pattern))
-      .slice(0, 800).map(({ start, end }) => `M${start.x} ${22 - start.y}L${end.x} ${22 - end.y}`).join('');
-  }, [pattern]);
-  return <svg aria-hidden viewBox="0 0 32 22" className="h-8 w-11 shrink-0 overflow-hidden rounded border bg-background text-foreground">
-    <path d={path} fill="none" stroke="currentColor" strokeWidth="0.35" />
-  </svg>;
-}
 
 export function DrawingPatterns() {
   const { t } = useTranslation();
@@ -61,7 +50,7 @@ export function DrawingPatterns() {
     </div>
     {patterns.length ? <ul className="divide-y rounded-md border">
       {patterns.map(pattern => <li key={pattern.id} className="flex flex-wrap items-center gap-2 px-2 py-1.5">
-        <PatternSwatch pattern={pattern} />
+        <DrawingPatternSwatch pattern={pattern} />
         <div className="min-w-0 flex-1">
           <div title={pattern.name} className="truncate font-medium">{pattern.name}</div>
           <div className="tabular-nums text-muted-foreground">{`×${patternRepeatScale(pattern)}`}</div>

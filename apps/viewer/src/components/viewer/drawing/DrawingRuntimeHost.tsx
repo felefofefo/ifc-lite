@@ -22,11 +22,13 @@ import { useEffect, useMemo } from 'react';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { useViewerStore } from '@/store';
 import { drawingProjectId } from '@/lib/drawing/drawing-project';
-import { setSavedViewsProject } from '@/store/savedSectionCutsStore';
+import { setSavedViewsProject, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useIfc } from '@/hooks/useIfc';
 import { usePlacementCoordinateInfo } from '@/hooks/usePlacementCoordinateInfo';
 import { hasHatchPaint } from '@/lib/drawing/material-hatches';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
+import { GraphicOverrideEngine } from '@ifc-lite/drawing-2d';
+import { useDrawingTemplateRules } from '@/hooks/useDrawingTemplateRules';
 import { useDrawingViewFilter } from '@/hooks/useDrawingViewFilter';
 import { useDrawingGeneration } from '@/hooks/useDrawingGeneration';
 import { useExtraSectionCaps } from '@/hooks/useExtraSectionCaps';
@@ -74,22 +76,38 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
     return source && drawingActive ? { ...placedViewGeometry(source), coordinateInfo: placedCoordinateInfo ?? source.coordinateInfo } : source;
   }, [mergedGeometry, legacyGeometryResult, placement, placedCoordinateInfo, drawingActive]);
 
+  const { graphicRules, pending: templateRulesPending } = useDrawingTemplateRules();
+  const activeSavedView = useSavedSectionCuts(s => s.cuts.find(cut => cut.id === s.activeCutId));
   const hiddenEntities = useViewerStore((s) => s.hiddenEntities);
   const isolatedEntities = useViewerStore((s) => s.isolatedEntities);
   const viewFilter = useDrawingViewFilter();
   const filterMode = viewFilter?.mode, filterIds = viewFilter?.ids;
-  const drawingHidden = useMemo(() => filterMode === 'hide' && filterIds
-    ? new Set([...hiddenEntities, ...filterIds]) : hiddenEntities, [filterMode, filterIds, hiddenEntities]);
+  const drawingHidden = useMemo(() => {
+    const visibility = graphicRules.filter(rule => rule.style.visible !== undefined);
+    if (!visibility.length && !(filterMode === 'hide' && filterIds)) return hiddenEntities;
+    const hidden = new Set([...hiddenEntities, ...(filterMode === 'hide' && filterIds ? filterIds : [])]);
+    const engine = new GraphicOverrideEngine(visibility);
+    const seen = new Set<number>();
+    for (const mesh of geometryResult?.meshes ?? []) {
+      if (seen.has(mesh.expressId)) continue;
+      seen.add(mesh.expressId);
+      if (!engine.applyOverrides({ expressId: mesh.expressId, ifcType: mesh.ifcType ?? '' }).style.visible) hidden.add(mesh.expressId);
+    }
+    return hidden;
+  }, [hiddenEntities, filterMode, filterIds, graphicRules, geometryResult]);
   const drawingIsolated = useMemo(() => filterMode === 'show' && filterIds
     ? isolatedEntities === null ? filterIds : new Set([...filterIds].filter(id => isolatedEntities.has(id)))
     : isolatedEntities, [filterMode, filterIds, isolatedEntities]);
   const { hatches } = useDrawingMaterials(projectId);
-  const surfaceOverrides = useViewerStore((s) => s.overridesEnabled
-    && s.getActiveOverrideRules().some(({ style }) => hasHatchPaint(style.surfaceHatch)));
+  const surfaceOverrides = graphicRules.some(({ style }) => hasHatchPaint(style.surfaceHatch));
   const includeProjectionPolygons = panelVisible && displayOptions.showHatching
     && (surfaceOverrides || Object.values(hatches).some((style) => hasHatchPaint(style?.surface)));
+  const { showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, constructionProjectionDepth } = displayOptions;
+  const generationOptions = useMemo(() => ({
+    showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, constructionProjectionDepth,
+  }), [showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, constructionProjectionDepth]);
   const { generateDrawing, isRegenerating } = useDrawingGeneration({
-    geometryResult, ifcDataStore, sectionPlane, displayOptions, typeVisibility, includeProjectionPolygons,
+    geometryResult, ifcDataStore, sectionPlane, displayOptions: generationOptions, typeVisibility, includeProjectionPolygons,
     // Both sets hold global ids, so they cover every federated model.
     combinedHiddenIds: drawingHidden, combinedIsolatedIds: drawingIsolated, computedIsolatedIds,
     models, panelVisible, activeTool, drawing: sourceDrawing,
@@ -99,10 +117,11 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   // The other cutting planes' caps (#7545): cut here, drawn by `useRenderUpdates`.
   useExtraSectionCaps(geometryResult, computedIsolatedIds);
 
+  const viewRulesPending = templateRulesPending || (!!activeSavedView?.filter && !viewFilter);
   const sourceCoordinateInfo = (mergedGeometry ?? legacyGeometryResult)?.coordinateInfo;
   useEffect(() => {
-    publishDrawingRuntime({ geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, viewFilterFailed: viewFilter?.failed });
-  }, [geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, viewFilter?.failed]);
+    publishDrawingRuntime({ geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, graphicRules, viewFilterFailed: viewFilter?.failed, viewId: activeSavedView?.id ?? null, viewPlane: sectionPlane, viewRulesPending });
+  }, [geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, graphicRules, viewFilter?.failed, activeSavedView?.id, sectionPlane, viewRulesPending]);
   useEffect(() => () => publishDrawingRuntime(null), []);
 
   return null;

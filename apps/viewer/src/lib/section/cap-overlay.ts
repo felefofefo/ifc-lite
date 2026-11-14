@@ -8,7 +8,7 @@
  */
 
 import type { CutPolygon2D, DrawingLine2D } from '@ifc-lite/renderer';
-import type { Drawing2D, DrawingPolygon, DXFHatchLayer } from '@ifc-lite/drawing-2d';
+import { isOccludedDrawingLine, type Drawing2D, type DrawingPolygon, type DXFHatchLayer } from '@ifc-lite/drawing-2d';
 import type { SectionPlane } from '@/store/types';
 import { pdfColor } from '@/lib/export/pdf-color';
 import { getFillColorForType } from '@/components/viewer/drawing/ifc-fill-colors';
@@ -90,7 +90,7 @@ export function capOverlayInput(cut: Cut, showHiddenLines: boolean, fillMode: 'u
       };
     });
   const lines: DrawingLine2D[] = cut.lines
-    .filter((line) => showHiddenLines || line.visibility !== 'hidden')
+    .filter((line) => showHiddenLines || !isOccludedDrawingLine(line))
     .map((line) => ({ line: line.line, category: line.category }));
   return { polygons: [...basePolygons, ...layerPolygons], lines };
 }

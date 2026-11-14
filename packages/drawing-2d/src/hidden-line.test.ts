@@ -60,6 +60,24 @@ describe('HiddenLineClassifier depth test (sampleVisibility)', () => {
     const [result] = classifier.classifyLines([makeLine(7)]);
     expect(result.overallVisibility).toBe('hidden');
   });
+
+  it('keeps a visible edge on a sloping face and hides an edge behind it', () => {
+    const mesh = occluderMesh();
+    // The face has view depth equal to x. A pixel centre to the left of
+    // the sample has a smaller depth even when the edge lies on the face.
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      mesh.positions[i + 2] = -mesh.positions[i];
+    }
+    const classifier = new HiddenLineClassifier({ resolution: 64 });
+    classifier.buildDepthBuffer([mesh], { axis: 'z', position: 0, flipped: false }, 10);
+    const edge = {
+      ...makeLine(5.05),
+      line: { start: { x: 5.05, y: 2 }, end: { x: 5.05, y: 8 } },
+    };
+    const [onFace, behindFace] = classifier.classifyLines([edge, { ...edge, depth: 6 }]);
+    expect(onFace.overallVisibility).toBe('visible');
+    expect(behindFace.overallVisibility).toBe('hidden');
+  });
 });
 
 describe('HiddenLineClassifier with no in-window occluder and no bounds (issue #2639)', () => {

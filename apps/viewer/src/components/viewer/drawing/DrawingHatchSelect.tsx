@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import type { GraphicStyle, LineStylePreset } from '@ifc-lite/drawing-2d';
+import type { GraphicStyle } from '@ifc-lite/drawing-2d';
 import { RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { useTranslation } from '@/i18n';
 import { backgroundHatchPattern, hasHatchPaint, isMaterialHatchPattern, MATERIAL_HATCH_PATTERNS, type MaterialHatchPattern, type FillPaint } from '@/lib/drawing/material-hatches';
 
 import { useDrawingPatterns } from '@/hooks/useDrawingPatterns';
+import { DrawingPatternSwatch } from './DrawingPatternSwatch';
 
 const samples = {
   solid: 'bg-muted-foreground',
@@ -42,7 +43,12 @@ export function DrawingHatchSelect({ label, value, background, onChange }: {
             </span>
           </SelectItem>
         ))}
-        {!background && imported.map(pattern => <SelectItem key={pattern.id} value={pattern.id}>{pattern.name}</SelectItem>)}
+        {!background && imported.map(pattern => <SelectItem key={pattern.id} value={pattern.id} textValue={pattern.name}>
+          <span className="flex min-w-0 items-center gap-2">
+            <DrawingPatternSwatch pattern={pattern} compact />
+            <span className="truncate">{pattern.name}</span>
+          </span>
+        </SelectItem>)}
         {!background && selected?.startsWith('pat:') && !imported.some(p => p.id === selected) &&
           <SelectItem value={selected} disabled>{selected.slice(4)}</SelectItem>}
       </SelectContent>
@@ -106,14 +112,5 @@ export function DrawingRulePaintControls({ style, onChange }: { style: GraphicSt
             }} />
         ))}
       </fieldset>
-      <Select value={typeof style.lineStyle === 'string' ? style.lineStyle : 'inherit'}
-        onValueChange={(value) => onChange({ ...style, lineStyle: value === 'inherit' ? undefined : value as LineStylePreset })}>
-        <SelectTrigger aria-label={t('drawingUnderlay.materials.lineType')} className="h-8 text-xs">
-          <SelectValue placeholder={t('drawingUnderlay.materials.lineType')} />
-        </SelectTrigger>
-        <SelectContent>{(['inherit', 'solid', 'dashed', 'dotted', 'dashdot', 'center'] as const).map((kind) =>
-          <SelectItem key={kind} value={kind}>{t(`drawingUnderlay.materials.lineType.${kind}`)}</SelectItem>
-        )}</SelectContent>
-      </Select>
   </>;
 }

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { patternSegments, type DrawingPolygon, type DXFHatchLayer, type Point2D } from '@ifc-lite/drawing-2d';
+import { patternSegments, surfacePatternSegments, type DrawingPolygon, type DXFHatchLayer, type Point2D } from '@ifc-lite/drawing-2d';
 
 export function drawPublicationCanvasFills(
   ctx: CanvasRenderingContext2D, polygon: DrawingPolygon, paints: readonly DXFHatchLayer[],
@@ -30,6 +30,19 @@ export function drawPublicationCanvasFills(
     if (paint.pattern === 'solid') {
       ctx.fillStyle = paint.color;
       ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+      continue;
+    }
+    if (regions && polygon.surfacePatternTransform) {
+      ctx.strokeStyle = paint.color;
+      ctx.lineWidth = (paint.lineWeight ?? 0.13) * mmToTarget;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      for (const region of regions) for (const { start, end } of surfacePatternSegments(region, { ...paint, pattern: paint.pattern })) {
+        const a = map(start.x, start.y), b = map(end.x, end.y);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke();
       continue;
     }
     if (paint.pattern === 'custom') {
@@ -83,7 +96,7 @@ export function drawPublicationSurfaces(
   for (const polygon of polygons) {
     const paints = resolve(polygon, '#666666');
     if (!paints?.length) continue;
-    const key = JSON.stringify(paints);
+    const key = JSON.stringify([paints, !!polygon.surfacePatternTransform]);
     const group = groups.get(key);
     if (group) group.regions.push(polygon);
     else groups.set(key, { paints, regions: [polygon] });

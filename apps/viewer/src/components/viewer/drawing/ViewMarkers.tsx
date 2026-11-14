@@ -28,7 +28,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
     const dx = editing.end.x - editing.start.x, dy = editing.end.y - editing.start.y;
     const reverse = -dy * editing.direction.x + dx * editing.direction.y < 0;
     return <PlaceVerticalView key={editing.id} kind={editing.kind} vm={vm}
-      edit={{ ...editing, reverse }} close={() => setEditId(undefined)} />;
+      edit={{ ...editing, reverse, distant: views.find(view => view.id === editing.id)?.display?.distantElements }} close={() => setEditId(undefined)} />;
   }
   const sheet = vm.sheetEnabled && vm.activeSheet ? resolveSheetTransform({
     sheet: vm.activeSheet, axis: 'down', isPinned: vm.isPinned, cached: vm.cachedSheetTransformRef.current,
@@ -46,6 +46,9 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
       const y1 = mark.start.y * scale + ty, y2 = mark.end.y * scale + ty;
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
       const angle = Math.atan2(mark.direction.y, mark.direction.x) * 180 / Math.PI;
+      const distant = views.find(view => view.id === mark.id)?.display?.distantElements;
+      const dx = mark.direction.x * (distant?.offset ?? 0) * scale;
+      const dy = mark.direction.y * (distant?.offset ?? 0) * scale;
       const open = () => applySavedSectionCut(mark.id);
       return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={selectedId === mark.id}
         className="cursor-pointer outline-none focus-visible:opacity-60"
@@ -59,6 +62,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
           }
         }}>
         <title>{mark.name}</title>
+        {distant && <line x1={x1 + dx} y1={y1 + dy} x2={x2 + dx} y2={y2 + dy} stroke="currentColor" strokeDasharray="5 5" opacity="0.55" />}
         <line className="pointer-events-auto" x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="20" />
         <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="currentColor" strokeWidth={selectedId === mark.id ? 2.5 : 1.5} strokeDasharray={kind === 'elevation' ? '4 4' : '12 4'} />
         <path transform={`translate(${mx} ${my}) rotate(${angle})`} d="M0 0H19m-6-4 6 4-6 4" stroke="currentColor" strokeWidth="1.5" fill="none" />

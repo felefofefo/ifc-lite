@@ -1,7 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-import type { Line2D, Point2D, Polygon2D } from './types.js';
+import type { DrawingPolygon, Line2D, Point2D, Polygon2D } from './types.js';
 import { HatchGenerator } from './hatch-generator.js';
 
 export interface PatternLine { angle: number; x: number; y: number; dx: number; dy: number; dash: number[] }
@@ -52,4 +52,23 @@ export function patternSegments(polygon: Polygon2D, families: readonly PatternLi
     }
   }
   return result;
+}
+
+/** Lay out the pattern on the physical face, then project its clipped strokes into the drawing. */
+export function surfacePatternSegments(
+  polygon: DrawingPolygon,
+  paint: { pattern: 'diagonal' | 'cross-hatch' | 'custom'; spacing: number; families?: readonly PatternLine[] },
+): Line2D[] {
+  const [a, b, c, d, x, y] = polygon.surfacePatternTransform ?? [1, 0, 0, 1, 0, 0];
+  const det = a * d - b * c;
+  const toFace = (p: Point2D) => ({ x: a * p.x + c * p.y + x, y: b * p.x + d * p.y + y });
+  const toDrawing = (p: Point2D) => ({
+    x: (d * (p.x - x) - c * (p.y - y)) / det,
+    y: (a * (p.y - y) - b * (p.x - x)) / det,
+  });
+  const shape = { outer: polygon.polygon.outer.map(toFace), holes: polygon.polygon.holes.map(ring => ring.map(toFace)) };
+  const families = paint.pattern === 'custom' ? paint.families ?? [] :
+    (paint.pattern === 'cross-hatch' ? [-45, 45] : [-45]).map(angle => ({ angle, x: 0, y: 0, dx: 0, dy: 1, dash: [] }));
+  return patternSegments(shape, families, paint.spacing)
+    .map(({ start, end }) => ({ start: toDrawing(start), end: toDrawing(end) }));
 }

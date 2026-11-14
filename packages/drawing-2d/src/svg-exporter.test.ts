@@ -37,6 +37,19 @@ const emptyDrawing = (): Drawing2D => ({
   },
 });
 
+it('keeps a dashed overhead line and omits an occluded line when hidden lines are off', () => {
+  const drawing = emptyDrawing();
+  const occluded: DrawingLine = {
+    line: { start: { x: 0, y: 0 }, end: { x: 5, y: 0 } },
+    category: 'projection', visibility: 'hidden', entityId: 1,
+    ifcType: 'IfcBeam', modelIndex: 0, depth: 0,
+  };
+  drawing.lines = [occluded, { ...occluded, entityId: 2, overhead: true }];
+  const svg = exportToSVG(drawing, { showHiddenLines: false });
+  expect(svg).not.toContain('data-entity-id="1"');
+  expect(svg).toMatch(/stroke-dasharray="[^"]+"\s+data-entity-id="2"/);
+});
+
 const underlay = (): DxfUnderlay => ({
   name: 'site.dxf',
   unitScale: 1,

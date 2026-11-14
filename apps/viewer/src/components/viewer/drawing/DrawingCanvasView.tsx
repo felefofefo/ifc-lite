@@ -72,7 +72,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           fillPreview={fillPreview}
           lineweights={vm.lineweights}
           printPreview={displayOptions.showPrintPreview}
-          useIfcMaterials={vm.activePresetId === 'preset-3d-colors'}
+          useIfcMaterials={(vm.activePresetId === 'preset-3d-colors' || vm.activePresetId?.startsWith('drawing-template:') === true)}
           measureMode={vm.measure2DMode}
           measureStart={vm.measure2DStart}
           measureCurrent={vm.measure2DCurrent}
