@@ -10,7 +10,7 @@ import { drawPublicationCanvasFills, drawPublicationSurfaces } from './drawing/p
 import { drawDxfUnderlaysScreenSpace } from './drawing-underlays';
 import { drawReferenceImages } from './drawing-reference-images';
 import { useReferenceImagesForDrawing } from '@/hooks/useReferenceImagesForDrawing';
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import {
   GraphicOverrideEngine,
   isOccludedDrawingLine,
@@ -283,6 +283,16 @@ export function Drawing2DCanvas({
   paperTheme = DEFAULT_PAPER_THEME,
 }: Drawing2DCanvasProps): React.ReactElement {
   const referenceImages = useReferenceImagesForDrawing(drawing.config.plane);
+  const strokeLines = useMemo(() => {
+    const projection: Drawing2D['lines'] = [];
+    const openCuts: Drawing2D['lines'] = [];
+    for (const line of drawing.lines) {
+      if (isPolygonCutLine(line)) continue;
+      if (line.category === 'cut') openCuts.push(line);
+      else projection.push(line);
+    }
+    return [...projection, ...openCuts];
+  }, [drawing.lines]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // Resolved once per (model set, polygon set) change, never per draw frame.
@@ -710,7 +720,59 @@ export function Drawing2DCanvas({
           ctx.globalAlpha = 1;
         }
 
-        // Stroke polygon outlines
+        // Draw lines (projection, silhouette, etc.)
+        const lineBounds = drawing.bounds;
+        const lineMargin = Math.max(lineBounds.max.x - lineBounds.min.x, lineBounds.max.y - lineBounds.min.y) * 0.5;
+        const lineMinX = lineBounds.min.x - lineMargin;
+        const lineMaxX = lineBounds.max.x + lineMargin;
+        const lineMinY = lineBounds.min.y - lineMargin;
+        const lineMaxY = lineBounds.max.y + lineMargin;
+
+        for (const line of strokeLines) {
+          if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
+
+          const { start, end } = line.line;
+          if (!isFinite(start.x) || !isFinite(start.y) || !isFinite(end.x) || !isFinite(end.y)) continue;
+          if (start.x < lineMinX || start.x > lineMaxX || start.y < lineMinY || start.y > lineMaxY ||
+            end.x < lineMinX || end.x > lineMaxX || end.y < lineMinY || end.y > lineMaxY) continue;
+
+          let strokeColor = '#000000';
+          let lineWidth = 0.25;
+          let dashPattern: number[] = [];
+
+          switch (line.category) {
+            case 'cut': lineWidth = 0.5; break;
+            case 'projection': lineWidth = 0.25; break;
+            case 'hidden': lineWidth = 0.18; strokeColor = '#666666'; dashPattern = [4, 2]; break;
+            case 'silhouette': lineWidth = 0.35; break;
+            case 'crease': lineWidth = 0.18; break;
+            case 'boundary': lineWidth = 0.25; break;
+            case 'annotation': lineWidth = 0.13; break;
+          }
+
+          if (line.visibility === 'hidden') {
+            strokeColor = '#888888';
+            dashPattern = [4, 2];
+            lineWidth *= 0.7;
+          }
+
+          const stroke = pen?.(line, line.category === 'cut' ? 'cut' : 'projection', line);
+          if (stroke && !(stroke.lineWeight > 0)) continue;
+          ctx.strokeStyle = stroke?.color ?? strokeColor;
+          ctx.lineWidth = stroke ? mmToScreen(stroke.lineWeight) : Math.max(0.5, mmToScreen(lineWidth) * 0.3);
+          ctx.setLineDash(stroke?.dash?.map(d => mmToScreen(d)) ?? dashPattern);
+
+          const screenStart = modelToScreen(start.x, start.y);
+          const screenEnd = modelToScreen(end.x, end.y);
+
+          ctx.beginPath();
+          ctx.moveTo(screenStart.x, screenStart.y);
+          ctx.lineTo(screenEnd.x, screenEnd.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Stroke cut polygon outlines above projection lines.
         for (const polygon of drawing.cutPolygons) {
           const stroke = pen?.(polygon, 'cut');
           let strokeColor = '#000000';
@@ -761,59 +823,7 @@ export function Drawing2DCanvas({
           }
           ctx.stroke();
         }
-
-        // Draw lines (projection, silhouette, etc.)
-        const lineBounds = drawing.bounds;
-        const lineMargin = Math.max(lineBounds.max.x - lineBounds.min.x, lineBounds.max.y - lineBounds.min.y) * 0.5;
-        const lineMinX = lineBounds.min.x - lineMargin;
-        const lineMaxX = lineBounds.max.x + lineMargin;
-        const lineMinY = lineBounds.min.y - lineMargin;
-        const lineMaxY = lineBounds.max.y + lineMargin;
-
-        for (const line of drawing.lines) {
-          if (isPolygonCutLine(line)) continue;
-          if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
-
-          const { start, end } = line.line;
-          if (!isFinite(start.x) || !isFinite(start.y) || !isFinite(end.x) || !isFinite(end.y)) continue;
-          if (start.x < lineMinX || start.x > lineMaxX || start.y < lineMinY || start.y > lineMaxY ||
-            end.x < lineMinX || end.x > lineMaxX || end.y < lineMinY || end.y > lineMaxY) continue;
-
-          let strokeColor = '#000000';
-          let lineWidth = 0.25;
-          let dashPattern: number[] = [];
-
-          switch (line.category) {
-            case 'cut': lineWidth = 0.5; break;
-            case 'projection': lineWidth = 0.25; break;
-            case 'hidden': lineWidth = 0.18; strokeColor = '#666666'; dashPattern = [4, 2]; break;
-            case 'silhouette': lineWidth = 0.35; break;
-            case 'crease': lineWidth = 0.18; break;
-            case 'boundary': lineWidth = 0.25; break;
-            case 'annotation': lineWidth = 0.13; break;
-          }
-
-          if (line.visibility === 'hidden') {
-            strokeColor = '#888888';
-            dashPattern = [4, 2];
-            lineWidth *= 0.7;
-          }
-
-          const stroke = pen?.(line, line.category === 'cut' ? 'cut' : 'projection', line);
-          if (stroke && !(stroke.lineWeight > 0)) continue;
-          ctx.strokeStyle = stroke?.color ?? strokeColor;
-          ctx.lineWidth = stroke ? mmToScreen(stroke.lineWeight) : Math.max(0.5, mmToScreen(lineWidth) * 0.3);
-          ctx.setLineDash(stroke?.dash?.map(d => mmToScreen(d)) ?? dashPattern);
-
-          const screenStart = modelToScreen(start.x, start.y);
-          const screenEnd = modelToScreen(end.x, end.y);
-
-          ctx.beginPath();
-          ctx.moveTo(screenStart.x, screenStart.y);
-          ctx.lineTo(screenEnd.x, screenEnd.y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
+        ctx.setLineDash([]);
 
         // IFC annotation overlay (issue #812)
         drawIfcAnnotationsScreenSpace(
@@ -1067,56 +1077,7 @@ export function Drawing2DCanvas({
       }
 
       // ═══════════════════════════════════════════════════════════════════════
-      // 2. STROKE CUT POLYGON OUTLINES (with color from override engine)
-      // ═══════════════════════════════════════════════════════════════════════
-      for (const polygon of drawing.cutPolygons) {
-        const stroke = pen?.(polygon, 'cut');
-        let strokeColor = paperTheme.ink;
-        let lineWeight = 0.5;
-
-        if (!stroke && overridesEnabled) {
-          const elementData: ElementData = {
-            expressId: polygon.entityId,
-            ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
-          };
-          const result = overrideEngine.applyOverrides(elementData);
-          strokeColor = result.style.strokeColor;
-          lineWeight = result.style.lineWeight;
-        }
-
-        if (stroke && !(stroke.lineWeight > 0)) continue;
-        ctx.strokeStyle = stroke?.color ?? strokeColor;
-        ctx.lineWidth = stroke ? stroke.lineWeight * penMm : lineWeight / transform.scale;
-        ctx.setLineDash(stroke?.dash?.map(d => d * penMm) ?? []);
-        ctx.beginPath();
-        if (polygon.cutOutline) {
-          for (const { start, end } of polygon.cutOutline) {
-            const a = start, b = end;
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-          }
-        } else if (polygon.polygon.outer.length > 0) {
-          ctx.moveTo(polygon.polygon.outer[0].x, polygon.polygon.outer[0].y);
-          for (let i = 1; i < polygon.polygon.outer.length; i++) {
-            ctx.lineTo(polygon.polygon.outer[i].x, polygon.polygon.outer[i].y);
-          }
-          ctx.closePath();
-
-          for (const hole of polygon.polygon.holes) {
-            if (hole.length > 0) {
-              ctx.moveTo(hole[0].x, hole[0].y);
-              for (let i = 1; i < hole.length; i++) {
-                ctx.lineTo(hole[i].x, hole[i].y);
-              }
-              ctx.closePath();
-            }
-          }
-        }
-        ctx.stroke();
-      }
-
-      // ═══════════════════════════════════════════════════════════════════════
-      // 3. DRAW PROJECTION/SILHOUETTE LINES (skip 'cut' - already in polygons)
+      // 2. DRAW PROJECTION, SYMBOLS AND OPEN CUT LINES
       // ═══════════════════════════════════════════════════════════════════════
       // Pre-compute bounds for line validation
       const lineBounds = drawing.bounds;
@@ -1126,10 +1087,7 @@ export function Drawing2DCanvas({
       const lineMinY = lineBounds.min.y - lineMargin;
       const lineMaxY = lineBounds.max.y + lineMargin;
 
-      for (const line of drawing.lines) {
-        // Skip 'cut' lines - they're triangulation edges, already handled by polygons
-        if (isPolygonCutLine(line)) continue;
-
+      for (const line of strokeLines) {
         // Skip hidden lines if not showing
         if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
 
@@ -1197,6 +1155,53 @@ export function Drawing2DCanvas({
         ctx.stroke();
 
         ctx.setLineDash([]);
+      }
+
+      // Stroke cut polygon outlines above projection lines.
+      for (const polygon of drawing.cutPolygons) {
+        const stroke = pen?.(polygon, 'cut');
+        let strokeColor = paperTheme.ink;
+        let lineWeight = 0.5;
+
+        if (!stroke && overridesEnabled) {
+          const elementData: ElementData = {
+            expressId: polygon.entityId,
+            ifcType: polygon.ifcType, properties: getElementProperties(polygon.entityId),
+          };
+          const result = overrideEngine.applyOverrides(elementData);
+          strokeColor = result.style.strokeColor;
+          lineWeight = result.style.lineWeight;
+        }
+
+        if (stroke && !(stroke.lineWeight > 0)) continue;
+        ctx.strokeStyle = stroke?.color ?? strokeColor;
+        ctx.lineWidth = stroke ? stroke.lineWeight * penMm : lineWeight / transform.scale;
+        ctx.setLineDash(stroke?.dash?.map(d => d * penMm) ?? []);
+        ctx.beginPath();
+        if (polygon.cutOutline) {
+          for (const { start, end } of polygon.cutOutline) {
+            const a = start, b = end;
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+          }
+        } else if (polygon.polygon.outer.length > 0) {
+          ctx.moveTo(polygon.polygon.outer[0].x, polygon.polygon.outer[0].y);
+          for (let i = 1; i < polygon.polygon.outer.length; i++) {
+            ctx.lineTo(polygon.polygon.outer[i].x, polygon.polygon.outer[i].y);
+          }
+          ctx.closePath();
+
+          for (const hole of polygon.polygon.holes) {
+            if (hole.length > 0) {
+              ctx.moveTo(hole[0].x, hole[0].y);
+              for (let i = 1; i < hole.length; i++) {
+                ctx.lineTo(hole[i].x, hole[i].y);
+              }
+              ctx.closePath();
+            }
+          }
+        }
+        ctx.stroke();
       }
 
       ctx.restore();
@@ -1686,7 +1691,7 @@ export function Drawing2DCanvas({
       }
     }
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas
