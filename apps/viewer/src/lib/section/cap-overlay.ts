@@ -8,7 +8,7 @@
  */
 
 import type { CutPolygon2D, DrawingLine2D } from '@ifc-lite/renderer';
-import { isOccludedDrawingLine, type Drawing2D, type DrawingPolygon, type DXFHatchLayer } from '@ifc-lite/drawing-2d';
+import { isOccludedDrawingLine, isPolygonCutLine, makeEntityKey, type Drawing2D, type DrawingPolygon, type DXFHatchLayer } from '@ifc-lite/drawing-2d';
 import type { SectionPlane } from '@/store/types';
 import { pdfColor } from '@/lib/export/pdf-color';
 import { getFillColorForType } from '@/components/viewer/drawing/ifc-fill-colors';
@@ -23,6 +23,7 @@ function opaque(c: [number, number, number, number] | undefined): [number, numbe
 type Rgba = [number, number, number, number];
 type CapPaints = {
   scale: number;
+  joinCutPolygons?: (polygons: DrawingPolygon[]) => DrawingPolygon[];
   patOffsets?: ReadonlyMap<string, number>;
   fallbackStyle?: (polygon: DrawingPolygon) => { fillColor: string; fillOpacity: number };
   resolve?: (polygon: DrawingPolygon, fallbackColor: () => string) => readonly DXFHatchLayer[] | undefined;
@@ -64,33 +65,38 @@ export function capOverlayInput(cut: Cut, showHiddenLines: boolean, fillMode: 'u
   // array order into one draw, so these render BEHIND the per-layer colours below;
   // where a layer's cap could not be reconstructed the base keeps the cut solid
   // instead of see-through. Colourless → uniform opaque cap fill.
-  const transparentEntities = new Set<number>();
-  const layerPolygons: CutPolygon2D[] = cut.cutPolygons.map((cp) => {
+  const cutPolygons = preview?.joinCutPolygons?.(cut.cutPolygons) ?? cut.cutPolygons;
+  const joined = new Set(cutPolygons.filter(cp => cp.cutOutline !== undefined)
+    .map(cp => makeEntityKey(cp.modelIndex, cp.entityId)));
+  const layerPolygons: CutPolygon2D[] = cutPolygons.map((cp) => {
     const fallback = preview?.fallbackStyle?.(cp);
     const paints = preview?.resolve?.(cp, () => fallback?.fillColor ?? getFillColorForType(cp.ifcType));
-    let styled = paints && preview ? publicationCapPaint(paints, preview.scale, preview.patOffsets) : undefined;
-    if (!styled && fallback) {
-      const color = capColor(fallback.fillColor);
-      color[3] *= fallback.fillOpacity;
-      styled = { color, hatch: { patternId: 0 } };
-    }
-    if (styled?.color && styled.color[3] < 1) transparentEntities.add(cp.entityId);
+    const styled = paints && preview ? publicationCapPaint(paints, preview.scale, preview.patOffsets) : undefined;
+    const baseColor = fallback ? capColor(fallback.fillColor) : fillMode === 'element' ? cp.color ?? cp.sourceColor : cp.color;
+    const color = opaque(styled?.color?.[3] ? styled.color : baseColor);
     return {
       polygon: cp.polygon, ifcType: cp.ifcType, expressId: cp.entityId, modelIndex: cp.modelIndex,
-      color: fillMode === 'element' ? opaque(cp.color ?? cp.sourceColor) : cp.color,
       ...styled,
+      color,
+      hatch: styled?.hatch ?? (fallback ? { patternId: 0 } : undefined),
+      ...(cp.cutOutline ? { cutOutline: cp.cutOutline } : {}),
     };
   });
   const basePolygons: CutPolygon2D[] = (cut.layerBaseCutPolygons ?? [])
-    .filter((cp) => !transparentEntities.has(cp.entityId)).map((cp) => {
+    .map((cp) => {
       const fallback = preview?.fallbackStyle?.(cp);
       return {
         polygon: cp.polygon, ifcType: cp.ifcType, expressId: cp.entityId, modelIndex: cp.modelIndex,
-        ...(fallback ? { color: capColor(fallback.fillColor), hatch: { patternId: 0 } } : {}),
+        // The layer outlines already cover joined elements. The base only fills.
+        ...(joined.has(makeEntityKey(cp.modelIndex, cp.entityId)) ? { cutOutline: [] } : {}),
+        ...(fallback ? { color: opaque(capColor(fallback.fillColor)), hatch: { patternId: 0 } } : {}),
       };
     });
+  // The renderer lifts these lines onto the cut plane. Lines from the 2D
+  // projection have lost their depth here and would paint over the opaque cap.
   const lines: DrawingLine2D[] = cut.lines
-    .filter((line) => showHiddenLines || !isOccludedDrawingLine(line))
+    .filter((line) => line.category === 'cut' && (showHiddenLines || !isOccludedDrawingLine(line))
+      && !(isPolygonCutLine(line) && joined.has(makeEntityKey(line.modelIndex, line.entityId))))
     .map((line) => ({ line: line.line, category: line.category }));
   return { polygons: [...basePolygons, ...layerPolygons], lines };
 }

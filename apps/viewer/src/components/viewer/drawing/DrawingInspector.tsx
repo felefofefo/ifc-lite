@@ -58,9 +58,10 @@ export interface DrawingInspectorProps {
   layers: ReturnType<typeof useDrawingLayers>;
   /** The Drawing panel's own measured width; drives the overlay fallback. */
   panelWidth: number;
+  view3D?: boolean;
 }
 
-export function DrawingInspector({ vm, layers, panelWidth }: DrawingInspectorProps): React.ReactElement | null {
+export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInspectorProps): React.ReactElement | null {
   const { t } = useTranslation();
   const tab = vm.openDrawer;
   const width = useViewerStore((s) => s.drawingInspectorWidth);
@@ -85,7 +86,8 @@ export function DrawingInspector({ vm, layers, panelWidth }: DrawingInspectorPro
     window.addEventListener('pointerup', up);
   }, [width, setWidth]);
 
-  if (!tab) return null;
+  const tabs = view3D ? TABS.filter(({ id }) => id === 'overrides' || id === 'visibility' || id === 'patterns') : TABS;
+  if (!tab || !tabs.some(({ id }) => id === tab)) return null;
 
   const overlay = panelWidth > 0 && panelWidth < DRAWING_INSPECTOR_OVERLAY_BELOW;
 
@@ -95,7 +97,7 @@ export function DrawingInspector({ vm, layers, panelWidth }: DrawingInspectorPro
         <Select value={tab} onValueChange={(value) => vm.toggleDrawer(value as DrawingDrawer)}>
           <SelectTrigger aria-label={t('section2d.inspector.sections')} className="h-8 w-full text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {TABS.map(({ id, icon: Icon, labelKey }) => (
+            {tabs.map(({ id, icon: Icon, labelKey }) => (
               <SelectItem key={id} value={id}>
                 <span className="flex items-center gap-2"><Icon className="h-3.5 w-3.5 shrink-0" />{t(labelKey)}</span>
               </SelectItem>

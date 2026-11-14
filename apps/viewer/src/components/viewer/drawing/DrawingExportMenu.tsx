@@ -18,11 +18,13 @@ import { useTranslation } from '@/i18n';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { drawingExportOmissions, DRAWING_OMISSION_LABEL_KEYS, type DrawingExportContent } from '@/lib/export/drawing-export-omissions';
 import { SaveMarkupToModelMenuItem } from '../SaveMarkupToModelButton';
+import type { SavedSectionCut } from '@/store/savedSectionCutsStore';
 import type { useSavedViewBatch } from '@/hooks/useSavedViewBatch';
 import { DrawingPdfExportDialog } from './DrawingPdfExportDialog';
 
 export interface DrawingExportMenuProps {
   hasDrawing: boolean;
+  selected3D?: SavedSectionCut;
   batch?: ReturnType<typeof useSavedViewBatch>;
   /** Icon-only trigger for narrow hosts. */
   compact: boolean;
@@ -41,7 +43,7 @@ export interface DrawingExportMenuProps {
 }
 
 export function DrawingExportMenu({
-  batch, hasDrawing, compact, onExportSvg, onExportDxf, onExportPdf, onPrint,
+  batch, hasDrawing, selected3D, compact, onExportSvg, onExportDxf, onExportPdf, onPrint,
   displayedScale, sheetEnabled, activeSheet, markupCounts, visibleUnderlayCount, visibleRasterReferenceCount = 0,
 }: DrawingExportMenuProps) {
   const { t } = useTranslation();
@@ -93,28 +95,41 @@ export function DrawingExportMenu({
         </Tooltip>
         <DropdownMenuContent align="end" className="min-w-56">
           {batch && <>
-            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run(true)}>
+            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run('dxf')}>
               <FolderDown className="mr-2 h-4 w-4" />{t('section2d.export.allViews')}
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run(false)}>
+            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run('pdf')}>
+              <FileText className="mr-2 h-4 w-4" />{t('section2d.export.allViewsPdf')}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!batch.available} onSelect={() => void batch.run('svg')}>
+              <Download className="mr-2 h-4 w-4" />{t('section2d.export.allViewsSvg')}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!batch.canRefresh} onSelect={() => void batch.run()}>
               <RefreshCw className="mr-2 h-4 w-4" />{t('section2d.export.refreshAllViews')}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>}
-          <DropdownMenuItem onClick={onExportSvg} disabled={!hasDrawing}>
-            <Download className="mr-2 h-4 w-4" />{t('section2d.export.svg')}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => { void handleDxfExport(); }} disabled={!hasDrawing}>
-            <FileDown className="mr-2 h-4 w-4" />{t('section2d.export.dxf')}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setPdfDialogOpen(true)} disabled={!hasDrawing}>
-            <FileText className="mr-2 h-4 w-4" />{t('section2d.export.pdf')}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onPrint} disabled={!hasDrawing}>
-            <Printer className="mr-2 h-4 w-4" />{t('section2d.export.print')}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <SaveMarkupToModelMenuItem />
+          {selected3D ? (['svg', 'dxf', 'pdf'] as const).map(format => (
+            <DropdownMenuItem key={format} disabled={!selected3D.viewpoint || !batch}
+              onSelect={() => void batch?.export3D(selected3D, format)}>
+              <FileDown className="mr-2 h-4 w-4" />{t(`section2d.export.${format}`)}
+            </DropdownMenuItem>
+          )) : <>
+            <DropdownMenuItem onClick={onExportSvg} disabled={!hasDrawing}>
+              <Download className="mr-2 h-4 w-4" />{t('section2d.export.svg')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { void handleDxfExport(); }} disabled={!hasDrawing}>
+              <FileDown className="mr-2 h-4 w-4" />{t('section2d.export.dxf')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setPdfDialogOpen(true)} disabled={!hasDrawing}>
+              <FileText className="mr-2 h-4 w-4" />{t('section2d.export.pdf')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onPrint} disabled={!hasDrawing}>
+              <Printer className="mr-2 h-4 w-4" />{t('section2d.export.print')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <SaveMarkupToModelMenuItem />
+          </>}
         </DropdownMenuContent>
       </DropdownMenu>
       <Dialog open={!!batch?.progress}>
@@ -127,12 +142,12 @@ export function DrawingExportMenu({
           </DialogHeader>
         </DialogContent>
       </Dialog>
-      <DrawingPdfExportDialog
+      {!selected3D && <DrawingPdfExportDialog
         open={pdfDialogOpen} onOpenChange={setPdfDialogOpen}
         displayedScale={displayedScale} sheetEnabled={sheetEnabled} activeSheet={activeSheet}
         omissions={pdfOmissions}
         onExport={onExportPdf}
-      />
+      />}
     </>
   );
 }

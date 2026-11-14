@@ -4,16 +4,29 @@
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { strToU8, zip, type Zippable } from 'fflate';
-import type { Drawing2D } from '@ifc-lite/drawing-2d';
+import { GraphicOverrideEngine, type DXFHatchLayer, type Drawing2D } from '@ifc-lite/drawing-2d';
 import { useTranslation } from '@/i18n';
-import { useViewerStore } from '@/store';
-import { applySavedSectionCut, savedViewKind, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { resolveEntityRef, useViewerStore } from '@/store';
+import { applySavedSectionCut, savedViewKind, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
 import { getDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import { downloadFile, sanitizeFilename } from '@/lib/export/download';
 import { uniqueArtifactBase } from '@/lib/export/artifact-naming';
 import { toast } from '@/components/ui/toast';
+import type { SavedViewExportFormat } from '@/lib/export/view-pdf/export-view-vector';
+import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
+import { drawingPublicationStrokeStyle } from './drawingPublicationStrokeStyle';
+import { makePropertiesGetter } from './drawingElementProperties';
+import { drawingPublicationHatchStyle } from './drawingPublicationHatchStyle';
+import { useDrawingCutJoints } from './useDrawingCutJoints';
+import { useDrawingPatterns } from './useDrawingPatterns';
+import { pdfColor } from '@/lib/export/pdf-color';
+import { hasHatchPaint, type MaterialHatches } from '@/lib/drawing/material-hatches';
 
-type DxfBuilder = () => { dxf: string } | undefined;
+type DrawingBuilders = {
+  buildDXF: () => { dxf: string } | undefined;
+  buildSVG: () => string | null;
+  handleExportPDF: (scale: number | undefined, destination: (blob: Blob) => void) => Promise<void>;
+};
 type DirectoryPickerWindow = Window & {
   showDirectoryPicker?: (options: { mode: 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
 };
@@ -30,20 +43,112 @@ async function waitFor<T>(read: () => T | undefined): Promise<T> {
   throw new Error('Timed out while updating the saved drawing.');
 }
 
-export function useSavedViewBatch(sourceDrawing: Drawing2D | null, buildDXF: DxfBuilder) {
+export function useSavedViewBatch(sourceDrawing: Drawing2D | null, builders: DrawingBuilders, lineweights: LineweightTable, materialHatches: MaterialHatches) {
   const { t } = useTranslation();
-  const available = useSavedSectionCuts(s => s.cuts.some(cut => savedViewKind(cut) !== '3d'));
+  const { patterns } = useDrawingPatterns();
+  const joinCutPolygons = useDrawingCutJoints();
+  const available = useSavedSectionCuts(s => s.cuts.length > 0);
+  const canRefresh = useSavedSectionCuts(s => s.cuts.some(cut => savedViewKind(cut) !== '3d'));
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number; name: string }>();
-  const committed = useRef<{ sourceDrawing: Drawing2D | null; buildDXF: DxfBuilder } | undefined>(undefined);
+  const committed = useRef<{ sourceDrawing: Drawing2D | null; builders: DrawingBuilders } | undefined>(undefined);
   useLayoutEffect(() => {
-    committed.current = { sourceDrawing, buildDXF };
+    committed.current = { sourceDrawing, builders };
     return () => { committed.current = undefined; };
-  }, [sourceDrawing, buildDXF]);
+  }, [sourceDrawing, builders]);
 
-  async function run(exportDxf: boolean) {
+  async function buildSaved3D(view: SavedSectionCut, format: SavedViewExportFormat, readActiveView: typeof useViewerStore.getState) {
+    if (!view.viewpoint) throw new Error('The saved 3D view has no camera.');
+    const [{ readViewPdfSource }, { exportViewVector }] = await Promise.all([
+      import('@/lib/export/view-pdf/view-pdf-export-source'),
+      import('@/lib/export/view-pdf/export-view-vector'),
+    ]);
+    const runtime = await waitFor(() => {
+      const live = readActiveView();
+      const current = getDrawingRuntime();
+      if (current.viewId !== view.id || current.viewPlane !== live.sectionPlane || current.viewRulesPending) return;
+      if (current.viewFilterFailed) throw new Error('Could not evaluate the saved view filter.');
+      return current;
+    });
+    const live = readActiveView();
+    const source = readViewPdfSource(live);
+    if (source.sectionEnabled && !source.section && !source.extraSections.length) {
+      throw new Error('The saved 3D section has no usable bounds.');
+    }
+    const scaleFactor = view.publicationScale ?? live.drawing2DDisplayOptions.scale;
+    const row = lineweightsAtScale(lineweights, scaleFactor);
+    const rules = live.overridesEnabled ? runtime.graphicRules ?? [] : [];
+    const getElementProperties = makePropertiesGetter(live.models, live.ifcDataStore);
+    const overrideEngine = new GraphicOverrideEngine(rules, row);
+    const { showSurfacePatterns3D, showHiddenLines } = live.drawing2DDisplayOptions;
+    const surfaces = (view.display?.showSurfacePatterns3D ?? !!showSurfacePatterns3D) && (Object.values(materialHatches).some(style => hasHatchPaint(style?.surface))
+      || rules.some(({ style }) => hasHatchPaint(style.surfaceHatch)));
+    const caps = [source.section, ...source.extraSections].some(cut => cut && cut.showCap !== false);
+    const hatchStyle = drawingPublicationHatchStyle(materialHatches, scaleFactor, live.models, live.ifcDataStore,
+      rules, getElementProperties, resolveEntityRef, patterns);
+    return exportViewVector({
+      view: {
+        ...source.view,
+        hiddenEntities: runtime.drawingHidden ?? source.view.hiddenEntities,
+        isolatedEntities: runtime.drawingIsolated === undefined ? source.view.isolatedEntities : runtime.drawingIsolated,
+      },
+      camera: view.viewpoint,
+      section: source.section,
+      extraSections: source.extraSections,
+      scaleFactor,
+      includeHiddenLines: showHiddenLines,
+      joinCutPolygons,
+      strokeStyle: drawingPublicationStrokeStyle(row, { overridesEnabled: live.overridesEnabled, overrideEngine, getElementProperties }),
+      vectorFills: caps || surfaces ? {
+        caps, surfaces,
+        style: {
+          useIfcMaterials: live.activePresetId === 'preset-3d-colors' || live.activePresetId?.startsWith('drawing-template:') === true,
+          entityColorMap: new Map(), overridesEnabled: live.overridesEnabled, overrideEngine, getElementProperties,
+          fills: (polygon, fallbackColor) => {
+            const paints = polygon.isCut && !live.drawing2DDisplayOptions.showHatching ? undefined : hatchStyle(polygon, fallbackColor);
+            if (!polygon.isCut) return paints;
+            const solid = paints?.findLastIndex(paint => paint.pattern === 'solid' && (pdfColor(paint.color)?.alpha ?? 0) > 0) ?? -1;
+            const base: DXFHatchLayer = {
+              pattern: 'solid', spacing: 0,
+              color: pdfColor(paints?.[solid]?.color ?? fallbackColor)?.color ?? '#666666',
+            };
+            return [base, ...(paints ?? []).slice(solid + 1).filter(paint => paint.pattern !== 'solid')];
+          },
+        },
+      } : undefined,
+    }, format);
+  }
+
+  async function export3D(view: SavedSectionCut, format: SavedViewExportFormat) {
+    if (batchRunning) return;
+    batchRunning = true;
+    setBusy(true);
+    const projectId = useSavedSectionCuts.getState().projectId;
+    const section = useViewerStore.getState().sectionPlane;
+    const readActiveView = () => {
+      const saved = useSavedSectionCuts.getState();
+      const live = useViewerStore.getState();
+      if (!committed.current || saved.projectId !== projectId || saved.activeCutId !== view.id || live.sectionPlane !== section) {
+        throw new Error('The active view changed during the export.');
+      }
+      return live;
+    };
+    try {
+      const content = await buildSaved3D(view, format, readActiveView);
+      readActiveView();
+      const stem = sanitizeFilename(view.code ? `${view.code} - ${view.name}` : view.name, { fallback: '3d-view' });
+      downloadFile(content, `${stem}.${format}`, format === 'svg' ? 'image/svg+xml' : format === 'dxf' ? 'application/dxf' : 'application/pdf');
+    } catch (error) {
+      toast.error(t('section2d.export.view3dFailed', { error: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      batchRunning = false;
+      setBusy(false);
+    }
+  }
+
+  async function run(format?: SavedViewExportFormat) {
     const project = useSavedSectionCuts.getState();
-    const views = project.cuts.filter(cut => savedViewKind(cut) !== '3d');
+    const views = project.cuts.filter(cut => format || savedViewKind(cut) !== '3d');
     if (batchRunning || !views.length) return;
     batchRunning = true;
     setBusy(true);
@@ -60,7 +165,7 @@ export function useSavedViewBatch(sourceDrawing: Drawing2D | null, buildDXF: Dxf
     };
 
     try {
-      const location = exportDxf && picker ? await picker.call(window, { mode: 'readwrite' }) : undefined;
+      const location = format && picker ? await picker.call(window, { mode: 'readwrite' }) : undefined;
       checkProject();
       const output = location ? await location.getDirectoryHandle(folder, { create: true }) : undefined;
       const state = useViewerStore.getState();
@@ -91,74 +196,85 @@ export function useSavedViewBatch(sourceDrawing: Drawing2D | null, buildDXF: Dxf
           applySavedSectionCut(view.id, false);
           const before = useViewerStore.getState().drawing2D;
           const section = useViewerStore.getState().sectionPlane;
-          const runtime = await waitFor(() => {
-            checkProject();
-            if (useSavedSectionCuts.getState().activeCutId !== view.id || useViewerStore.getState().sectionPlane !== section) {
-              throw new Error('The active view changed during the batch.');
-            }
-            const current = getDrawingRuntime();
-            if (current.viewId !== view.id || current.viewPlane !== section || current.viewRulesPending) return;
-            if (current.viewFilterFailed) throw new Error('Could not evaluate the saved view filter.');
-            return current;
-          });
-          await runtime.generateDrawing();
-          const drawing = await waitFor(() => {
+          const readActiveView = () => {
             checkProject();
             const live = useViewerStore.getState();
             if (useSavedSectionCuts.getState().activeCutId !== view.id || live.sectionPlane !== section) {
               throw new Error('The active view changed during the batch.');
             }
-            if (live.drawing2DStatus === 'error' || live.drawing2DStatus === 'idle') {
-              throw new Error(live.drawing2DError ?? 'The saved view produced no drawing.');
+            return live;
+          };
+          const kind = savedViewKind(view);
+          let content: string | Blob | null | undefined;
+          if (kind === '3d' && format) {
+            content = await buildSaved3D(view, format, readActiveView);
+          } else {
+            const runtime = await waitFor(() => {
+              readActiveView();
+              const current = getDrawingRuntime();
+              if (current.viewId !== view.id || current.viewPlane !== section || current.viewRulesPending) return;
+              if (current.viewFilterFailed) throw new Error('Could not evaluate the saved view filter.');
+              return current;
+            });
+            await runtime.generateDrawing();
+            const drawing = await waitFor(() => {
+              const live = readActiveView();
+              if (live.drawing2DStatus === 'error' || live.drawing2DStatus === 'idle') {
+                throw new Error(live.drawing2DError ?? 'The saved view produced no drawing.');
+              }
+              return live.drawing2DStatus === 'ready' && live.drawing2D && live.drawing2D !== before
+                && committed.current?.sourceDrawing === live.drawing2D ? committed.current : undefined;
+            });
+            if (format === 'dxf') content = drawing.builders.buildDXF()?.dxf;
+            else if (format === 'svg') content = drawing.builders.buildSVG();
+            else if (format === 'pdf') {
+              await drawing.builders.handleExportPDF(view.publicationScale, blob => { content = blob; });
             }
-            return live.drawing2DStatus === 'ready' && live.drawing2D && live.drawing2D !== before
-              && committed.current?.sourceDrawing === live.drawing2D ? committed.current : undefined;
-          });
-          if (exportDxf) {
-            const dxf = drawing.buildDXF()?.dxf;
-            if (!dxf) throw new Error('Could not build DXF for the saved view.');
-            const kind = savedViewKind(view);
+          }
+          readActiveView();
+          if (format) {
+            if (!content) throw new Error('Could not build the file for the saved view.');
             const group = sanitizeFilename(t(`section2d.views.group.${kind}`), { fallback: kind });
             const stem = sanitizeFilename(`${view.code ? view.code + ' - ' : ''}${view.name}`, { fallback: kind });
             const safeStem = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(stem) ? `_${stem}` : stem;
             const path = `${group}/${safeStem}`;
-            const base = uniqueArtifactBase(path.toLowerCase(), 'dxf', usedPaths);
-            const name = `${safeStem}${base.slice(path.length)}.dxf`;
+            const base = uniqueArtifactBase(path.toLowerCase(), format, usedPaths);
+            const name = `${safeStem}${base.slice(path.length)}.${format}`;
             if (output) {
               const directory = folders.get(group) ?? await output.getDirectoryHandle(group, { create: true });
               folders.set(group, directory);
               const file = await directory.getFileHandle(name, { create: true });
               const writer = await file.createWritable();
               try {
-                await writer.write(dxf);
+                await writer.write(content);
                 await writer.close();
               } catch (error) {
                 await writer.abort().catch(() => {});
                 throw error;
               }
             } else {
-              archive[`${folder}/${group}/${name}`] = strToU8(dxf);
+              archive[`${folder}/${group}/${name}`] = typeof content === 'string' ? strToU8(content) : new Uint8Array(await content.arrayBuffer());
             }
           }
           count++;
         }
       } finally {
         if (useSavedSectionCuts.getState().projectId === project.projectId) {
-          useSavedSectionCuts.setState({ activeCutId: project.activeCutId });
+          useSavedSectionCuts.setState({ activeCutId: project.activeCutId, drawingPlaneId: project.drawingPlaneId });
           useViewerStore.setState(original);
         }
       }
-      if (exportDxf && !output) {
+      if (format && !output) {
         const bytes = await new Promise<Uint8Array>((resolve, reject) => zip(archive, (error, data) => error ? reject(error) : resolve(data)));
         downloadFile(bytes, `${folder}.zip`, 'application/zip');
       }
-      toast.success(t(exportDxf ? output ? 'section2d.export.batchExported' : 'section2d.export.batchZip' : 'section2d.export.batchRefreshed',
+      toast.success(t(format ? output ? 'section2d.export.batchExported' : 'section2d.export.batchZip' : 'section2d.export.batchRefreshed',
         { count, folder }));
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError' && count === 0) return;
       console.warn('Saved drawing batch failed', error);
       const exported = picker ? count : 0;
-      toast.error(exportDxf ? t('section2d.export.batchFailed', { count: exported }) : t('section2d.export.batchRefreshFailed', { count }));
+      toast.error(format ? t('section2d.export.batchFailed', { count: exported }) : t('section2d.export.batchRefreshFailed', { count }));
     } finally {
       batchRunning = false;
       setBusy(false);
@@ -166,5 +282,5 @@ export function useSavedViewBatch(sourceDrawing: Drawing2D | null, buildDXF: Dxf
     }
   }
 
-  return { available, busy, progress, run };
+  return { available, canRefresh, busy, progress, run, export3D };
 }

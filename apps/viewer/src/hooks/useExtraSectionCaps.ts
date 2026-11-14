@@ -24,6 +24,7 @@ import { useEffect, useRef } from 'react';
 import { Drawing2DGenerator } from '@ifc-lite/drawing-2d';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { useViewerStore } from '@/store';
+import { selectSaved3DActive, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { capCutConfig, capSignature } from '@/lib/section/section-cut-config';
 import { cuttingSectionBoxCapPlanes } from '@/lib/section/section-box-caps';
 import { visibleCutMeshes } from '@/lib/drawing/cut-meshes';
@@ -54,7 +55,8 @@ export function useExtraSectionCaps(
   }
   const modelToken = modelStateRef.current.token;
 
-  const wanted = activeTool === 'section' && show3DOverlay && !!geometryResult
+  const saved3D = useSavedSectionCuts(selectSaved3DActive);
+  const wanted = (saved3D || (activeTool === 'section' && show3DOverlay)) && !!geometryResult
     ? [...planes.filter((p) => p.enabled && !p.box), ...cuttingSectionBoxCapPlanes(sectionPlane, planes)]
     : [];
   // Re-run when the set of wanted planes or their geometry changes, not on every store tick.

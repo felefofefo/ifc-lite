@@ -3,8 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * The Drawing panel's named-cut menu (#5514): save the live cut, list saved
- * cuts, apply/rename/delete one. Asserted on the OUTPUT — menu contents and
+ * The Drawing panel's named-cut menu (#5514): list saved cuts and apply, rename, or delete one. Asserted on the OUTPUT — menu contents and
  * the store after each action — never on the wiring.
  */
 
@@ -78,16 +77,10 @@ describe('DrawingSectionCutMenu (#5514)', () => {
     assert.equal(useSavedSectionCuts.getState().cuts.length, 0);
   });
 
-  it('"Save current cut as..." names the live cut via the menu\'s own prompt', async () => {
-    const { ConfirmDialogHost } = await loadDialogs();
-    render(<><DrawingSectionCutMenu cutLabel="Down 50.0" /><ConfirmDialogHost /></>);
+  it('leaves saving to the Drawing view list', () => {
+    render(<DrawingSectionCutMenu cutLabel="Down 50.0" />);
     openMenu();
-    click([...document.body.querySelectorAll('div')].find((el) => el.textContent === 'Save current cut as…')!);
-    const dialog = document.querySelector('[role="alertdialog"]');
-    assert.ok(dialog);
-    typeInput(dialog.querySelector('input')!, 'From the menu');
-    click(dialog.querySelector('button[type="submit"]')!);
-    await waitFor(() => useSavedSectionCuts.getState().cuts.some((c) => c.name === 'From the menu'), 'named cut is saved');
+    assert.doesNotMatch(document.body.textContent ?? '', /Save current cut/);
   });
 
   it('renames a saved cut via its row\'s prompt', async () => {

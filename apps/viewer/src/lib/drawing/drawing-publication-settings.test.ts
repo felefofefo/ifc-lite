@@ -7,8 +7,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { IfcParser } from '@ifc-lite/parser';
 import { drawingPublicationHatchStyle } from '@/hooks/drawingPublicationHatchStyle';
-import { materialNameForCut, materialNames, readMaterialHatches } from './material-hatches.js';
+import { materialNameForCut, materialNames, readMaterialHatches, reassignMaterialHatches } from './material-hatches.js';
 import { drawingLineweightScales, lineweightsAtScale, readLineweightTable } from './lineweight-table.js';
+import { materialSettingsFile, readMaterialSettingsFile, readLineweightSettingsFile } from './publication-settings-file.js';
 
 test('lists IFC materials and resolves the material of a cut from its id or its occurrence', async () => {
   const bytes = await readFile(new URL('../../../public/samples/building-architecture.ifc', import.meta.url));
@@ -61,4 +62,32 @@ test('loads separate surface paints and applies only surface overrides to projec
     [['cross-hatch', '#778899']]);
   assert.deepEqual(hatch({ ...polygon, isCut: true }, '#ffffff')?.map(({ pattern, color }) => [pattern, color]),
     [['solid', '#334455'], ['diagonal', '#666666']]);
+});
+
+test('moves a missing material association over the target without touching other settings', () => {
+  const source = { foreground: { color: '#ff0000' } };
+  const target = { foreground: { color: '#0000ff' } };
+  assert.deepEqual(reassignMaterialHatches({ Missing: source, Concrete: target, Wood: target }, 'Missing', 'Concrete'),
+    { Concrete: source, Wood: target });
+  assert.deepEqual(reassignMaterialHatches({ Missing: source }, 'Missing'), {});
+});
+
+test('round trips material settings with only the referenced custom patterns', () => {
+  const brick = { id: 'pat:BRICK' as const, name: 'Brick', repeatScale: 2,
+    lines: [{ angle: 0, x: 0, y: 0, dx: 0, dy: 4, dash: [3, -1] }] };
+  const file = materialSettingsFile({ OldBrick: { foreground: { pattern: brick.id } } },
+    [brick, { ...brick, id: 'pat:UNUSED' }], true);
+  const imported = readMaterialSettingsFile(JSON.stringify(file));
+  assert.equal(imported.materials.OldBrick?.foreground?.pattern, brick.id);
+  assert.deepEqual(imported.patterns, [brick]);
+  assert.equal(imported.joinUnassigned, true);
+  assert.throws(() => readLineweightSettingsFile(JSON.stringify(file)));
+});
+
+test('imports a custom lineweight scale and rejects malformed rows', () => {
+  const file = { version: 1, kind: 'ifc-lite-lineweights',
+    scales: { 75: { heavy: 0.5, medium: 0.3, light: 0.2, hairline: 0.15 } } };
+  assert.equal(readLineweightSettingsFile(JSON.stringify(file))[75]?.medium, 0.3);
+  file.scales[75].medium = -1;
+  assert.throws(() => readLineweightSettingsFile(JSON.stringify(file)));
 });

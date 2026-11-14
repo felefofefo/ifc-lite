@@ -35,6 +35,8 @@ export interface CutPolygon2D {
     outer: Array<{ x: number; y: number }>;
     holes: Array<Array<{ x: number; y: number }>>;
   };
+  /** When provided, draw these segments instead of outlining the fill rings. */
+  cutOutline?: Array<DrawingLine2D['line']>;
   ifcType: string;
   expressId: number;
   /** Model the element belongs to in a federation; scopes {@link CapHighlight} entries. Absent ⇒ matched by id alone. */
@@ -353,44 +355,25 @@ export function buildDrawingOutlineVertices(
 ): Float32Array | null {
   const lineVertices: number[] = [];
 
-  // Polygon outlines
-  for (const polygon of polygons) {
-    const outer = polygon.polygon.outer;
-    for (let i = 0; i < outer.length; i++) {
-      const p1 = outer[i];
-      const p2 = outer[(i + 1) % outer.length];
-      const [x1, y1, z1] = lift(p1.x, p1.y);
-      const [x2, y2, z2] = lift(p2.x, p2.y);
-      lineVertices.push(
-        origin ? x1 - origin[0] : x1, origin ? y1 - origin[1] : y1, origin ? z1 - origin[2] : z1,
-        origin ? x2 - origin[0] : x2, origin ? y2 - origin[1] : y2, origin ? z2 - origin[2] : z2,
-      );
-    }
-
-    // Hole outlines
-    for (const hole of polygon.polygon.holes) {
-      for (let i = 0; i < hole.length; i++) {
-        const p1 = hole[i];
-        const p2 = hole[(i + 1) % hole.length];
-        const [x1, y1, z1] = lift(p1.x, p1.y);
-        const [x2, y2, z2] = lift(p2.x, p2.y);
-        lineVertices.push(
-          origin ? x1 - origin[0] : x1, origin ? y1 - origin[1] : y1, origin ? z1 - origin[2] : z1,
-          origin ? x2 - origin[0] : x2, origin ? y2 - origin[1] : y2, origin ? z2 - origin[2] : z2,
-        );
-      }
-    }
-  }
-
-  // Additional drawing lines (hatching, etc.)
-  for (const line of lines) {
-    const [x1, y1, z1] = lift(line.line.start.x, line.line.start.y);
-    const [x2, y2, z2] = lift(line.line.end.x, line.line.end.y);
+  function pushSegment(p1: DrawingLine2D['line']['start'], p2: DrawingLine2D['line']['end']) {
+    const [x1, y1, z1] = lift(p1.x, p1.y);
+    const [x2, y2, z2] = lift(p2.x, p2.y);
     lineVertices.push(
       origin ? x1 - origin[0] : x1, origin ? y1 - origin[1] : y1, origin ? z1 - origin[2] : z1,
       origin ? x2 - origin[0] : x2, origin ? y2 - origin[1] : y2, origin ? z2 - origin[2] : z2,
     );
   }
+
+  for (const { cutOutline, polygon } of polygons) {
+    if (cutOutline) {
+      for (const { start, end } of cutOutline) pushSegment(start, end);
+    } else {
+      for (const ring of [polygon.outer, ...polygon.holes]) {
+        for (let i = 0; i < ring.length; i++) pushSegment(ring[i], ring[(i + 1) % ring.length]);
+      }
+    }
+  }
+  for (const { line } of lines) pushSegment(line.start, line.end);
 
   if (lineVertices.length === 0) return null;
   return new Float32Array(lineVertices);

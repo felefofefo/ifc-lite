@@ -6,9 +6,10 @@ import '@/test/section-tool-ready.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { act } from 'react';
-import { cleanup, click, render, type } from '@/test/render.js';
+import { cleanup, click, render } from '@/test/render.js';
 import { registerLocale, setLocale, type Catalogue } from '@/i18n';
 import { useViewerStore } from '@/store';
+import { applySavedSectionCut, saveCurrentSectionCut, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { getDefaultSectionPlane } from '@/store/slices/sectionSlice.js';
 import { ViewportHud } from '../../viewport-ui/hud/ViewportHud.js';
 import { ToolOverlays } from '../ToolOverlays.js';
@@ -23,22 +24,6 @@ const CAP_LOCALE: Catalogue = {
   'sectionCap.showSurfaces': 'Afficher toutes les faces',
   'sectionCap.hideLines': 'Masquer tous les traits',
   'sectionCap.showLines': 'Afficher tous les traits',
-  'sectionCap.patternLabel': 'Motif local',
-  'sectionCap.pattern.solid': 'Plein local',
-  'sectionCap.pattern.diagonal': 'Diagonale locale',
-  'sectionCap.pattern.crossHatch': 'Croisé local',
-  'sectionCap.pattern.horizontal': 'Horizontal local',
-  'sectionCap.pattern.vertical': 'Vertical local',
-  'sectionCap.pattern.concrete': 'Béton local',
-  'sectionCap.pattern.brick': 'Brique locale',
-  'sectionCap.pattern.insulation': 'Isolant local',
-  'sectionCap.fillLabel': 'Fond',
-  'sectionCap.hatchLabel': 'Hachure',
-  'sectionCap.fillAriaLabel': 'Couleur du fond',
-  'sectionCap.hatchAriaLabel': 'Couleur des hachures',
-  'sectionCap.spacingLabel': 'Espacement local',
-  'sectionCap.angleLabel': 'Angle local',
-  'sectionCap.widthLabel': 'Largeur locale',
 };
 
 /** Mount the Section tool through its production host and open the bar's Cap popover (#5499). */
@@ -60,24 +45,16 @@ function toggle(ui: HTMLElement, text: string): HTMLButtonElement {
   return found;
 }
 
-function labelledControl<T extends HTMLElement>(ui: HTMLElement, label: string): T {
-  const labelElement = [...ui.querySelectorAll('label')].find((candidate) => candidate.textContent?.trim() === label);
-  assert.ok(labelElement, `label ${label}`);
-  const id = labelElement.htmlFor;
-  const control = ui.querySelector<T>(`#${CSS.escape(id)}`);
-  assert.ok(control, `control ${label}`);
-  return control;
-}
-
 beforeEach(() => {
   window.localStorage.clear();
+  useSavedSectionCuts.setState({ cuts: [], activeCutId: null, drawingPlaneId: undefined });
   setLocale('en');
   useViewerStore.setState({
     activeTool: 'section', sectionPlane: getDefaultSectionPlane(), inactiveSectionPlanes: [], sectionUndo: null,
     sectionPickMode: false, sectionPickPreview: null,
   });
   // The bar's Cap control belongs to a plane, so the tool opens on a Down cut at 50 % (opening restores nothing, #7545).
-  useViewerStore.getState().updateDrawing2DDisplayOptions({ show3DOverlay: false });
+  useViewerStore.getState().updateDrawing2DDisplayOptions({ show3DOverlay: true });
   useViewerStore.getState().addSectionPlane('down');
 });
 
@@ -88,15 +65,10 @@ afterEach(() => {
 });
 
 describe('mounted Section cap localization (#4785)', () => {
-  it('keeps English options, IDs and independent complete display titles', () => {
+  it('shows independent display toggles for the drawing cap', () => {
     const ui = mountedCap();
     assert.match(ui.textContent ?? '', /Display/);
-    const select = labelledControl<HTMLSelectElement>(ui, 'Hatch pattern');
-    assert.deepEqual([...select.options].map((option) => [option.value, option.textContent]), [
-      ['diagonal', 'Diagonal'], ['crossHatch', 'Cross-hatch'], ['horizontal', 'Horizontal'],
-      ['vertical', 'Vertical'], ['concrete', 'Concrete'], ['brick', 'Brick'],
-      ['insulation', 'Insulation'], ['solid', 'Solid fill'],
-    ]);
+    assert.equal(ui.querySelector('select'), null);
     const surfaces = toggle(ui, 'Surfaces');
     const lines = toggle(ui, 'Lines');
     assert.equal(surfaces.title, 'Hide surfaces');
@@ -106,54 +78,59 @@ describe('mounted Section cap localization (#4785)', () => {
     assert.equal(toggle(ui, 'Surfaces').title, 'Show surfaces');
     assert.equal(toggle(ui, 'Surfaces').getAttribute('aria-pressed'), 'false');
     assert.equal(useViewerStore.getState().sectionPlane.showOutlines, true);
-    assert.equal(ui.querySelector('fieldset')?.hasAttribute('disabled'), true);
     click(lines);
     assert.equal(toggle(ui, 'Lines').title, 'Show lines');
     assert.equal(useViewerStore.getState().sectionPlane.showCap, false);
   });
 
-  it('renders every translated option and complete tooltip through the production host', () => {
+  it('renders the translated display toggles and tooltips through the production host', () => {
     registerLocale('cap-test', CAP_LOCALE);
     setLocale('cap-test');
     const ui = mountedCap('Surface locale');
     assert.match(ui.textContent ?? '', /Affichage/);
     assert.equal(toggle(ui, 'Faces').title, 'Masquer toutes les faces');
     assert.equal(toggle(ui, 'Traits').title, 'Masquer tous les traits');
-    const select = labelledControl<HTMLSelectElement>(ui, 'Motif local');
-    assert.deepEqual([...select.options].map((option) => option.textContent), [
-      'Diagonale locale', 'Croisé local', 'Horizontal local', 'Vertical local',
-      'Béton local', 'Brique locale', 'Isolant local', 'Plein local',
-    ]);
-    act(() => {
-      select.value = 'brick';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    assert.equal(useViewerStore.getState().sectionPlane.capStyle.pattern, 'brick');
     click(toggle(ui, 'Faces'));
     assert.equal(toggle(ui, 'Faces').title, 'Afficher toutes les faces');
   });
 
-  it('edits translated cap fields without changing IDs, alpha or angle semantics', () => {
-    registerLocale('cap-test', CAP_LOCALE);
-    setLocale('cap-test');
-    const ui = mountedCap('Surface locale');
-    const fill = ui.querySelector<HTMLInputElement>('input[aria-label="Couleur du fond"]');
-    const hatch = ui.querySelector<HTMLInputElement>('input[aria-label="Couleur des hachures"]');
-    assert.ok(fill && hatch);
-    act(() => useViewerStore.getState().setSectionCapStyle({
-      fillColor: [0.1, 0.2, 0.3, 0.35], strokeColor: [0.4, 0.5, 0.6, 0.65],
-    }));
-    type(fill, '#ff0000');
-    type(hatch, '#00ff00');
-    type(labelledControl<HTMLInputElement>(ui, 'Espacement local'), '19');
-    type(labelledControl<HTMLInputElement>(ui, 'Angle local'), '-45');
-    type(labelledControl<HTMLInputElement>(ui, 'Largeur locale'), '3.5');
-    const style = useViewerStore.getState().sectionPlane.capStyle;
-    assert.deepEqual(style.fillColor, [1, 0, 0, 0.35]);
-    assert.deepEqual(style.strokeColor, [0, 1, 0, 0.65]);
-    assert.equal(style.spacingPx, 19);
-    assert.ok(Math.abs(style.angleRad + Math.PI / 4) < 1e-12);
-    assert.equal(style.widthPx, 3.5);
+  it('offers no cap settings while the 3D overlay is off', () => {
+    useViewerStore.getState().updateDrawing2DDisplayOptions({ show3DOverlay: false });
+    const ui = mountedCap();
+    assert.match(ui.textContent ?? '', /Enable 3D overlay/);
+    assert.equal(ui.querySelector('select, input, button'), null);
+  });
+
+  it('toggles and restores the saved 3D cap with the Drawing overlay off', () => {
+    const state = useViewerStore.getState();
+    state.updateDrawing2DDisplayOptions({ show3DOverlay: false });
+    useViewerStore.setState({ cameraCallbacks: { ...state.cameraCallbacks, getViewpoint: () => ({
+      position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 },
+      fov: 45, projectionMode: 'orthographic', orthoSize: 4,
+    }) } });
+    const id = saveCurrentSectionCut('Axon', '3d');
+    const ui = mountedCap();
+    click(toggle(ui, 'Surfaces'));
+    assert.equal(useViewerStore.getState().sectionPlane.showCap, false);
+    assert.equal(useViewerStore.getState().sectionPlane.showOutlines, true);
+    act(() => applySavedSectionCut(id, false));
+    assert.equal(useViewerStore.getState().sectionPlane.showCap, false);
+    assert.equal(useViewerStore.getState().drawing2DDisplayOptions.show3DOverlay, false);
+  });
+
+  it('keeps the saved drawing name on its plane when another clip is selected', () => {
+    const state = useViewerStore.getState();
+    const drawingPlaneId = state.sectionPlane.id;
+    const other = state.addSectionPlane('front')!;
+    useViewerStore.getState().activateSectionPlane(drawingPlaneId);
+    saveCurrentSectionCut('Ground floor', 'plan', undefined, 'P-01');
+    act(() => useViewerStore.getState().activateSectionPlane(other));
+    mountedCap();
+    const tabs = [...document.querySelectorAll('[role="tab"][data-plane-id]')];
+    assert.ok(tabs.some(tab => tab.getAttribute('data-plane-id') === drawingPlaneId
+      && tab.textContent === 'P-01 · Ground floor'));
+    assert.ok(tabs.some(tab => tab.getAttribute('data-plane-id') === other
+      && tab.textContent?.startsWith('3D clip ') && tab.getAttribute('aria-selected') === 'true'));
   });
 
   it('falls back per missing cap key and updates an active catalogue in place', () => {
@@ -163,22 +140,9 @@ describe('mounted Section cap localization (#4785)', () => {
     assert.match(ui.textContent ?? '', /Localized display/);
     assert.equal(toggle(ui, 'Surfaces').title, 'Localized hide');
     assert.equal(toggle(ui, 'Lines').title, 'Hide lines');
-    assert.ok([...labelledControl<HTMLSelectElement>(ui, 'Hatch pattern').options].some((option) => option.textContent === 'Brick'));
     act(() => registerLocale('partial-cap', { 'sectionCap.display': 'Replacement display', 'sectionCap.hideSurfaces': 'Replacement hide' }));
     assert.match(ui.textContent ?? '', /Replacement display/);
     assert.equal(toggle(ui, 'Surfaces').title, 'Replacement hide');
   });
 
-  it('picks the fill source beside the fill colour, as a radio group (#7950)', () => {
-    const ui = mountedCap();
-    const group = ui.querySelector('[role="radiogroup"][aria-label="Fill source"]');
-    assert.ok(group, 'fill source is one radio group');
-    const radio = (name: string) => [...group.querySelectorAll<HTMLElement>('[role="radio"]')].find((r) => r.textContent?.trim() === name)!;
-    assert.equal(radio('Uniform').getAttribute('aria-checked'), 'true');
-    click(radio('Element colour'));
-    assert.equal(useViewerStore.getState().sectionPlane.capStyle.fillMode, 'element');
-    assert.equal(radio('Element colour').getAttribute('aria-checked'), 'true');
-    assert.ok(ui.querySelector('input[aria-label="Fill colour"]'), 'the fill colour stays reachable for cuts without a colour');
-  });
 });
-

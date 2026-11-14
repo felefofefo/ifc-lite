@@ -8,6 +8,7 @@ import type { TranslationValue } from '../types';
 export const sectionPlanesEn = {
   'sectionPlanes.chipsAria': 'Cutting planes',
   'sectionPlanes.chipCutting': 'Plane {name}: cutting',
+  'sectionPlanes.chip3DClip': '3D clip {name}',
   'sectionPlanes.chipPreview': 'Plane {name}: preview, not cutting',
   'sectionPlanes.add': 'Add plane',
   'sectionPlanes.addTitle': 'Add a cutting plane',

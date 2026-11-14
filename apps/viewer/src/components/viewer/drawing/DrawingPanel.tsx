@@ -23,7 +23,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { PanelLeft, RefreshCw, Video } from 'lucide-react';
+import { Box, Palette, PanelLeft, RefreshCw, Video } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -101,11 +101,12 @@ export function DrawingPanel(): React.ReactElement {
   const setProjectionMode = useViewerStore((s) => s.setProjectionMode);
   const cameraCallbacks = useViewerStore((s) => s.cameraCallbacks);
   const vm = useDrawingViewModel();
+  const selected3D = vm.saved3D;
   const layers = useDrawingLayers(vm);
   const [viewsOpen, setViewsOpen] = useState(false);
   const [placement, setPlacement] = useState<VerticalViewKind>();
   const stopPlacement = useCallback(() => setPlacement(undefined), []);
-  const canTrace = !!vm.sourceDrawing && vm.status === 'ready' && !vm.runtime.isRegenerating && vm.drawnPlane.axis === 'down'
+  const canTrace = !selected3D && !!vm.sourceDrawing && vm.status === 'ready' && !vm.runtime.isRegenerating && vm.drawnPlane.axis === 'down'
     && !vm.drawnPlane.custom && !vm.sectionPlane.box;
   useEffect(() => { if (!canTrace) stopPlacement(); }, [canTrace, stopPlacement]);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -121,7 +122,11 @@ export function DrawingPanel(): React.ReactElement {
     : t('sectionTool.header.axis', { axis: t(AXIS_INFO[sectionPlane.axis].labelKey), position: formatCutPosition(sectionPlane.position) });
   // With several cutting planes the drawing is the ACTIVE plane's (#7545): name it, so "which plane is this?" has an answer.
   const hasOtherPlanes = useViewerStore((s) => s.inactiveSectionPlanes.length > 0);
-  const cutLabel = hasOtherPlanes && sectionPlane.name ? t('section2d.cutNamed', { name: sectionPlane.name, cut }) : cut;
+  const savedView = vm.savedView;
+  const name = savedView && vm.drawingPlaneId === sectionPlane.id
+    ? savedView.code ? `${savedView.code} · ${savedView.name}` : savedView.name
+    : hasOtherPlanes ? sectionPlane.name : '';
+  const cutLabel = name ? t('section2d.cutNamed', { name, cut }) : cut;
 
   // The Section tool no longer auto-opens this panel (#5497): a docked or
   // floating drawing can outlive the tool and keep showing the last cut with
@@ -129,7 +134,7 @@ export function DrawingPanel(): React.ReactElement {
   // the instant the Section tool stops being the active tool) is the single
   // source of truth for that state — surfaced here instead of silently
   // showing a cut the user can no longer edit.
-  const isParked = sectionPlane.parked === true && activeTool !== 'section';
+  const isParked = !selected3D && sectionPlane.parked === true && activeTool !== 'section';
   const handleResumeSection = useCallback(() => setActiveTool('section'), [setActiveTool]);
 
   // Floor plan / the Section tool used to force the 3D view to top-down
@@ -139,46 +144,59 @@ export function DrawingPanel(): React.ReactElement {
     cameraCallbacks.setPresetView?.(presetViewForAxis(sectionPlane.axis, sectionPlane.flipped));
   }, [setProjectionMode, cameraCallbacks, sectionPlane.axis, sectionPlane.flipped]);
 
-  const cutMenu = <DrawingSectionCutMenu cutLabel={cutLabel} displayLabel={t('section2d.cutPlane', { cut: cutLabel })} />;
+  const cutMenu = selected3D
+    ? <span className="flex min-w-0 items-center gap-2 px-2 text-xs"><Box className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{selected3D.code ? `${selected3D.code} · ${selected3D.name}` : selected3D.name}</span>
+      </span>
+    : <DrawingSectionCutMenu cutLabel={cutLabel} displayLabel={t('section2d.cutPlane', { cut: cutLabel })} />;
   const actions = (
     <>
-      <HeaderAction label={t('section2d.regenerate')} onClick={() => vm.runtime.generateDrawing(false)} disabled={status === 'generating'}>
-        {status === 'generating' ? <Spinner size="sm" /> : <RefreshCw className="h-3.5 w-3.5" />}
-      </HeaderAction>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          {tier === 'narrow' ? (
-            <Button
-              variant="ghost" size="icon-xs"
-              aria-label={t('section2d.matchView.button')}
-              onClick={handleMatchView} disabled={isCustomPlane}
-            >
-              <Video className="h-3.5 w-3.5" />
-            </Button>
-          ) : (
-            <Button
-              variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs"
-              aria-label={t('section2d.matchView.button')}
-              onClick={handleMatchView} disabled={isCustomPlane}
-            >
-              <Video className="h-3.5 w-3.5" />
-              {t('section2d.matchView.button')}
-            </Button>
-          )}
-        </TooltipTrigger>
-        <TooltipContent>{t(isCustomPlane ? 'section2d.matchView.unavailableTitle' : 'section2d.matchView.title')}</TooltipContent>
-      </Tooltip>
+      {!selected3D && <>
+        <HeaderAction label={t('section2d.regenerate')} onClick={() => vm.runtime.generateDrawing(false)} disabled={status === 'generating'}>
+          {status === 'generating' ? <Spinner size="sm" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        </HeaderAction>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {tier === 'narrow' ? (
+              <Button
+                variant="ghost" size="icon-xs"
+                aria-label={t('section2d.matchView.button')}
+                onClick={handleMatchView} disabled={isCustomPlane}
+              >
+                <Video className="h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              <Button
+                variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs"
+                aria-label={t('section2d.matchView.button')}
+                onClick={handleMatchView} disabled={isCustomPlane}
+              >
+                <Video className="h-3.5 w-3.5" />
+                {t('section2d.matchView.button')}
+              </Button>
+            )}
+          </TooltipTrigger>
+          <TooltipContent>{t(isCustomPlane ? 'section2d.matchView.unavailableTitle' : 'section2d.matchView.title')}</TooltipContent>
+        </Tooltip>
+      </>}
       <Button variant="ghost" size={tier === 'narrow' ? 'icon-xs' : 'sm'} aria-pressed={viewsOpen}
         aria-label={t('section2d.views.title')} title={t('section2d.views.title')} onClick={() => setViewsOpen((open) => !open)}
         className={tier === 'narrow' ? undefined : 'h-7 gap-1 px-2 text-xs'}>
         <PanelLeft className="h-3.5 w-3.5" />
         {tier !== 'narrow' && t('section2d.views.title')}
       </Button>
+      {selected3D && <Button variant="ghost" size={tier === 'narrow' ? 'icon-xs' : 'sm'}
+        aria-pressed={vm.openDrawer === 'overrides'} aria-label={t('section2d.drawers.overrides')}
+        onClick={() => vm.toggleDrawer('overrides')} className={tier === 'narrow' ? undefined : 'h-7 gap-1 px-2 text-xs'}>
+        <Palette className="h-3.5 w-3.5" />
+        {tier !== 'narrow' && t('section2d.drawers.overrides')}
+      </Button>}
       <DrawingMaterials settings={vm.materialSettings} compact={tier === 'narrow'} />
       <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale} settings={vm.lineweightSettings}
         compact={tier === 'narrow'} onScaleChange={setDrawingPublicationScale} />
       <DrawingExportMenu
         batch={layers.batch} hasDrawing={!!vm.exportableDrawing} compact={tier === 'narrow'}
+        selected3D={selected3D}
         onExportSvg={layers.handleExportSVG} onExportDxf={layers.handleExportDXF}
         onExportPdf={layers.handleExportPDF} onPrint={layers.handlePrint}
         displayedScale={displayOptions.scale || 100}
@@ -229,6 +247,7 @@ export function DrawingPanel(): React.ReactElement {
       )}
 
       <DrawingToolbar
+        view3D={!!selected3D}
         tier={tier}
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
         selectHint={t(navigationPreset === 'trackpad' ? 'section2d.tip.trackpad' : 'section2d.tip.pan')}
@@ -262,15 +281,21 @@ export function DrawingPanel(): React.ReactElement {
 
       <div className="relative flex min-h-0 flex-1">
         {viewsOpen && <DrawingViewsBrowser overlay={tier === 'narrow'} close={() => setViewsOpen(false)}
+          publicationScale={vm.publicationScale} lineweightTable={vm.lineweightSettings.table}
           canCreatePlan={!!vm.runtime.geometryResult} canTrace={canTrace} trace={kind => {
             setPlacement(kind);
             if (tier === 'narrow') setViewsOpen(false);
           }} />}
-        <DrawingCanvasView vm={vm} layers={layers} placement={canTrace ? placement : undefined} stopPlacement={stopPlacement} />
-        <DrawingInspector vm={vm} layers={layers} panelWidth={panelWidth} />
+        {selected3D
+          ? <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center gap-2 overflow-hidden px-2 text-xs text-muted-foreground">
+              <Box aria-hidden="true" className="size-4 shrink-0" />
+              <span className="truncate" title={t('section2d.views.openInViewer')}>{t('section2d.views.openInViewer')}</span>
+            </div>
+          : <DrawingCanvasView vm={vm} layers={layers} placement={canTrace ? placement : undefined} stopPlacement={stopPlacement} />}
+        <DrawingInspector vm={vm} layers={layers} panelWidth={panelWidth} view3D={!!selected3D} />
       </div>
 
-      <DrawingStatusLine
+      {!selected3D && <DrawingStatusLine
         activeTool={vm.annotation2DActiveTool}
         measureStarted={vm.measure2DStart !== null}
         shiftLocked={vm.measure2DShiftLocked}
@@ -282,9 +307,9 @@ export function DrawingPanel(): React.ReactElement {
         counts={vm.markupCounts}
         underlayCount={layers.dxfUnderlayData.length}
         updating={vm.runtime.isRegenerating}
-      />
+      />}
 
-      <TitleBlockEditor open={vm.titleBlockEditorVisible} onOpenChange={vm.setTitleBlockEditorVisible} />
+      {!selected3D && <TitleBlockEditor open={vm.titleBlockEditorVisible} onOpenChange={vm.setTitleBlockEditorVisible} />}
     </div>
   );
 }

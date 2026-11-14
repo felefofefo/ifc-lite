@@ -13,6 +13,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { GraphicOverrideEngine } from '@ifc-lite/drawing-2d';
 import { useViewerStore } from '@/store';
+import { selectActiveSavedView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
 import { useMeasure2D } from '@/hooks/useMeasure2D';
@@ -27,6 +28,7 @@ import { resolveDrawingPaperTheme } from './paper-theme';
 import { toggledConstructionProjection } from '@/lib/drawing/construction-projection';
 import { useDrawingLineweights } from './DrawingLineweights';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
+import { useDrawingCutJoints } from '@/hooks/useDrawingCutJoints';
 import { applyDistantZone } from '@/lib/drawing/distant-elements';
 import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
@@ -40,7 +42,14 @@ export function useDrawingViewModel() {
   const { geometryResult } = runtime;
 
   const sourceDrawing = useViewerStore((s) => s.drawing2D);
-  const { drawing: rasterDrawing, hasReferences: hasRasterReferences, referenceCount: visibleRasterReferenceCount, referenceCorners } = useDrawingWithReferences(sourceDrawing);
+  const models = useViewerStore((s) => s.models);
+  const lineweightSettings = useDrawingLineweights();
+  const materialSettings = useDrawingMaterials(lineweightSettings.projectId);
+  const joinCutPolygons = useDrawingCutJoints();
+  const joinedDrawing = useMemo(() => sourceDrawing && ({
+    ...sourceDrawing, cutPolygons: joinCutPolygons(sourceDrawing.cutPolygons),
+  }), [sourceDrawing, joinCutPolygons]);
+  const { drawing: rasterDrawing, hasReferences: hasRasterReferences, referenceCount: visibleRasterReferenceCount, referenceCorners } = useDrawingWithReferences(joinedDrawing);
   const setDrawing = useViewerStore((s) => s.setDrawing2D);
   const status = useViewerStore((s) => s.drawing2DStatus);
   const setDrawingStatus = useViewerStore((s) => s.setDrawing2DStatus);
@@ -65,9 +74,11 @@ export function useDrawingViewModel() {
   const pointCloudClassMask = useViewerStore((s) => s.pointCloudClassMask);
   const activeSheet = useViewerStore((s) => s.activeSheet);
   const sheetEnabled = useViewerStore((s) => s.sheetEnabled);
-  const publicationScale = sheetEnabled && activeSheet ? activeSheet.scale.factor : displayOptions.scale;
-  const lineweightSettings = useDrawingLineweights();
-  const materialSettings = useDrawingMaterials(lineweightSettings.projectId);
+  const savedView = useSavedSectionCuts(selectActiveSavedView);
+  const drawingPlaneId = useSavedSectionCuts(s => s.drawingPlaneId);
+  const saved3D = savedView?.kind === '3d' ? savedView : undefined;
+  const publicationScale = saved3D ? saved3D.publicationScale ?? displayOptions.scale
+    : sheetEnabled && activeSheet ? activeSheet.scale.factor : displayOptions.scale;
   const lineweights = lineweightsAtScale(lineweightSettings.table, publicationScale);
   const titleBlockEditorVisible = useViewerStore((s) => s.titleBlockEditorVisible);
   const setTitleBlockEditorVisible = useViewerStore((s) => s.setTitleBlockEditorVisible);
@@ -115,7 +126,6 @@ export function useDrawingViewModel() {
   const sectionPlane = useViewerStore((s) => s.sectionPlane);
   // Everything drawn with or exported from the drawing follows the cut it was generated at.
   const drawnPlane = useViewerStore(drawnSectionPlane);
-  const models = useViewerStore((s) => s.models);
   const dxfUnderlayData = useDxfUnderlaysForDrawing({enabled:status==='ready', plane:sourceDrawing?.config.plane,
     sectionAxis:drawnPlane.axis,isCustomPlane:drawnPlane.custom!==undefined,flipped:drawnPlane.flipped,coordinateInfo:geometryResult?.coordinateInfo});
   const drawing = useMemo(() => {
@@ -307,7 +317,7 @@ export function useDrawingViewModel() {
     drawing, sourceDrawing, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
     displayOptions, unitDisplayOverrides, typeVisibility,
     activePresetId, overridesEnabled, overrideEngine, entityColorMap,
-    lineweights, lineweightSettings, materialSettings, publicationScale,
+    lineweights, lineweightSettings, materialSettings, publicationScale, saved3D, savedView, drawingPlaneId,
     dxfUnderlays, pointCloudClassMask,
     activeSheet, sheetEnabled, titleBlockEditorVisible, setTitleBlockEditorVisible,
     sectionPlane, drawnPlane,

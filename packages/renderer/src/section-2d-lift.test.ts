@@ -407,3 +407,12 @@ describe('cap highlight recolouring (#7950)', () => {
     assert.strictEqual(any[4], 1, 'an unscoped entry matches the id in every model');
   });
 });
+
+it('lifts only the supplied outline while keeping the original cap fill', () => {
+  const lift = createSectionLift('front', 5);
+  const first = poly([[0, 0], [2, 0], [0, 2]]);
+  const polygon: CutPolygon2D = { ...first, cutOutline: [{ start: { x: 0, y: 0 }, end: { x: 2, y: 0 } }] };
+  assert.deepStrictEqual(buildCapFillGeometry([polygon], lift), buildCapFillGeometry([first], lift));
+  assert.deepStrictEqual(Array.from(buildDrawingOutlineVertices([polygon], [], lift) ?? []), [0, 0, 5, 2, 0, 5]);
+  assert.strictEqual(buildDrawingOutlineVertices([{ ...polygon, cutOutline: [] }], [], lift), null);
+});

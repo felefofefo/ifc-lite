@@ -732,7 +732,13 @@ export function Drawing2DCanvas({
           ctx.setLineDash(stroke?.dash?.map(d => mmToScreen(d)) ?? []);
           ctx.beginPath();
 
-          if (polygon.polygon.outer.length > 0) {
+          if (polygon.cutOutline) {
+            for (const { start, end } of polygon.cutOutline) {
+              const a = modelToScreen(start.x, start.y), b = modelToScreen(end.x, end.y);
+              ctx.moveTo(a.x, a.y);
+              ctx.lineTo(b.x, b.y);
+            }
+          } else if (polygon.polygon.outer.length > 0) {
             const first = modelToScreen(polygon.polygon.outer[0].x, polygon.polygon.outer[0].y);
             ctx.moveTo(first.x, first.y);
             for (let i = 1; i < polygon.polygon.outer.length; i++) {
@@ -1083,14 +1089,19 @@ export function Drawing2DCanvas({
         ctx.lineWidth = stroke ? stroke.lineWeight * penMm : lineWeight / transform.scale;
         ctx.setLineDash(stroke?.dash?.map(d => d * penMm) ?? []);
         ctx.beginPath();
-        if (polygon.polygon.outer.length > 0) {
+        if (polygon.cutOutline) {
+          for (const { start, end } of polygon.cutOutline) {
+            const a = start, b = end;
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+          }
+        } else if (polygon.polygon.outer.length > 0) {
           ctx.moveTo(polygon.polygon.outer[0].x, polygon.polygon.outer[0].y);
           for (let i = 1; i < polygon.polygon.outer.length; i++) {
             ctx.lineTo(polygon.polygon.outer[i].x, polygon.polygon.outer[i].y);
           }
           ctx.closePath();
 
-          // Stroke holes too
           for (const hole of polygon.polygon.holes) {
             if (hole.length > 0) {
               ctx.moveTo(hole[0].x, hole[0].y);

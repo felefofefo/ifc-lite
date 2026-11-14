@@ -26,6 +26,8 @@ export interface DrawingRuntime {
   viewId?: string | null;
   viewPlane?: SectionPlane;
   viewRulesPending?: boolean;
+  drawingHidden?: ReadonlySet<number>;
+  drawingIsolated?: ReadonlySet<number> | null;
   graphicRules?: GraphicOverrideRule[];
 }
 

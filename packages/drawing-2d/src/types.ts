@@ -141,7 +141,6 @@ export interface DrawingLine {
   visibility: VisibilityState;
   /** Above-cut projection, drawn dashed by convention. */
   overhead?: true;
-  /** Source IFC entity expressId */
   entityId: number;
   /** IFC type name (e.g., "IfcWall") */
   ifcType: string;
@@ -178,6 +177,7 @@ export interface DrawingPolygon {
   isCut: boolean;
   distant?: boolean;
   vertexDepths?: number[];
+  cutOutline?: Line2D[]; // visible cut edges after same-material joints are removed
   surfacePatternTransform?: [a: number, b: number, c: number, d: number, x: number, y: number];
   /** Per-layer fill and identity. `color` (RGBA 0–1) is present only when the entity cut into
    *  >1 layer (an `IfcMaterialLayerSet` wall/slab, a frame+glass window), so each layer fills

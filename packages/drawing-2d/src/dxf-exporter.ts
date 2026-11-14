@@ -212,8 +212,12 @@ export class DXFExporter {
           outlined.add(makeEntityKey(polygon.modelIndex, polygon.entityId));
           continue;
         }
-        styledWriter.addPolyline(polygon.polygon.outer.map(map), layer, true, undefined, pen);
-        for (const hole of polygon.polygon.holes) styledWriter.addPolyline(hole.map(map), layer, true, undefined, pen);
+        if (polygon.cutOutline) {
+          for (const { start, end } of polygon.cutOutline) styledWriter.addLine(map(start), map(end), layer, undefined, pen);
+        } else {
+          styledWriter.addPolyline(polygon.polygon.outer.map(map), layer, true, undefined, pen);
+          for (const hole of polygon.polygon.holes) styledWriter.addPolyline(hole.map(map), layer, true, undefined, pen);
+        }
         outlined.add(makeEntityKey(polygon.modelIndex, polygon.entityId));
       }
     }

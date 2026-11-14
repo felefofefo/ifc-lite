@@ -57,6 +57,7 @@ export function resolveBoxSectionInputs(state: ViewerState): ViewSectionResolveI
   const sceneBounds = getGlobalRenderer()?.getCamera()?.getSceneBounds() ?? null;
   if (!box || !sceneBounds) return [];
   const face = (normal: [number, number, number], distance: number): ViewSectionResolveInput => ({
+    showCap: holder?.showCap,
     plane: { axis: 'down', position: 0, flipped: false, custom: { normal, distance } },
     sceneBounds,
     uiRange: null,
@@ -80,6 +81,7 @@ export function resolvePlaneInput(state: ViewerState, sectionPlane: SectionPlane
     : null;
 
   return {
+    showCap: sectionPlane.showCap,
     plane: {
       axis: sectionPlane.axis,
       position: sectionPlane.position,

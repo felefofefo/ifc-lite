@@ -12,7 +12,7 @@ import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/compon
 import { IconButton } from '@/components/ui/icon-button';
 import { isManualProjectionDepth } from '@/lib/drawing/projection-depth';
 
-export function DrawingProjectionSettings({ available }: { available: boolean }) {
+export function DrawingProjectionSettings({ available, hiddenLinesOnly = false }: { available: boolean; hiddenLinesOnly?: boolean }) {
   const { t } = useTranslation();
   const axis = useViewerStore(s => s.sectionPlane.axis);
   const distant = useViewerStore(s => s.drawing2DDisplayOptions.distantElements);
@@ -34,27 +34,29 @@ export function DrawingProjectionSettings({ available }: { available: boolean })
     </PopoverTrigger>
     <PopoverPortal><PopoverContent className="space-y-3 text-xs" aria-label={label}>
       <label className="flex items-center gap-2"><input type="checkbox" aria-label={t('section2d.projection.hiddenLines')} checked={hidden} onChange={e => setDrawingProjectionDisplay({ showHiddenLines: e.target.checked })} />{t('section2d.projection.hiddenLines')}</label>
-      <p className="font-medium">{t('section2d.projection.depth')}</p>
-      <label className="flex items-center gap-2">
-        <input type="checkbox" aria-label={t('section2d.projection.auto')} checked={depth == null}
-          onChange={e => update({ constructionProjectionDepth: e.target.checked ? null : 3 })} />
-        {t('section2d.projection.auto')}
-      </label>
-      {depth != null && <label className="block space-y-1">
-        <span>{t('section2d.projection.distance', { unit: unit.symbol })}</span>
-        <input type="number" min="0" step="any" value={text} aria-invalid={invalid}
-          aria-label={t('section2d.projection.distance', { unit: unit.symbol })}
-          className="w-full rounded border bg-background p-2 aria-[invalid=true]:border-destructive"
-          onChange={e => {
-            const value = e.target.value;
-            setText(value);
-            const metres = Number(value) * unit.scale;
-            if (value.trim() && isManualProjectionDepth(metres)) update({ constructionProjectionDepth: metres });
-          }} />
-        {invalid && <output>{t('section2d.projection.invalid')}</output>}
-      </label>}
-      {axis !== 'down' && <DistantElementsSettings value={distant} onChange={distantElements => setDrawingProjectionDisplay({ distantElements })} />}
-      <p className="text-muted-foreground">{t('section2d.projection.help')}</p>
+      {!hiddenLinesOnly && <>
+        <p className="font-medium">{t('section2d.projection.depth')}</p>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" aria-label={t('section2d.projection.auto')} checked={depth == null}
+            onChange={e => update({ constructionProjectionDepth: e.target.checked ? null : 3 })} />
+          {t('section2d.projection.auto')}
+        </label>
+        {depth != null && <label className="block space-y-1">
+          <span>{t('section2d.projection.distance', { unit: unit.symbol })}</span>
+          <input type="number" min="0" step="any" value={text} aria-invalid={invalid}
+            aria-label={t('section2d.projection.distance', { unit: unit.symbol })}
+            className="w-full rounded border bg-background p-2 aria-[invalid=true]:border-destructive"
+            onChange={e => {
+              const value = e.target.value;
+              setText(value);
+              const metres = Number(value) * unit.scale;
+              if (value.trim() && isManualProjectionDepth(metres)) update({ constructionProjectionDepth: metres });
+            }} />
+          {invalid && <output>{t('section2d.projection.invalid')}</output>}
+        </label>}
+        {axis !== 'down' && <DistantElementsSettings value={distant} onChange={distantElements => setDrawingProjectionDisplay({ distantElements })} />}
+        <p className="text-muted-foreground">{t('section2d.projection.help')}</p>
+      </>}
     </PopoverContent></PopoverPortal>
   </Popover>;
 }

@@ -75,6 +75,7 @@ export type { StreamingSectionCutterOptions } from './section-cutter.js';
 // POLYGON BUILDING
 // ═══════════════════════════════════════════════════════════════════════════
 
+export { buildProjectionPolygons, type ProjectionCap } from './projection-polygons.js';
 export { PolygonBuilder, simplifyPolygon, polygonBounds } from './polygon-builder.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -96,7 +97,6 @@ export type { LineMergerOptions } from './line-merger.js';
 export { EdgeExtractor } from './edge-extractor.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PROFILE PROJECTION (clean silhouettes from WASM profiles)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export { projectProfiles } from './profile-projector.js';
@@ -163,6 +163,7 @@ export type {
 // HATCH GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+export { suppressCutJoints } from './cut-joints.js';
 export { patternSegments, surfacePatternSegments, type PatternLine } from './pat-lines.js';
 export { HatchGenerator } from './hatch-generator.js';
 export type { HatchLine, HatchResult, CustomHatchSettings } from './hatch-generator.js';

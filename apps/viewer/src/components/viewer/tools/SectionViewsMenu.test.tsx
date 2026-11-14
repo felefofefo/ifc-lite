@@ -3,8 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * The Views menu on the Section bar (#7545), driven like a user: save the current
- * planes and camera under a name, change everything, apply the saved view.
+ * The Views menu on the Section bar (#7545) applies and manages existing views.
  */
 
 import '@/test/setup-dom.js';
@@ -32,7 +31,6 @@ afterEach(cleanup);
 
 const menu = () => document.querySelector<HTMLElement>('[data-testid="section-views-menu"]');
 const rows = () => [...document.querySelectorAll<HTMLElement>('[data-testid="section-view-row"]')];
-const nameField = () => menu()!.querySelector<HTMLInputElement>('input[aria-label="Name for the saved view"]')!;
 const button = (label: string, root: ParentNode = menu()!) => [...root.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)!;
 const names = () => orderedSectionPlanes(state().sectionPlane, state().inactiveSectionPlanes).map((p) => `${p.name}:${p.axis}:${p.position}`);
 
@@ -50,14 +48,12 @@ describe('saved views on the Section bar (#7545)', () => {
     assert.equal(menu()!.getAttribute('aria-label'), 'Views');
   });
 
-  it('saves the current planes under a name, and applying it later brings them and the camera back', () => {
+  it('applying an existing view restores its planes and camera', () => {
     twoPlanes();
     const before = names();
+    saveCurrentSectionCut('Wing cut', '3d');
     render(<SectionViewsMenu />);
     click(document.querySelector('[data-testid="section-views"]')!);
-    assert.match(menu()!.textContent ?? '', /Nothing saved yet/);
-    type(nameField(), 'Wing cut');
-    click(button('Save current'));
     assert.equal(rows().length, 1);
     assert.match(rows()[0]!.textContent ?? '', /Wing cut/);
     assert.match(rows()[0]!.textContent ?? '', /2 planes/);
@@ -69,22 +65,21 @@ describe('saved views on the Section bar (#7545)', () => {
     assert.deepEqual(applied, [VIEW]);
   });
 
-  it('has nothing to save before there is a plane: Save is off, and the store refuses', () => {
-    render(<SectionViewsMenu />);
-    click(document.querySelector('[data-testid="section-views"]')!);
-    assert.equal(button('Save current').disabled, true, 'a viewer with no plane holds only a placeholder, which would cut when applied');
-    assert.throws(() => saveCurrentSectionCut('Nothing'), /no cutting plane/);
-    assert.equal(rows().length, 0);
-    act(() => { twoPlanes(); });
-    assert.equal(button('Save current').disabled, false);
-  });
-
-  it('an unnamed save is named for you; rename and delete work in place', () => {
+  it('leaves saving to the Drawing view list even when a plane exists', () => {
     twoPlanes();
     render(<SectionViewsMenu />);
     click(document.querySelector('[data-testid="section-views"]')!);
-    click(button('Save current'));
-    assert.match(rows()[0]!.textContent ?? '', /View 1/);
+    assert.equal(menu()!.querySelector('input'), null);
+    assert.doesNotMatch(menu()!.textContent ?? '', /Save current/);
+    assert.equal(rows().length, 0);
+  });
+
+  it('renames and deletes an existing view in place', () => {
+    twoPlanes();
+    render(<SectionViewsMenu />);
+    click(document.querySelector('[data-testid="section-views"]')!);
+    act(() => { saveCurrentSectionCut('Wing cut', '3d'); });
+    assert.match(rows()[0]!.textContent ?? '', /Wing cut/);
     click(button('Rename', rows()[0]!));
     const field = menu()!.querySelector<HTMLInputElement>('input[aria-label="New name for the saved view"]')!;
     type(field, 'Floor plan');

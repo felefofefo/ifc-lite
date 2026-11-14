@@ -42,9 +42,21 @@
  */
 
 import {
-  Drawing2DGenerator,
+  EdgeExtractor,
+  boundsEmpty,
+  boundsExtendLine,
+  boundsExtendPoint,
+  isFeatureElementType,
+  makeEntityKey,
+  mergeDrawingLines,
+  vec3Add,
+  isOccludedDrawingLine,
+  type DXFExportOptions,
   addScaleStamp,
   buildCameraSectionPlane,
+  buildProjectionPolygons,
+  SectionCutter,
+  vec3Scale,
   computePdfScaleLayout,
   createSectionConfig,
   formatScaleFactorLabel,
@@ -54,13 +66,19 @@ import {
   type CameraFrame,
   type Drawing2D,
   type DrawingLine,
+  type DrawingPolygon,
+  type WorldSegment,
   type PdfPage,
   type PdfScaleTransform,
   type Point2D,
   type SectionConfig,
   type WorldBounds3D,
 } from '@ifc-lite/drawing-2d';
+import { planeBasis } from '@ifc-lite/renderer';
+import { prepareCutPolygonsPdf, drawCutPolygonsPdf } from '../section-pdf-cut-polygons';
+import type { CutPolygonStyleContext } from '@/components/viewer/drawing/cut-polygon-style';
 import { downloadFile, sanitizeFilename } from '@/lib/export/download';
+import { pdfColor } from '@/lib/export/pdf-color';
 import { pdfLineStyleFor } from '@/lib/export/pdf-line-style';
 import { collectViewMeshes, type ViewMeshInput } from './collect-view-meshes';
 import { VIEW_PDF_MARGIN_MM } from './view-pdf-page-estimate';
@@ -70,7 +88,8 @@ import {
   type ViewPdfPngEncoder,
   type ViewPdfRasterBuilder,
 } from './view-pdf-shading';
-import type { ViewSectionResolveInput } from './view-section-plane';
+import { resolveKeptHalfSpace, type ViewSectionResolveInput } from './view-section-plane';
+import { clipSegmentsToHalfSpace } from './clip-rim-segments';
 import { clipMeshesBySections } from './clip-by-sections';
 import { drawScaleStamp, type ViewPdfStampTarget } from './view-pdf-stamp';
 
@@ -122,6 +141,9 @@ export interface ViewPdfExportInput {
    * own title block, which then owns the scale record.
    */
   includeScaleStamp?: boolean;
+  strokeStyle?: DXFExportOptions['strokeStyle'];
+  joinCutPolygons?: (polygons: DrawingPolygon[]) => DrawingPolygon[];
+  vectorFills?: { style: CutPolygonStyleContext; surfaces: boolean; caps: boolean };
   onProgress?: (stage: string, progress: number) => void;
 }
 
@@ -146,6 +168,7 @@ export interface ViewPdfDocument extends ViewPdfImageTarget, ViewPdfStampTarget 
   setLineCap(style: string): void;
   line(x1: number, y1: number, x2: number, y2: number): void;
   output(type: 'blob'): Blob;
+  drawFills?(polygons: ReturnType<typeof prepareCutPolygonsPdf>, scale: number): void;
 }
 
 export interface ViewPdfDeps {
@@ -173,11 +196,8 @@ export interface ViewPdfDeps {
  */
 const ABOVE_PLANE_DEPTH_M = 1e-3;
 
-export async function generateViewPdf(
-  input: ViewPdfExportInput,
-  deps: ViewPdfDeps = {},
-): Promise<ViewPdfExportResult> {
-  const marginMm = input.marginMm ?? VIEW_PDF_MARGIN_MM;
+export async function projectViewDrawing(input: ViewPdfExportInput) {
+  const startedAt = performance.now();
   const meshes = collectViewMeshes(input.view);
   if (meshes.length === 0) {
     throw new Error('Nothing to export: no geometry is visible in the current view.');
@@ -187,13 +207,8 @@ export async function generateViewPdf(
   // The on-screen cut is a fragment discard; a vector drawing has no fragment
   // stage, so the triangles themselves have to be clipped or the PDF shows a
   // whole model the screen is showing halved.
-  let extraLines: DrawingLine[] = [];
-  // `WorldSegment` already IS a `WorldLineSeed` (start/end plus the source
-  // element), so the rim goes straight into the projector with no re-shaping —
-  // one fewer place for a field to be dropped on the way. With several planes
-  // (#7545) the meshes are cut by all of them and each rim is trimmed by the rest.
   const cuts = [input.section, ...(input.extraSections ?? [])].filter((c): c is ViewSectionResolveInput => c !== null);
-  const { meshes: drawnMeshes, rimSegments: rimSeeds } = clipMeshesBySections(meshes, cuts);
+  const { meshes: drawnMeshes, rimSegments } = clipMeshesBySections(meshes, cuts);
 
   // ── 2. Synthetic camera plane ───────────────────────────────────────────
   const worldBounds: WorldBounds3D | null = worldBoundsOfMeshes(drawnMeshes);
@@ -201,13 +216,6 @@ export async function generateViewPdf(
     throw new Error('Nothing to export: the visible geometry has no usable coordinates.');
   }
   const { plane, viewDepth } = buildCameraSectionPlane(input.camera, worldBounds);
-
-  // Rim segments are world-space, so they project through the SAME plane the
-  // meshes do and carry real view depths — which is what lets the hidden-line
-  // pass dash the far side of a cut object on an oblique view.
-  if (rimSeeds.length > 0) {
-    extraLines = projectWorldLineSeeds(rimSeeds, plane);
-  }
 
   const config: SectionConfig = createSectionConfig(plane.axis, plane.position, {
     projectionDepth: viewDepth,
@@ -220,26 +228,87 @@ export async function generateViewPdf(
   });
   config.plane = plane;
 
-  // ── 3. Line work ────────────────────────────────────────────────────────
-  const generator = new Drawing2DGenerator();
-  let drawing: Drawing2D;
-  try {
-    // No GPU device is passed, so `useGPU` has nothing to select even before
-    // the custom plane forces the CPU cutter. Stated explicitly so a future
-    // GPU-capable caller cannot silently take the cardinal-only path.
-    await generator.initialize();
-    drawing = await generator.generate(drawnMeshes, config, {
-      useGPU: false,
-      includeHiddenLines: true,
-      includeProjection: true,
-      includeEdges: true,
-      mergeLines: true,
-      extraLines,
-      onProgress: input.onProgress,
-    });
-  } finally {
-    generator.dispose();
+  // Extract real model edges before clipping so the triangle splits introduced
+  // by clipping cannot become drawing edges.
+  const halves = cuts.map(resolveKeptHalfSpace);
+  const clip = (segments: WorldSegment[], planes = halves) =>
+    planes.reduce((lines, { normal, offset }) => clipSegmentsToHalfSpace(lines, normal, offset), segments);
+  const extractor = new EdgeExtractor();
+  const projectionSeeds = meshes.flatMap(mesh => isFeatureElementType(mesh.ifcType) ? [] :
+    clip(extractor.extractEdges(mesh).map(({ v0, v1, entityId, ifcType, modelIndex }) =>
+      ({ start: v0, end: v1, entityId, ifcType, modelIndex }))));
+  const rimSeeds: WorldSegment[] = [];
+  const reconstructed = new Set<string>();
+  const worldCaps = halves.flatMap(({ normal, offset }, index) => {
+    const { tangent, bitangent } = planeBasis([normal.x, normal.y, normal.z]);
+    const basis = {
+      normal, distance: offset, origin: vec3Scale(normal, offset),
+      tangent: { x: tangent[0], y: tangent[1], z: tangent[2] },
+      bitangent: { x: bitangent[0], y: bitangent[1], z: bitangent[2] },
+    };
+    const cut = new SectionCutter({ ...plane, customPlane: basis }).cutMeshes(meshes);
+    const polygons = input.joinCutPolygons?.(cut.polygons) ?? cut.polygons;
+    const clips = halves.filter((_, i) => i !== index);
+    const lift = ({ x, y }: Point2D) =>
+      vec3Add(basis.origin, vec3Add(vec3Scale(basis.tangent, x), vec3Scale(basis.bitangent, y)));
+    for (const { polygon, cutOutline, modelIndex, entityId, ifcType } of polygons) {
+      reconstructed.add(`${index}:${makeEntityKey(modelIndex, entityId)}`);
+      const outline = cutOutline ?? [polygon.outer, ...polygon.holes].flatMap(ring =>
+        ring.map((start, i) => ({ start, end: ring[(i + 1) % ring.length] })));
+      for (const line of clip(outline.map(({ start, end }) =>
+        ({ start: lift(start), end: lift(end), modelIndex, entityId, ifcType })), clips)) rimSeeds.push(line);
+    }
+    // Open chains have no polygon and are supplied by the original clipper.
+    for (const segment of cut.openSurfaceSegments) {
+      if (!reconstructed.has(`${index}:${makeEntityKey(segment.modelIndex, segment.entityId)}`)) continue;
+      for (const line of clip([{ ...segment, start: segment.p0, end: segment.p1 }], clips)) rimSeeds.push(line);
+    }
+    return cuts[index].showCap === false ? [] : polygons.map(polygon => ({ polygon, basis, clips }));
+  });
+  for (const segment of rimSegments) {
+    const owner = makeEntityKey(segment.modelIndex, segment.entityId);
+    const onRebuiltPlane = halves.some(({ normal, offset }, index) =>
+      reconstructed.has(`${index}:${owner}`) && [segment.start, segment.end].every(p =>
+        Math.abs(normal.x * p.x + normal.y * p.y + normal.z * p.z - offset) < 1e-5));
+    if (!onRebuiltPlane) rimSeeds.push(segment);
   }
+
+  const inputLines = [
+    ...projectWorldLineSeeds(rimSeeds, plane),
+    ...projectWorldLineSeeds(projectionSeeds, plane).map(line => ({ ...line, category: 'projection' as const })),
+  ];
+  const classified: DrawingLine[] = [];
+  input.onProgress?.('hidden', 0);
+  const projectionPolygons = buildProjectionPolygons(drawnMeshes, [], plane, viewDepth, worldCaps,
+    polygon => !!(polygon.isCut ? input.vectorFills?.caps : input.vectorFills?.surfaces),
+    { input: inputLines, output: classified });
+  const lines = mergeDrawingLines(classified, { gapTolerance: 1e-5 });
+  let bounds = inputLines.reduce((bounds, line) => boundsExtendLine(bounds, line.line), boundsEmpty());
+  for (const { polygon } of projectionPolygons) {
+    for (const point of polygon.outer) bounds = boundsExtendPoint(bounds, point);
+  }
+  const drawing: Drawing2D = {
+    config, lines, bounds, projectionPolygons, cutPolygons: [],
+    stats: {
+      cutLineCount: lines.filter(line => line.category === 'cut').length,
+      projectionLineCount: lines.filter(line => line.category === 'projection').length,
+      hiddenLineCount: lines.filter(isOccludedDrawingLine).length,
+      silhouetteLineCount: 0, polygonCount: projectionPolygons.length,
+      totalTriangles: drawnMeshes.reduce((sum, mesh) => sum + mesh.indices.length / 3, 0),
+      processingTimeMs: performance.now() - startedAt,
+    },
+  };
+  input.onProgress?.('complete', 1);
+
+  return { drawing, drawnMeshes, plane, viewDepth };
+}
+
+export async function generateViewPdf(
+  input: ViewPdfExportInput,
+  deps: ViewPdfDeps = {},
+): Promise<ViewPdfExportResult> {
+  const marginMm = input.marginMm ?? VIEW_PDF_MARGIN_MM;
+  const { drawing, drawnMeshes, plane, viewDepth } = await projectViewDrawing(input);
 
   // ── 4. Page + write ─────────────────────────────────────────────────────
   // IDENTITY flip: the camera basis already delivers x-right / y-up, and
@@ -273,18 +342,15 @@ export async function generateViewPdf(
     })
     : null;
 
-  // The ONLY place the "show hidden edges" choice is honoured. Classification
-  // above always runs, because skipping it does not remove occluded edges - it
-  // leaves them unclassified, so they print as SOLID lines indistinguishable
-  // from geometry the viewer can actually see. That is strictly worse than the
-  // dashes the user turned off: an engineer measuring the sheet cannot tell
-  // the phantom edge from a real one. Classify always, draw selectively.
-  //
-  // Shaded mode forces them OFF whatever the caller asked. The raster already
-  // resolves occlusion the way the viewport does, so a dashed phantom edge laid
-  // over a solidly shaded surface reads as a real edge ON that surface, which
-  // is the one thing dashes exist to rule out.
+  if (input.vectorFills && doc.drawFills && drawing.projectionPolygons?.length) {
+    doc.drawFills(prepareCutPolygonsPdf(drawing.projectionPolygons, input.vectorFills.style,
+      (x, y) => worldPointToPdfMm({ x, y }, transform)), input.scaleFactor);
+  }
+
+  // Occlusion is always classified. Shaded pages omit hidden edges because
+  // the raster already shows which faces occlude them.
   const strokeCount = writeDrawing(doc, drawing.lines, transform, {
+    strokeStyle: input.strokeStyle,
     includeHiddenLines: renderMode === 'shaded' ? false : (input.includeHiddenLines ?? true),
   });
 
@@ -292,9 +358,6 @@ export async function generateViewPdf(
   // stroke happened to be written before it.
   if (stamped) drawScaleStamp(doc, stamped.stamp);
 
-  // The filename carries the EXACT factor, the same way the printed stamp
-  // does: rounding here would file a 1:99.5 export as "1-100" and misreport
-  // what the page can be measured at (#2119).
   const filename = `${sanitizeFilename(
     `3d-view-1-${formatScaleFactorLabel(input.scaleFactor)}`,
     { fallback: '3d-view' },
@@ -319,14 +382,14 @@ function writeDrawing(
   doc: ViewPdfDocument,
   lines: readonly DrawingLine[],
   transform: PdfScaleTransform,
-  options: { includeHiddenLines: boolean },
+  options: { includeHiddenLines: boolean; strokeStyle?: DXFExportOptions['strokeStyle'] },
 ): number {
   doc.setDrawColor(0, 0, 0);
   doc.setLineCap('round');
 
   let strokeCount = 0;
   for (const line of lines) {
-    if (!options.includeHiddenLines && line.visibility === 'hidden') continue;
+    if (!options.includeHiddenLines && isOccludedDrawingLine(line)) continue;
 
     const { start, end } = line.line;
     if (
@@ -341,8 +404,14 @@ function writeDrawing(
     const { lineWidthMm, dash } = pdfLineStyleFor(line.category, line.visibility);
     const p0: Point2D = worldPointToPdfMm(start, transform);
     const p1: Point2D = worldPointToPdfMm(end, transform);
-    doc.setLineWidth(lineWidthMm);
-    doc.setLineDashPattern(dash, 0);
+    const pen = options.strokeStyle?.(line, line.category === 'cut' ? 'cut' : 'projection', line);
+    if (pen && !(pen.lineWeight > 0)) continue;
+    if (pen) {
+      const rgb = Number.parseInt(pdfColor(pen.color)?.color.slice(1) ?? '000000', 16);
+      doc.setDrawColor(rgb >> 16, (rgb >> 8) & 255, rgb & 255);
+    }
+    doc.setLineWidth(pen?.lineWeight ?? lineWidthMm);
+    doc.setLineDashPattern(pen ? [...(pen.dash ?? [])] : dash, 0);
     doc.line(p0.x, p0.y, p1.x, p1.y);
     strokeCount++;
   }
@@ -386,6 +455,7 @@ async function createJsPdfDocument(page: PdfPage): Promise<ViewPdfDocument> {
       doc.addImage(pngBytes, 'PNG', xMm, yMm, widthMm, heightMm, undefined, 'FAST');
     },
     output: (type) => doc.output(type),
+    drawFills: (polygons, scale) => drawCutPolygonsPdf(doc, polygons, scale),
   };
 }
 

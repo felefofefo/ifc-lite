@@ -18,6 +18,13 @@ import type { TranslationValue } from '../types';
  */
 export const drawingUnderlayEn = {
   // DrawingSettingsPanel
+  'drawingUnderlay.settings.transferExport': 'Export settings',
+  'drawingUnderlay.settings.transferError': 'Could not transfer drawing settings. Check the file type and values.',
+  'drawingUnderlay.materials.joinUnassigned': 'Hide cut joints between elements of the same class without an IFC material',
+  'drawingUnderlay.materials.missing': 'Missing',
+  'drawingUnderlay.materials.reassign': 'Replace settings for another IFC material',
+  'drawingUnderlay.materials.reassignConfirm': 'Replace settings',
+  'drawingUnderlay.materials.deleteMissing': 'Remove association',
   'drawingUnderlay.settings.overridesEnabled': 'Enabled',
   'drawingUnderlay.settings.overridesDisabled': 'Disabled',
   'drawingUnderlay.settings.presetsHeading': 'Style Presets',

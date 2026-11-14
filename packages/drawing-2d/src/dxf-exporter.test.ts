@@ -128,7 +128,7 @@ describe('DXFExporter', () => {
     drawing.cutPolygons = [makePolygon(), makePolygon({ entityId: 3 })];
     const dxf = exportToDXF(drawing, {
       version: 'R2007',
-      hatchStyle: (polygon) => polygon.entityId === 2 ? { pattern: 'diagonal', spacing: 0.125 } : { pattern: 'none' },
+      hatchStyle: (polygon) => polygon.entityId === 2 ? { pattern: 'diagonal', spacing: 0.125 } : { pattern: 'none', spacing: 0 },
     });
     expect(dxf.match(/\n0\nHATCH\n/g)).toHaveLength(1);
     expect(dxf).toContain('\n2\nANSI31\n70\n0\n');
@@ -408,4 +408,17 @@ it('writes view marker codes as editable text on their own layer in transformed 
   }));
   const label = doc.entities.find((e): e is DxfTextEntity => e.kind === 'text');
   expect(label).toMatchObject({ layer: 'IFC-SECTION-MARKERS', text: 'C-02', x: 102, y: -3 });
+});
+
+it('uses the partial cut outline without reintroducing the suppressed cut lines in DXF', () => {
+  const drawing = emptyDrawing();
+  drawing.lines = [makeLine({ entityId: 2 })];
+  const start = { x: 0, y: 0 }, end = { x: 2, y: 0 };
+  drawing.cutPolygons = [makePolygon({ entityId: 2, cutOutline: [{ start, end }] })];
+  const doc = parseDxf(exportToDXF(drawing, {
+    version: 'R2007', showHatching: false, objectStyles: true,
+    strokeStyle: () => ({ color: '#112233', lineWeight: 0.35 }),
+  }));
+  expect(doc.entities).toHaveLength(1);
+  expect(doc.entities[0]).toMatchObject({ kind: 'line', x1: 0, y1: 0, x2: 2, y2: 0 });
 });

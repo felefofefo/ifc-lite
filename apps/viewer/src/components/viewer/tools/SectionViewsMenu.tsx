@@ -2,26 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * Saved section views on the Section bar (#7545): the planes that are cutting, the
- * active one, the zoom and the exact camera, kept under a name. Save the current
- * view, apply one (it replaces every plane and puts the camera back), rename or
- * delete. The same list the Drawing panel's header menu shows.
- */
+/** Quick access to saved views from the Section bar (#7545). */
 
 import { useCallback, useState } from 'react';
 import { Bookmark, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useLiveTestId } from './SectionBarMeasure';
-import { useViewerStore } from '@/store';
 import { HudPopover, HudPopoverContent, HudPopoverTrigger } from '../../viewport-ui/hud';
 import {
   applySavedSectionCut,
-  canSaveSectionCut,
   removeSavedSectionCut,
   renameSavedSectionCut,
-  saveCurrentSectionCut,
   useSavedSectionCuts,
 } from '@/store/savedSectionCutsStore';
 
@@ -31,19 +23,11 @@ export function SectionViewsMenu({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
   const cuts = useSavedSectionCuts((s) => s.cuts);
   const activeCutId = useSavedSectionCuts((s) => s.activeCutId);
-  const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const [open, setOpen] = useState(false);
   const triggerTestId = useLiveTestId('section-views');
-  const canSave = useViewerStore((s) => canSaveSectionCut(s));
   const focusOnMount = useCallback((el: HTMLInputElement | null) => el?.focus(), []);
 
-  const save = () => {
-    if (!canSave) return;
-    const trimmed = name.trim();
-    saveCurrentSectionCut(trimmed || t('sectionPlanes.views.defaultName', { n: cuts.length + 1 }));
-    setName('');
-  };
   const commitRename = () => {
     if (renaming) renameSavedSectionCut(renaming.id, renaming.text);
     setRenaming(null);
@@ -65,26 +49,6 @@ export function SectionViewsMenu({ compact = false }: { compact?: boolean }) {
         </button>
       </HudPopoverTrigger>
       <HudPopoverContent align="end" side="bottom" className="w-64 space-y-1.5 p-2" data-testid="section-views-menu" aria-label={t('sectionPlanes.views.label')}>
-        <div className="flex items-center gap-1">
-          <input
-            type="text"
-            value={name}
-            placeholder={t('sectionPlanes.views.defaultName', { n: cuts.length + 1 })}
-            aria-label={t('sectionPlanes.views.nameAria')}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') save(); }}
-            className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 text-xs text-foreground"
-          />
-          <button
-            type="button"
-            onClick={save}
-            disabled={!canSave}
-            title={canSave ? undefined : t('sectionPlanes.views.nothingToSave')}
-            className="rounded-sm bg-overlay-accent-soft px-2 py-1 text-xs font-medium text-overlay-accent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {t('sectionPlanes.views.save')}
-          </button>
-        </div>
         {cuts.length === 0 ? (
           <p className="px-1 text-2xs text-muted-foreground">{t('sectionPlanes.views.empty')}</p>
         ) : (

@@ -23,6 +23,7 @@
 import { useId } from 'react';
 import { Play, Pause, Sun, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { IconButton } from '@/components/ui/icon-button';
 import { useViewerStore } from '@/store';
 import { setViewSurfacePatterns } from '@/store/savedSectionCutsStore';
@@ -98,6 +99,7 @@ export function EnvironmentPanel({ onClose }: EnvironmentPanelProps) {
   const setSweepMode = useViewerStore((s) => s.setSolarSweepMode);
 
   const { t } = useTranslation();
+  const surfacePatternsLabelId = useId();
   const surfacePatterns = useViewerStore(s => s.drawing2DDisplayOptions.showSurfacePatterns3D ?? false);
 
   const offsetMin = solarDisplayOffsetMinutes(useLocalTime, sunInfo?.longitude);
@@ -190,9 +192,12 @@ export function EnvironmentPanel({ onClose }: EnvironmentPanelProps) {
         {/* Sun cast shadows (#2670) — standalone WebGPU only; Cesium casts
             its own in world-context. */}
         {!cesiumEnabled && <ShadowControls />}
-        {!cesiumEnabled && <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={surfacePatterns} onChange={e => setViewSurfacePatterns(e.target.checked)} />{t('section2d.patterns.surface3d')}
-        </label>}
+        {!cesiumEnabled && <div className="flex items-center justify-between gap-2 border-t pt-2">
+          <span id={surfacePatternsLabelId} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t('section2d.patterns.surface3d')}
+          </span>
+          <Switch checked={surfacePatterns} onCheckedChange={setViewSurfacePatterns} aria-labelledby={surfacePatternsLabelId} />
+        </div>}
 
         {/* Manual time-of-day sun (#2670) for models without georeference —
             the real study (below, when georeferenced) overrides it. */}

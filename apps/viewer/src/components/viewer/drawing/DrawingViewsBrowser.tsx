@@ -10,40 +10,40 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { useTranslation } from '@/i18n';
+import { toast } from '@/components/ui/toast';
 import { ViewIdentityDialog } from './ViewIdentityFields';
+import { drawingLineweightScales, type LineweightTable } from '@/lib/drawing/lineweight-table';
 import { nextViewCode } from '@/lib/drawing/view-markers';
 import { NewPlanDialog } from './NewPlanDialog';
 import type { VerticalViewKind } from './PlaceVerticalView';
 import { useViewerStore } from '@/store';
 import {
   applySavedSectionCut, canSaveDrawingView, duplicateSavedSectionCut, removeSavedSectionCut,
-  renameSavedSectionCut, SAVED_VIEW_KINDS, saveCurrentSectionCut, savedViewKind, updateSavedSectionCut,
+  renameSavedSectionCut, SAVED_VIEW_KINDS, saveCurrentSectionCut, savedViewKind, setDrawingPublicationScale, updateSavedSectionCut,
   useSavedSectionCuts, type SavedViewKind,
 } from '@/store/savedSectionCutsStore';
 
-export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, trace }: {
+const ROW_ACTION = 'cursor-pointer text-muted-foreground hover:bg-background hover:text-foreground hover:ring-1 hover:ring-inset hover:ring-border active:bg-primary/15 active:text-primary disabled:cursor-default';
+
+export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, trace, publicationScale, lineweightTable }: {
+  publicationScale: number; lineweightTable: LineweightTable;
   overlay: boolean; close: () => void; canCreatePlan: boolean; canTrace: boolean; trace: (kind: VerticalViewKind) => void;
 }) {
   const { t } = useTranslation();
   const { promptDialog, confirmDialog } = useDialogs();
   const cuts = useSavedSectionCuts((s) => s.cuts);
   const active = useSavedSectionCuts((s) => s.activeCutId);
-  const viewScale = useViewerStore((s) => s.drawing2DDisplayOptions.scale);
   const axis = useViewerStore((s) => s.sectionPlane.axis);
   const [query, setQuery] = useState('');
   const [newPlan, setNewPlan] = useState(false);
   const [kind, setKind] = useState<SavedViewKind>();
-  const [scaleDraft, setScaleDraft] = useState<{ view: string | null; value: string }>();
   const [identity, setIdentity] = useState<{ name: string; code: string; id?: string; save: (name: string, code: string) => void }>();
   const [failed, setFailed] = useState(false);
   const visible = cuts.filter(({ name, code }) => `${code ?? ''} ${name}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const selectedKind = kind ?? (axis === 'down' ? 'plan' : 'section');
   const canSave = useViewerStore((s) => canSaveDrawingView(s, selectedKind));
   const activeView = cuts.find((cut) => cut.id === active);
-  const activeIs3D = activeView?.kind === '3d';
-  const scaleText = scaleDraft?.view === active ? scaleDraft.value : String(activeIs3D ? activeView.publicationScale ?? viewScale : viewScale);
-  const scale = Number(scaleText.trim().replace(',', '.'));
-  const validScale = Number.isFinite(scale) && scale > 0;
+  const scales = drawingLineweightScales(lineweightTable, publicationScale, []);
   const canUpdate = useViewerStore((s) => !!activeView && canSaveDrawingView(s, savedViewKind(activeView)));
 
   function edit(action: () => void) {
@@ -58,7 +58,7 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
 
   return (
     <aside aria-label={t('section2d.views.title')}
-      className={`flex w-64 min-w-0 flex-col border-r bg-background ${overlay ? 'absolute inset-y-0 left-0 z-20 max-w-full shadow-lg' : 'shrink-0'}`}>
+      className={`flex w-64 min-w-0 flex-col border-r bg-background ${overlay ? 'absolute inset-y-0 left-0 z-30 max-w-full shadow-lg' : 'shrink-0'}`}>
       <div className="flex items-center justify-between border-b px-3 py-1.5">
         <h2 className="text-xs font-medium">{t('section2d.views.title')}</h2>
         <Button size="icon-xs" variant="ghost" aria-label={t('section2d.views.close')} onClick={close}><X className="h-3.5 w-3.5" /></Button>
@@ -84,16 +84,23 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
               {SAVED_VIEW_KINDS.map((entry) => <SelectItem key={entry} value={entry}>{t(`section2d.views.type.${entry}`)}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button size="sm" className="h-7 shrink-0 gap-1 text-xs" variant="outline" disabled={!canSave || (selectedKind === '3d' && !validScale)} onClick={() => setIdentity({ name: '', code: nextViewCode(selectedKind, cuts), save: (name, code) => {
-            saveCurrentSectionCut(name, selectedKind, scale, code);
+          <Button size="sm" className="h-7 shrink-0 gap-1 text-xs" variant="outline" disabled={!canSave} onClick={() => setIdentity({ name: '', code: nextViewCode(selectedKind, cuts), save: (name, code) => {
+            saveCurrentSectionCut(name, selectedKind, publicationScale, code);
             setQuery('');
           } })}><Plus className="h-3.5 w-3.5" />{t('section2d.views.save')}</Button>
         </div>
-        {(selectedKind === '3d' || activeIs3D) && <label className="flex items-center gap-2 text-xs">
-          {t('section2d.views.scale')}
-          <Input className="h-7" value={scaleText} inputMode="decimal" aria-invalid={!validScale}
-            onChange={(event) => setScaleDraft({ view: active, value: event.target.value })} />
-        </label>}
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span>{t('drawingUnderlay.lineweights.publicationScale')}</span>
+          <Select value={String(publicationScale)} onValueChange={value => {
+            const scale = scales.find(entry => String(entry.factor) === value);
+            if (scale) edit(() => setDrawingPublicationScale(scale));
+          }}>
+            <SelectTrigger className="h-7 w-24" aria-label={t('drawingUnderlay.lineweights.publicationScale')}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {scales.map(({ factor, name }) => <SelectItem key={factor} value={String(factor)}>{name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
         {failed && <p role="alert" className="text-xs text-destructive">{t('section2d.views.saveError')}</p>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
@@ -105,30 +112,32 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
             <h3 className="px-1 pb-0.5 pt-2 text-xs font-medium text-muted-foreground">{t(`section2d.views.group.${entry}`)}</h3>
             {group.map((cut) => (
               <div key={cut.id} className={`flex min-h-10 items-stretch rounded-md border ${active === cut.id ? 'border-primary/50 bg-accent' : 'border-transparent hover:bg-muted'}`}>
-                <button type="button" className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded px-2 py-2 text-left text-xs focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                  aria-current={active === cut.id ? 'true' : undefined} onClick={() => edit(() => { setScaleDraft(undefined); applySavedSectionCut(cut.id); })}>
+                <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded px-2 py-2 text-left text-xs active:bg-primary/15 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                  aria-current={active === cut.id ? 'true' : undefined} onClick={() => edit(() => applySavedSectionCut(cut.id))}>
                   <span className="truncate" title={cut.name}>{cut.code ? `${cut.code} · ${cut.name}` : cut.name}</span>
                   {cut.publicationScale && <span className="shrink-0 tabular-nums text-muted-foreground">
                     {`1:${formatScaleFactorLabel(cut.publicationScale)}`}
                   </span>}
                 </button>
                 <div className="flex shrink-0 items-center gap-0.5 pr-1">
-                  {active === cut.id && <Button size="icon-xs" variant="ghost" disabled={!canUpdate || (activeIs3D && !validScale)} title={t('section2d.views.update')}
-                    aria-label={t('section2d.views.update')} onClick={() => edit(() => updateSavedSectionCut(cut.id, scale))}>
+                  {active === cut.id && <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} disabled={!canUpdate} title={t('section2d.views.update')}
+                    aria-label={t('section2d.views.update')} onClick={() => edit(() => {
+                      updateSavedSectionCut(cut.id, publicationScale);
+                      toast.success(t('section2d.views.updated', { name: cut.name }));
+                    })}>
                     <Save className="h-3.5 w-3.5" />
                   </Button>}
-                  <Button size="icon-xs" variant="ghost" title={t('section2d.views.duplicate')} aria-label={t('section2d.views.duplicate')} onClick={async () => {
+                  <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} title={t('section2d.views.duplicate')} aria-label={t('section2d.views.duplicate')} onClick={async () => {
                     const name = (await promptDialog({ description: t('section2d.views.name'), defaultValue: t('section2d.views.copyName', { name: cut.name }) }))?.trim();
                     if (name) edit(() => {
                       const id = duplicateSavedSectionCut(cut.id, name);
-                      setScaleDraft(undefined);
                       if (id) applySavedSectionCut(id);
                       setQuery('');
                     });
                   }}><Copy className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon-xs" variant="ghost" title={t('section2d.savedCuts.renameTitle')} aria-label={t('section2d.savedCuts.renameTitle')} onClick={() => setIdentity({ name: cut.name, code: cut.code ?? nextViewCode(entry, cuts), id: cut.id,
+                  <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} title={t('section2d.savedCuts.renameTitle')} aria-label={t('section2d.savedCuts.renameTitle')} onClick={() => setIdentity({ name: cut.name, code: cut.code ?? nextViewCode(entry, cuts), id: cut.id,
                     save: (name, code) => renameSavedSectionCut(cut.id, name, code) })}><Pencil className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon-xs" variant="ghost" title={t('section2d.savedCuts.deleteTitle')} aria-label={t('section2d.savedCuts.deleteTitle')} onClick={async () => {
+                  <Button type="button" size="icon-xs" variant="ghost" className={ROW_ACTION} title={t('section2d.savedCuts.deleteTitle')} aria-label={t('section2d.savedCuts.deleteTitle')} onClick={async () => {
                     if (await confirmDialog({ description: t('section2d.views.delete', { name: cut.name }), destructive: true })) edit(() => removeSavedSectionCut(cut.id));
                   }}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>

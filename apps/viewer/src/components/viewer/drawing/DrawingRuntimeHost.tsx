@@ -22,7 +22,7 @@ import { useEffect, useMemo } from 'react';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { useViewerStore } from '@/store';
 import { drawingProjectId } from '@/lib/drawing/drawing-project';
-import { setSavedViewsProject, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { selectActiveSavedView, setSavedViewsProject, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useIfc } from '@/hooks/useIfc';
 import { usePlacementCoordinateInfo } from '@/hooks/usePlacementCoordinateInfo';
 import { hasHatchPaint } from '@/lib/drawing/material-hatches';
@@ -53,8 +53,11 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   // A drawing view is on screen when the panel is docked in the bottom strip,
   // floating, or popped out (#5493). Opening another bottom panel clears the
   // dock flag but leaves a floating / popped-out drawing showing.
-  const panelVisible = useViewerStore((s) => s.drawing2DPanelVisible
+  const drawingPanelOpen = useViewerStore((s) => s.drawing2DPanelVisible
     || s.floatingPanels.some((p) => p.id === 'drawing') || s.poppedOutIds.includes('drawing'));
+  const activeSavedView = useSavedSectionCuts(selectActiveSavedView);
+  const saved3D = activeSavedView?.kind === '3d';
+  const panelVisible = drawingPanelOpen && !saved3D;
   const sourceDrawing = useViewerStore((s) => s.drawing2D);
   const setDrawing = useViewerStore((s) => s.setDrawing2D);
   const setDrawingStatus = useViewerStore((s) => s.setDrawing2DStatus);
@@ -71,13 +74,12 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
 
   const placement = useViewerStore((state) => state.modelPlacement);
   const placedCoordinateInfo = usePlacementCoordinateInfo((mergedGeometry ?? legacyGeometryResult)?.coordinateInfo);
-  const drawingActive = panelVisible || (activeTool === 'section' && displayOptions.show3DOverlay);
+  const drawingActive = panelVisible || saved3D || (activeTool === 'section' && displayOptions.show3DOverlay);
   const geometryResult = useMemo(() => { const source = mergedGeometry ?? legacyGeometryResult;
     return source && drawingActive ? { ...placedViewGeometry(source), coordinateInfo: placedCoordinateInfo ?? source.coordinateInfo } : source;
   }, [mergedGeometry, legacyGeometryResult, placement, placedCoordinateInfo, drawingActive]);
 
   const { graphicRules, pending: templateRulesPending } = useDrawingTemplateRules();
-  const activeSavedView = useSavedSectionCuts(s => s.cuts.find(cut => cut.id === s.activeCutId));
   const hiddenEntities = useViewerStore((s) => s.hiddenEntities);
   const isolatedEntities = useViewerStore((s) => s.isolatedEntities);
   const viewFilter = useDrawingViewFilter();
@@ -110,7 +112,7 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
     geometryResult, ifcDataStore, sectionPlane, displayOptions: generationOptions, typeVisibility, includeProjectionPolygons,
     // Both sets hold global ids, so they cover every federated model.
     combinedHiddenIds: drawingHidden, combinedIsolatedIds: drawingIsolated, computedIsolatedIds,
-    models, panelVisible, activeTool, drawing: sourceDrawing,
+    models, panelVisible, activeTool, saved3D: saved3D && sectionPlane.enabled && !sectionPlane.box, drawing: sourceDrawing,
     setDrawing, setDrawingStatus, setDrawingProgress, setDrawingError,
   });
 
@@ -120,8 +122,8 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   const viewRulesPending = templateRulesPending || (!!activeSavedView?.filter && !viewFilter);
   const sourceCoordinateInfo = (mergedGeometry ?? legacyGeometryResult)?.coordinateInfo;
   useEffect(() => {
-    publishDrawingRuntime({ geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, graphicRules, viewFilterFailed: viewFilter?.failed, viewId: activeSavedView?.id ?? null, viewPlane: sectionPlane, viewRulesPending });
-  }, [geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, graphicRules, viewFilter?.failed, activeSavedView?.id, sectionPlane, viewRulesPending]);
+    publishDrawingRuntime({ geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, graphicRules, drawingHidden, drawingIsolated, viewFilterFailed: viewFilter?.failed, viewId: activeSavedView?.id ?? null, viewPlane: sectionPlane, viewRulesPending });
+  }, [geometryResult, sourceCoordinateInfo, generateDrawing, isRegenerating, graphicRules, drawingHidden, drawingIsolated, viewFilter?.failed, activeSavedView?.id, sectionPlane, viewRulesPending]);
   useEffect(() => () => publishDrawingRuntime(null), []);
 
   return null;

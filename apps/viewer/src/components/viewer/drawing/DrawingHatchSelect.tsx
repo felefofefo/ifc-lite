@@ -11,6 +11,7 @@ import { useTranslation } from '@/i18n';
 import { backgroundHatchPattern, hasHatchPaint, isMaterialHatchPattern, MATERIAL_HATCH_PATTERNS, type MaterialHatchPattern, type FillPaint } from '@/lib/drawing/material-hatches';
 
 import { useDrawingPatterns } from '@/hooks/useDrawingPatterns';
+import type { ImportedPattern } from '@/lib/drawing/pattern-library';
 import { DrawingPatternSwatch } from './DrawingPatternSwatch';
 
 const samples = {
@@ -20,14 +21,16 @@ const samples = {
   none: '',
 };
 
-export function DrawingHatchSelect({ label, value, background, onChange }: {
+export function DrawingHatchSelect({ label, value, background, onChange, patterns: draftPatterns }: {
   background?: boolean;
+  patterns?: readonly ImportedPattern[];
   label: string;
   value: MaterialHatchPattern | undefined;
   onChange: (value: MaterialHatchPattern | undefined) => void;
 }) {
   const { t } = useTranslation();
-  const { patterns: imported } = useDrawingPatterns();
+  const { patterns: library } = useDrawingPatterns();
+  const imported = draftPatterns ?? library;
   const selected = background ? backgroundHatchPattern(value) : value;
   const patterns = background ? (['solid', 'none'] as const) : MATERIAL_HATCH_PATTERNS;
   return (
@@ -56,8 +59,9 @@ export function DrawingHatchSelect({ label, value, background, onChange }: {
   );
 }
 
-export function DrawingFillControl({ label, paint, background, onChange }: {
+export function DrawingFillControl({ label, paint, background, onChange, patterns }: {
   background?: boolean;
+  patterns?: readonly ImportedPattern[];
   label: string;
   paint?: FillPaint;
   onChange: (paint: FillPaint) => void;
@@ -67,7 +71,7 @@ export function DrawingFillControl({ label, paint, background, onChange }: {
     <div className="min-w-0 space-y-1">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="flex min-w-0 items-center gap-1">
-        <DrawingHatchSelect background={background} label={label} value={paint?.pattern} onChange={(pattern) => onChange(pattern ? { ...paint, pattern } : {})} />
+        <DrawingHatchSelect patterns={patterns} background={background} label={label} value={paint?.pattern} onChange={(pattern) => onChange(pattern ? { ...paint, pattern } : {})} />
         <Input className="h-8 w-9 shrink-0 cursor-pointer p-1" type="color"
           value={/^#[0-9a-f]{6}$/i.test(paint?.color ?? '') ? paint!.color : '#666666'}
           aria-label={t('drawingUnderlay.materials.fillColor', { label })}

@@ -6,14 +6,15 @@
  * The second row of the Section bar (#7545): what the ACTIVE plane is doing.
  * Its offset (typed, scrubbed, stepped by `− +`, the arrow keys or the wheel, in
  * the project unit, from the plane's datum) with the step it moves by and the
- * storeys as snap ticks; Flip, Set view and Show; Fill, Cap and Cut; the box's
+ * storeys as snap ticks; Flip, Set view and Show; Cap and Cut; the box's
  * size and Fit; the alignment picker; and the 2D section. Row 1 says which planes
  * exist; this row edits the one that is selected, so no control has to say which
  * plane it means.
  */
 
+import { savedViewKind, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useCallback } from 'react';
-import { ChevronDown, Eye, EyeOff, FlipHorizontal2, Focus, Layers, Minus, PaintBucket, PencilRuler, Plus, Slice } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, FlipHorizontal2, Focus, Layers, Minus, PencilRuler, Plus, Slice } from 'lucide-react';
 import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -27,7 +28,6 @@ import { HudDivider, HudToggle } from '../../viewport-ui/hud/HudToggle';
 import { SectionCapControls } from './SectionCapControls';
 import { STOREY_SNAP_TOLERANCE_M } from './useSectionDistance';
 import { useSectionOffset } from './useSectionOffset';
-import { useSectionFill } from './useSectionFill';
 import { SectionStepMenu } from './SectionStepMenu';
 import { SectionSetViewButton } from './SectionSetViewButton';
 import { SectionZoomMenu } from './SectionZoomMenu';
@@ -75,8 +75,6 @@ export function SectionActivePlaneRow({ compact = false }: { compact?: boolean }
   const hasSelection = useViewerStore((s) => s.selectedEntityId !== null || s.selectedEntityIds.size > 0);
   const offset = useSectionOffset();
   const distance = offset.distance;
-  const fill = useSectionFill();
-  const followsDrawing = useViewerStore((s) => s.drawing2DDisplayOptions.show3DOverlay);
   const setShowGizmo = useViewerStore((s) => s.setSectionPlaneShowGizmo);
   const alignmentBusy = useAlignmentToolState(s => s.busy);
   // Test ids belong to the live bar only: the offscreen copies the tiers are measured from must not repeat them.
@@ -107,12 +105,16 @@ export function SectionActivePlaneRow({ compact = false }: { compact?: boolean }
   // the table so it replaces whichever bottom panel is docked; the drawing
   // is cleared first so it regenerates against the current cut.
   const handleDrawing = useCallback(() => {
-    if (drawingOpen) {
+    const { cuts, activeCutId } = useSavedSectionCuts.getState();
+    const active = cuts.find(view => view.id === activeCutId);
+    const switchingToCut = active && savedViewKind(active) === '3d';
+    if (switchingToCut) useSavedSectionCuts.setState({ activeCutId: null, drawingPlaneId: undefined });
+    if (drawingOpen && !switchingToCut) {
       toggleBottomPanel('drawing');
       return;
     }
     clearDrawing();
-    openPanelInHome('drawing');
+    if (!drawingOpen) openPanelInHome('drawing');
   }, [drawingOpen, toggleBottomPanel, clearDrawing, openPanelInHome]);
 
   const showStoreys = !isCustom && sectionPlane.axis === 'down' && distance.kind === 'world' && distance.storeys.length > 0;
@@ -239,16 +241,6 @@ export function SectionActivePlaneRow({ compact = false }: { compact?: boolean }
       )}
       <span className={GROUP}>
       <HudDivider />
-      <HudToggle
-        pressed={fill.on}
-        aria-label={t('sectionPlanes.fill.label')}
-        onPressedChange={fill.toggle}
-        title={t(followsDrawing ? fill.on ? 'sectionCap.hideSurfaces' : 'sectionCap.showSurfaces'
-          : fill.on ? 'sectionPlanes.fill.offTitle' : 'sectionPlanes.fill.title')}
-        icon={<PaintBucket aria-hidden className="h-3.5 w-3.5" />}
-      >
-        {word('sectionPlanes.fill.label')}
-      </HudToggle>
       <HudPopoverTrigger asChild>
         <button type="button" title={t('sectionTool.cap.title')} className={ACTION}>
           <Slice aria-hidden className="h-3.5 w-3.5" />

@@ -70,7 +70,11 @@ export function publicationCutSvg(
       }
     }
     const weight = mmToTarget(style.lineWeight) * (context.stroke ? 1 : legacyOutlineFactor);
-    if (weight > 0) outlines += `<path d="${geometry}" fill="none" stroke="${escape(style.strokeColor)}" stroke-width="${weight.toFixed(4)}"${svgDash(style.dash, mmToTarget)} data-entity-id="${polygon.entityId}"/>\n`;
+    const outline = polygon.cutOutline && map ? polygon.cutOutline.map(({ start, end }) => {
+      const a = map(start.x, start.y), b = map(end.x, end.y);
+      return `M${a.x} ${a.y}L${b.x} ${b.y}`;
+    }).join('') : geometry;
+    if (weight > 0 && outline) outlines += `<path d="${outline}" fill="none" stroke="${escape(style.strokeColor)}" stroke-width="${weight.toFixed(4)}"${svgDash(style.dash, mmToTarget)} data-entity-id="${polygon.entityId}"/>\n`;
   }
   return `<defs>${[...patterns.values()].map(({ markup }) => markup).join('')}</defs>\n<g id="polygon-fills">\n${fills}</g>\n<g id="polygon-outlines">\n${outlines}</g>\n`;
 }

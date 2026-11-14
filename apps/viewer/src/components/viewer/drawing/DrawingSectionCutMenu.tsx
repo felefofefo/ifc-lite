@@ -5,32 +5,27 @@
 /**
  * Named section cuts, selectable as the Drawing panel's source (#5514,
  * charter #5478). Replaces the header's plain cut label with a menu:
- * save the live cut under a name, or apply/rename/delete a saved one.
+ * apply, rename, or delete a saved cut.
  * Applying a cut writes `sectionPlane` (`store/savedSectionCutsStore.ts`),
  * so BCF viewpoint capture and the floor-plan command pick it up through
  * the same Section/Drawing contract every other section writer uses —
  * this component only manages the named list, not their reuse.
  */
 
-import { ChevronDown, Pencil, Save, Trash2 } from 'lucide-react';
+import { ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
-import { useViewerStore } from '@/store';
 import {
   applySavedSectionCut,
-  canSaveSectionCut,
   removeSavedSectionCut,
   renameSavedSectionCut,
-  saveCurrentSectionCut,
   useSavedSectionCuts,
 } from '@/store/savedSectionCutsStore';
 
@@ -46,12 +41,6 @@ export function DrawingSectionCutMenu({ cutLabel, displayLabel }: DrawingSection
   const { promptDialog } = useDialogs();
   const cuts = useSavedSectionCuts((s) => s.cuts);
   const activeCutId = useSavedSectionCuts((s) => s.activeCutId);
-  const canSave = useViewerStore((s) => canSaveSectionCut(s));
-
-  const handleSaveCurrent = async () => {
-    const name = (await promptDialog({ description: t('section2d.savedCuts.savePrompt'), defaultValue: '' }))?.trim();
-    if (name && canSaveSectionCut()) saveCurrentSectionCut(name);
-  };
 
   const handleRename = async (id: string, currentName: string) => {
     const name = (await promptDialog({ description: t('section2d.savedCuts.renamePrompt'), defaultValue: currentName }))?.trim();
@@ -70,11 +59,6 @@ export function DrawingSectionCutMenu({ cutLabel, displayLabel }: DrawingSection
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuItem onClick={handleSaveCurrent} disabled={!canSave} className="text-xs">
-          <Save className="mr-2 h-3.5 w-3.5" />
-          {t('section2d.savedCuts.saveCurrent')}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-xs">{t('section2d.savedCuts.savedGroup')}</DropdownMenuLabel>
         {cuts.length === 0 && (
           <div className="px-2 py-1.5 text-xs text-muted-foreground">{t('section2d.savedCuts.empty')}</div>

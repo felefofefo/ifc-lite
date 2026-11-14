@@ -13,7 +13,7 @@
 
 import { HatchGenerator, patternSegments, surfacePatternSegments } from '@ifc-lite/drawing-2d';
 import type { jsPDF } from 'jspdf';
-import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
+import type { DrawingPolygon, Line2D } from '@ifc-lite/drawing-2d';
 import { getFillColorForType } from '@/components/viewer/drawing/ifc-fill-colors';
 import {
   styleCutPolygons,
@@ -29,6 +29,7 @@ export interface PdfCutPolygon {
   style: CutPolygonStyle;
   /** Page-space rings that survived (outer first when drawn). */
   rings: Point[][];
+  outline?: Line2D[];
   mapSurfacePoint?: (x: number, y: number) => Point;
   /**
    * The outer ring is drawable and encloses area, and every hole of two or
@@ -81,12 +82,14 @@ export function prepareCutPolygonsPdf(
   // Everything is checked on page coordinates: that is what jsPDF receives,
   // and a huge but finite model value can still overflow there.
   const page = (ring: Point[]) => ring.map((p) => mapPoint(p.x, p.y));
-  return styleCutPolygons(polygons, ctx, ({ polygon: { outer, holes }, surfacePatternTransform }) => {
+  return styleCutPolygons(polygons, ctx, ({ polygon: { outer, holes }, surfacePatternTransform, cutOutline }) => {
     const pageOuter = page(outer);
     const pageHoles = holes.map(page);
     return {
       rings: [pageOuter, ...pageHoles].filter(drawableRing),
-      mapSurfacePoint: surfacePatternTransform ? mapPoint : undefined,
+      outline: cutOutline?.map(({ start, end }) => ({ start: mapPoint(start.x, start.y), end: mapPoint(end.x, end.y) }))
+        .filter(({ start, end }) => isPagePoint(start) && isPagePoint(end)),
+      mapSurfacePoint: surfacePatternTransform || cutOutline ? mapPoint : undefined,
       fillable: drawableRing(pageOuter) && enclosesArea(pageOuter)
         && pageHoles.every((ring) => ring.length < 2 || drawableRing(ring)),
     };
@@ -196,14 +199,20 @@ function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: 
   // Outlines cover every surviving ring, as before fills existed. Zero width
   // hides the outline, as in the SVG; PDF would draw "0 w" as the thinnest
   // visible line.
-  for (const { rings, style } of polygons) {
+  for (const { rings, style, outline } of polygons) {
     if (rings.length === 0 || !(style.lineWeight > 0)) continue;
     const opacity = roundOpacity(setColor(doc, 'draw', style.strokeColor, '#000000', colors));
     if (!(opacity > 0)) continue;
     doc.setGState(doc.GState({ 'stroke-opacity': opacity }));
     doc.setLineWidth(style.lineWeight);
     if (style.dash) doc.setLineDashPattern([...style.dash], 0);
-    tracePath(rings);
+    if (outline) {
+      if (!outline.length) continue;
+      for (const { start, end } of outline) {
+        doc.moveTo(start.x, start.y);
+        doc.lineTo(end.x, end.y);
+      }
+    } else tracePath(rings);
     doc.stroke();
   }
 }

@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { useViewerStore } from '@/store';
+import { selectActiveSavedView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui/toast';
@@ -144,6 +145,9 @@ export function SectionPlaneChips() {
   const { t } = useTranslation();
   const chipsTestId = useLiveTestId('section-plane-chips');
   const { active, planes } = useSectionPlaneSet();
+  const view = useSavedSectionCuts(selectActiveSavedView);
+  const drawingPlaneId = useSavedSectionCuts(s => s.drawingPlaneId);
+  const hasDrawingPlane = !!view && planes.some(plane => plane.id === drawingPlaneId);
   const [renaming, setRenaming] = useState<string | null>(null);
   const activate = useViewerStore((s) => s.activateSectionPlane);
 
@@ -174,6 +178,11 @@ export function SectionPlaneChips() {
       <span role="tablist" aria-label={t('sectionPlanes.chipsAria')} className="flex items-center gap-0.5" data-testid={chipsTestId}>
         {planes.map((plane, index) => {
           const selected = plane.id === active.id;
+          const label = hasDrawingPlane && view
+            ? plane.id === drawingPlaneId
+              ? view.code ? `${view.code} · ${view.name}` : view.name
+              : t('sectionPlanes.chip3DClip', { name: plane.name })
+            : plane.name;
           return (
             <span key={plane.id} className="inline-flex items-center">
               {renaming === plane.id ? (
@@ -185,14 +194,14 @@ export function SectionPlaneChips() {
                   aria-selected={selected}
                   tabIndex={selected ? 0 : -1}
                   data-plane-id={plane.id}
-                  title={t(plane.enabled ? 'sectionPlanes.chipCutting' : 'sectionPlanes.chipPreview', { name: plane.name })}
+                  title={t(plane.enabled ? 'sectionPlanes.chipCutting' : 'sectionPlanes.chipPreview', { name: label })}
                   onClick={() => activate(plane.id)}
                   onDoubleClick={() => setRenaming(plane.id)}
                   onKeyDown={(e) => onKeyDown(e, index)}
                   className={cn(CHIP, selected ? 'bg-overlay-accent-soft text-overlay-accent' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground')}
                 >
                   <span aria-hidden className={cn('inline-block h-2 w-2 shrink-0 rounded-full border', plane.enabled ? 'border-current bg-current' : 'border-current')} />
-                  <span className="truncate">{plane.name}</span>
+                  <span className="truncate">{label}</span>
                 </button>
               )}
             </span>

@@ -21,6 +21,7 @@ import {
   removeSavedSectionCut,
   renameSavedSectionCut,
   saveCurrentSectionCut,
+  setDrawingPublicationScale,
   useSavedSectionCuts,
 } from './savedSectionCutsStore.js';
 
@@ -79,6 +80,19 @@ describe('saved section cuts (#5514)', () => {
     assert.equal(state().drawing2DDisplayOptions.scale, 50);
     applySavedSectionCut(overall);
     assert.equal(state().drawing2DDisplayOptions.scale, 100);
+  });
+
+  it('saves scale changes in a 2D view and restores them with the view', () => {
+    state().setActiveTool('section');
+    state().setSectionPlaneAxis('front');
+    useViewerStore.setState({ sheetEnabled: false });
+    const id = saveCurrentSectionCut('Detail', 'section', 75);
+    assert.equal(useSavedSectionCuts.getState().cuts[0]?.publicationScale, 75);
+    setDrawingPublicationScale({ factor: 125, name: '1:125', useCase: '' });
+    assert.equal(useSavedSectionCuts.getState().cuts[0]?.publicationScale, 125);
+    state().updateDrawing2DDisplayOptions({ scale: 100 });
+    applySavedSectionCut(id);
+    assert.equal(state().drawing2DDisplayOptions.scale, 125);
   });
 
   it('reopens project views with independent scale, depth and graphic overrides', () => {

@@ -94,3 +94,14 @@ test('publishes projected surface fills without tessellation outlines in SVG and
   assert.match(pdf, /0\.51 0\.32 0\.2 RG/);
   assert.doesNotMatch(pdf, /0\.07 0\.2 0\.34 RG/);
 });
+
+test('keeps the full cut fill but exports only the visible cut outline', () => {
+  const cut = { ...polygon, cutOutline: [{ start: { x: 1, y: 1 }, end: { x: 4, y: 1 } }] };
+  const map = (x: number, y: number) => ({ x: x * 20, y: y * 20 });
+  const svg = publicationCutSvg([cut], style, () => 'M1 1Z M2 2Z', (text) => text, 50, (mm) => mm, 1, map);
+  assert.match(svg, /d="M1 1Z M2 2Z"[^\n]+fill="#eeddcc"/);
+  assert.match(svg, /d="M20 20L80 20" fill="none" stroke="#123456"/);
+  const [pdf] = prepareCutPolygonsPdf([cut], style, map);
+  assert.equal(pdf.fillable, true);
+  assert.deepEqual(pdf.outline, [{ start: { x: 20, y: 20 }, end: { x: 80, y: 20 } }]);
+});

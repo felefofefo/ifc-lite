@@ -33,6 +33,8 @@ import assert from 'node:assert/strict';
 import type { MeshData } from '@ifc-lite/geometry';
 import {
   buildCameraSectionPlane,
+  suppressCutJoints,
+  GraphicOverrideEngine,
   computePdfScaleLayout,
   projectPointForPlane,
   worldBoundsOfMeshes,
@@ -43,8 +45,10 @@ import {
 } from '@ifc-lite/drawing-2d';
 import {
   generateViewPdf,
+  projectViewDrawing,
   type ViewCameraSnapshot,
   type ViewPdfDeps,
+  type ViewPdfExportInput,
   type ViewPdfDocument,
 } from './generate-view-pdf.js';
 import type { ViewMeshInput } from './collect-view-meshes.js';
@@ -59,12 +63,8 @@ const BOX = { min: { x: 0, y: 0, z: 0 }, max: { x: 4, y: 3, z: 2 } };
  * A closed axis-aligned box: 8 corners, 12 triangles, every face wound
  * OUTWARD.
  *
- * The winding is load-bearing, not tidiness. The generator's only source of
- * line work for an uncut view is `EdgeExtractor.extractSilhouettes`, which
- * compares the two adjacent face normals against the view direction; a box
- * whose faces all happen to point the same way produces no front face, no
- * silhouette, and a completely blank drawing. Reproducing that here would make
- * every assertion below vacuous.
+ * Each face has a consistent winding so its shared diagonal is a smooth
+ * edge and only the physical corners contribute line work.
  */
 function boxMesh(
   bounds: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } = BOX,
@@ -1220,4 +1220,122 @@ describe('generateViewPdf shading, real rasteriser (#2042)', () => {
       'the centre pixel must be the mesh colour at full lambert, opaque',
     );
   });
+});
+
+it('exports the same saved camera as vector PDF, SVG and DXF', async () => {
+  const { exportViewVector } = await import('./export-view-vector');
+  const input: ViewPdfExportInput = {
+    view: view(), camera: CAMERA, section: null, scaleFactor: 50,
+    includeHiddenLines: false, includeScaleStamp: false,
+    renderMode: 'shaded',
+    strokeStyle: () => ({ color: '#123456', lineWeight: 0.35, dash: [2, 1] }),
+  };
+  const [pdf, svg, dxf] = await Promise.all([
+    exportViewVector(input, 'pdf'), exportViewVector(input, 'svg'), exportViewVector(input, 'dxf'),
+  ]);
+  assert.ok(pdf instanceof Blob);
+  const bytes = await pdf.text();
+  assert.match(bytes, /^%PDF-/);
+  assert.doesNotMatch(bytes, /\/Subtype\s+\/Image/);
+  assert.equal(typeof svg, 'string');
+  assert.match(String(svg), /width="100mm"/);
+  assert.match(String(svg), /stroke="#123456" stroke-width="0.35" stroke-dasharray="2 1"/);
+  assert.doesNotMatch(String(svg), /<image\b/);
+  assert.match(String(dxf), /\n0\nLINE\n/);
+  assert.doesNotMatch(String(dxf), /\n0\nIMAGE\n/);
+});
+it('exports visible cap and custom surface patterns as vectors', async () => {
+  const { exportViewVector } = await import('./export-view-vector');
+  const vectorFills: NonNullable<ViewPdfExportInput['vectorFills']> = {
+    caps: true, surfaces: true,
+    style: {
+      useIfcMaterials: false, overridesEnabled: false, entityColorMap: new Map(),
+      overrideEngine: new GraphicOverrideEngine(), getElementProperties: () => ({}),
+      fills: polygon => [{ color: polygon.isCut ? '#e62222' : '#2233ee', pattern: 'custom', spacing: 0.25,
+        families: [{ angle: 30, x: 0, y: 0, dx: 0, dy: 1, dash: [0.15, -0.1] }] }],
+    },
+  };
+  const input: ViewPdfExportInput = {
+    view: view(), camera: CAMERA, scaleFactor: 50,
+    section: { plane: { axis: 'front', position: 50, flipped: false }, sceneBounds: BOX, uiRange: null },
+    includeScaleStamp: false,
+    strokeStyle: () => ({ color: '#000000', lineWeight: 0.25 }),
+    vectorFills,
+  };
+  const { drawing } = await projectViewDrawing(input);
+  assert.ok(drawing.projectionPolygons?.some(polygon => polygon.isCut && polygon.surfacePatternTransform));
+  assert.ok(drawing.projectionPolygons?.every(polygon => polygon.isCut), 'head-on cap occludes the back face');
+
+  const multi = await projectViewDrawing({ ...input,
+    camera: { ...CAMERA, position: { x: 12, y: 8, z: 12 } },
+    extraSections: [sectionAtQuarterX(false)],
+  });
+  const capPieces = multi.drawing.projectionPolygons?.filter(polygon => polygon.isCut) ?? [];
+  assert.ok(capPieces.length >= 2, 'both sides of the clipped corner contribute visible caps');
+  assert.ok(capPieces.every(polygon => polygon.vertexDepths?.every(Number.isFinite)));
+
+  const noCap = await projectViewDrawing({ ...input, section: { ...input.section!, showCap: false } });
+  assert.ok(noCap.drawing.projectionPolygons?.every(polygon => !polygon.isCut));
+  assert.ok(noCap.drawing.lines.some(line => line.category === 'cut'), 'the cap toggle does not remove the cut rim');
+
+  const surface = { ...input, section: null };
+  const disabled = { ...surface, vectorFills: { ...vectorFills, surfaces: false } };
+  assert.match(String(await exportViewVector(input, 'svg')), /stroke="#e62222"/);
+  assert.match(String(await exportViewVector(surface, 'svg')), /stroke="#2233ee"/);
+  assert.doesNotMatch(String(await exportViewVector(disabled, 'svg')), /#2233ee/);
+  assert.match(String(await exportViewVector(surface, 'dxf')), /\n420\n2241518\n/);
+  const pdf = await exportViewVector(surface, 'pdf');
+  assert.ok(pdf instanceof Blob);
+  const bytes = await pdf.text();
+  assert.match(bytes, /0\.13 0\.2 0\.93 RG/);
+  assert.doesNotMatch(bytes, /\/Subtype\s+\/Image/);
+});
+
+it('exports visible creases of an axonometric box and hides its rear edges', async () => {
+  const camera = { ...CAMERA, position: { x: 10, y: 8, z: 12 } };
+  const { drawing, plane } = await projectViewDrawing({ view: view(), camera, section: null, scaleFactor: 50 });
+  const visible = drawing.lines.filter(line => line.visibility === 'visible');
+  const a = projectPointForPlane({ x: 4, y: 3, z: 2 }, plane);
+  const b = projectPointForPlane({ x: 4, y: 0, z: 2 }, plane);
+  const matches = (p: typeof a, q: typeof a) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-5;
+  assert.ok(visible.some(({ line: { start, end } }) =>
+    (matches(start, a) && matches(end, b)) || (matches(start, b) && matches(end, a))));
+  assert.equal(visible.length, 9);
+  assert.equal(drawing.lines.length - visible.length, 3);
+});
+
+it('joins touching cut rims by material and hides projection lines behind the cap', async () => {
+  const left = boxMesh({ min: BOX.min, max: { x: 2, y: 3, z: 2 } });
+  const right = boxMesh({ min: { x: 2, y: 0, z: 0 }, max: BOX.max }, 43);
+  const input = {
+    view: view([left, right]), camera: CAMERA, scaleFactor: 50,
+    section: { plane: { axis: 'front' as const, position: 50, flipped: false }, sceneBounds: BOX, uiRange: null },
+  };
+  const { drawing, plane } = await projectViewDrawing({ ...input, joinCutPolygons: polygons =>
+    suppressCutJoints(polygons, () => 'same-material') });
+  const seam = projectPointForPlane({ x: 2, y: 0, z: 1 }, plane).x;
+  const visible = drawing.lines.filter(line => line.visibility === 'visible');
+  assert.ok(visible.some(line => line.category === 'cut'));
+  assert.ok(!visible.some(({ line: { start, end } }) =>
+    Math.abs(start.x - seam) < 1e-5 && Math.abs(end.x - seam) < 1e-5));
+  const separate = await projectViewDrawing(input);
+  assert.ok(separate.drawing.lines.some(({ category, visibility, line: { start, end } }) =>
+    category === 'cut' && visibility === 'visible' && Math.abs(start.x - seam) < 1e-5 && Math.abs(end.x - seam) < 1e-5));
+});
+
+it('clips a partially hidden edge at the two actual occluder boundaries', async () => {
+  const far = boxMesh({ min: { x: 0, y: 0, z: 0 }, max: { x: 4, y: 2, z: 1 } });
+  // Use the front face only, so a coincident rear edge cannot cover the
+  // whole projected interval as a second, fully hidden line.
+  far.indices = new Uint32Array([1, 5, 7, 1, 7, 3]);
+  const near = boxMesh({ min: { x: 1.23, y: 1, z: 2 }, max: { x: 2.71, y: 3, z: 3 } }, 43);
+  const { drawing, plane } = await projectViewDrawing({ view: view([far, near]), camera: CAMERA, section: null, scaleFactor: 50 });
+  const a = projectPointForPlane({ x: 1.23, y: 2, z: 1 }, plane);
+  const b = projectPointForPlane({ x: 2.71, y: 2, z: 1 }, plane);
+  assert.ok(drawing.lines.some(({ entityId, visibility, line: { start, end } }) => {
+    const [lo, hi] = [start.x, end.x].sort((x, y) => x - y);
+    return entityId === far.expressId && visibility === 'hidden' &&
+      Math.abs(start.y - a.y) < 1e-5 && Math.abs(end.y - a.y) < 1e-5 &&
+      Math.abs(lo - a.x) < 1e-5 && Math.abs(hi - b.x) < 1e-5;
+  }));
 });

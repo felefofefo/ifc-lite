@@ -256,17 +256,21 @@ function CustomRuleItem({
         />
       </div>
 
-      <label className="block text-xs">{t('drawingUnderlay.template.filter')}
-        <select className="mt-1 w-full rounded border bg-background p-1" value={savedFilter?.name ?? ''}
-          onChange={e => {
-            const filter = filters.find(preset => preset.name === e.target.value);
-            onUpdate({ savedFilter: filter ? encodeSavedFilter(filter) : undefined });
-          }}>
-          <option value="">{t('drawingUnderlay.template.classRule')}</option>
-          {savedFilter && !filters.some(filter => filter.name === savedFilter.name) && <option value={savedFilter.name}>{savedFilter.name}</option>}
-          {filters.map(filter => <option key={filter.name} value={filter.name}>{filter.name}</option>)}
-        </select>
-      </label>
+      <div>
+        <Label className="text-xs">{t('drawingUnderlay.template.filter')}</Label>
+        <Select value={savedFilter ? `filter:${savedFilter.name}` : 'class'} onValueChange={(value) => {
+          const filter = filters.find(preset => `filter:${preset.name}` === value);
+          onUpdate({ savedFilter: filter ? encodeSavedFilter(filter) : undefined });
+        }}>
+          <SelectTrigger aria-label={t('drawingUnderlay.template.filter')} className="mt-1 h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent className="max-w-[min(26rem,85vw)]">
+            <SelectItem value="class">{t('drawingUnderlay.template.classRule')}</SelectItem>
+            {savedFilter && !filters.some(filter => filter.name === savedFilter.name) &&
+              <SelectItem value={`filter:${savedFilter.name}`}>{savedFilter.name}</SelectItem>}
+            {filters.map(filter => <SelectItem key={filter.name} value={`filter:${filter.name}`}>{filter.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
       {/* IFC Class */}
       <div>
         <Label className="text-xs">{t('drawingUnderlay.settings.ifcClassLabel')}</Label>

@@ -64,7 +64,7 @@ describe('capOverlayInput fill mode (#7950)', () => {
   it('uniform (default): single-material polygons carry no colour', () => {
     const { polygons } = capOverlayInput(cut, false);
     assert.equal(polygons[0].color, undefined);
-    assert.deepEqual(polygons[1].color, [1, 0, 0, 0.5], 'uniform mode leaves layer colours as they were');
+    assert.deepEqual(polygons[1].color, [1, 0, 0, 1], 'uniform mode keeps layer RGB with an opaque fill');
   });
 
   it('element: polygons keep their source colour, opaque; layer colour wins, also opaque; colourless stays uniform', () => {

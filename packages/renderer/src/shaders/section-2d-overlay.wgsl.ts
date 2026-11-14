@@ -306,12 +306,10 @@ export const SECTION_2D_CAP_FILL_WGSL = /* wgsl */ `
           // whichever base is chosen, so the architectural hatch still works.
           let useVertex = input.color.a >= 0.0;
           let baseFill = select(uniforms.capFillColor, input.color, useVertex);
-          let rgb = select(mix(baseFill.rgb, stroke.rgb, h * stroke.a), stroke.rgb, baseFill.a == 0.0);
-          let a   = max(baseFill.a, h * stroke.a);
-          if (a <= 0.0) { discard; }
+          let rgb = mix(baseFill.rgb, stroke.rgb, h * stroke.a);
 
           var out: FragOut;
-          out.color    = vec4<f32>(rgb, a);
+          out.color    = vec4<f32>(rgb, 1.0);
           out.objectId = vec4<f32>(0.0, 0.0, 0.0, 0.0);
           return out;
         }

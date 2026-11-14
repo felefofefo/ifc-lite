@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { useEffect, type RefObject } from 'react';
+import type { DXFHatchLayer } from '@ifc-lite/drawing-2d';
 import type { MeshData } from '@ifc-lite/geometry';
 import type { Renderer } from '@ifc-lite/renderer';
 import { useViewerStore } from '@/store';
@@ -34,7 +35,7 @@ export function useSurfacePatterns3D(renderer: RefObject<Renderer | null>, ready
       const key = `${mesh.expressId}:${materialId}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const paints = resolve({ polygon: empty, isCut: false, entityId: mesh.expressId,
+      const paints: DXFHatchLayer[] = resolve({ polygon: empty, isCut: false, entityId: mesh.expressId,
         ifcType: mesh.ifcType ?? '', modelIndex: mesh.modelIndex ?? 0, materialId: mesh.materialId }, '#666666') ?? [];
       const solid = paints.findLastIndex(p => p.pattern === 'solid');
       const hatch = paints.slice(solid + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch'

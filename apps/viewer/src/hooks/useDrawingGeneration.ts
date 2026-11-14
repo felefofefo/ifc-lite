@@ -103,6 +103,7 @@ interface UseDrawingGenerationParams {
    * silhouette lands precisely on the tilted plane.
    */
   sectionPlane: {
+    id?: string;
     axis: 'down' | 'front' | 'side';
     position: number;
     flipped: boolean;
@@ -127,6 +128,7 @@ interface UseDrawingGenerationParams {
   models: Map<string, { id: string; visible: boolean; idOffset?: number }>;
   panelVisible: boolean;
   activeTool: string;
+  saved3D?: boolean;
   drawing: Drawing2D | null;
   // Store actions
   setDrawing: (d: Drawing2D | null, generatedAt?: UseDrawingGenerationParams['sectionPlane']) => void;
@@ -154,6 +156,7 @@ export function useDrawingGeneration({
   models,
   panelVisible,
   activeTool,
+  saved3D,
   drawing,
   setDrawing,
   setDrawingStatus,
@@ -980,7 +983,7 @@ export function useDrawingGeneration({
 
   // Match useRenderUpdates: a saved overlay preference needs the section tool.
   // Compare actual inputs, not callback identities or the drawing we publish.
-  const drawingActive = panelVisible || (activeTool === 'section' && displayOptions.show3DOverlay);
+  const drawingActive = panelVisible || saved3D || (activeTool === 'section' && displayOptions.show3DOverlay);
   const previousInputs = useRef<unknown[]>([]);
   const wasActive = useRef(false);
   const wasPanelVisible = useRef(false);
@@ -991,7 +994,7 @@ export function useDrawingGeneration({
     previousInputs.current = [];
   }, [queue]);
   useEffect(() => {
-    const plane = JSON.stringify([sectionPlane.axis, sectionPlane.position, sectionPlane.flipped,
+    const plane = JSON.stringify([sectionPlane.id, sectionPlane.axis, sectionPlane.position, sectionPlane.flipped,
       sectionPlane.custom]);
     const inputs = [geometryResult, geometryResult?.meshes.length, includeProjectionPolygons, ifcDataStore,
       displayOptions, typeVisibility, combinedHiddenIds, combinedIsolatedIds,

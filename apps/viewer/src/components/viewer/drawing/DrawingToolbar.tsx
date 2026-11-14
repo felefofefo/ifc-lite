@@ -41,6 +41,7 @@ const DRAWERS: ReadonlyArray<{ id: DrawingDrawer; icon: typeof Palette; labelKey
 ];
 
 export interface DrawingToolbarProps {
+  view3D?: boolean;
   tier: DrawingWidthTier;
   activeTool: Annotation2DTool;
   onSelectTool: (tool: Annotation2DTool) => void;
@@ -76,8 +77,15 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
   const narrow = p.tier === 'narrow';
   const pinLabel = p.pinned ? t('section2d.pin.unpinTitle') : t('section2d.pin.pinTitle');
 
+  const toolbarClass = 'flex shrink-0 flex-wrap items-center gap-x-1 gap-y-1 border-b px-2 py-1';
+  if (p.view3D) return (
+    <div className={toolbarClass}>
+      <DrawingProjectionSettings available hiddenLinesOnly />
+    </div>
+  );
+
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-1 gap-y-1 border-b px-2 py-1">
+    <div className={toolbarClass}>
       <div role="radiogroup" aria-label={t('section2d.tools.group')} className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
         {TOOLS.map(({ tool, icon, labelKey }) => (
           <ToolSegment

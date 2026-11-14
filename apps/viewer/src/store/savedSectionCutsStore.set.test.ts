@@ -3,9 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * Saved cuts hold the whole plane set (#7545): the planes that were cutting with their
- * names and the active one, the zoom, and the exact camera. Applying one replaces
- * everything and restores the view, not only the geometry.
+ * Saved 3D views restore the clipping set (#7545). Saved 2D views restore the drawing plane.
  */
 
 import '@/test/setup-dom.js';
@@ -17,7 +15,7 @@ import { clearGlobalRefs, setGlobalRendererRef } from '@/hooks/useBCF.js';
 import { orderedSectionPlanes } from '@/lib/section/section-plane-set';
 import { DEFAULT_SECTION_ZOOM } from '@/lib/section/section-zoom-spec';
 import type { CameraViewpoint } from './types.js';
-import { applySavedSectionCut, saveCurrentSectionCut, useSavedSectionCuts } from './savedSectionCutsStore.js';
+import { applySavedSectionCut, saveCurrentSectionCut, setSavedViewsProject, updateSavedSectionCut, useSavedSectionCuts } from './savedSectionCutsStore.js';
 
 const state = () => useViewerStore.getState();
 const VIEW_A: CameraViewpoint = { position: { x: 5, y: 6, z: 7 }, target: { x: 1, y: 2, z: 3 }, up: { x: 0, y: 1, z: 0 }, fov: 0.8, projectionMode: 'perspective' };
@@ -63,7 +61,7 @@ describe('saving and applying a set of planes (#7545)', () => {
   it('saves the planes that cut, with names and the active one, and restores them exactly after everything changed', () => {
     threePlanes();
     const before = summary().filter((p) => p.enabled);
-    const id = saveCurrentSectionCut('Set 1');
+    const id = saveCurrentSectionCut('Set 1', '3d');
     const saved = useSavedSectionCuts.getState().cuts[0]!;
     assert.deepEqual(saved.planes.map((p) => p.axis), ['down', 'front'], 'the plane that was not cutting is not part of the cut');
     assert.equal(saved.activeIndex, 1);
@@ -83,7 +81,7 @@ describe('saving and applying a set of planes (#7545)', () => {
 
   it('applying replaces the whole set, including a box and the planes that were there', () => {
     threePlanes();
-    const id = saveCurrentSectionCut('Planes');
+    const id = saveCurrentSectionCut('Planes', '3d');
     state().addSectionPlane('side');
     state().setSectionBox({ min: [0, 0, 0], max: [1, 1, 1] });
     applySavedSectionCut(id);
@@ -95,11 +93,51 @@ describe('saving and applying a set of planes (#7545)', () => {
   it('a box plane is saved as a box and comes back as one', () => {
     state().setActiveTool('section');
     state().setSectionBox({ min: [0, 0, 0], max: [4, 3, 2] });
-    const id = saveCurrentSectionCut('Box');
+    const id = saveCurrentSectionCut('Box', '3d');
     state().clearSectionPlanes();
     applySavedSectionCut(id);
     assert.deepEqual(state().sectionPlane.box, { min: [0, 0, 0], max: [4, 3, 2] });
     assert.equal(state().sectionPlane.enabled, true);
+  });
+
+  it('saves and updates a 2D drawing with only its current plane', () => {
+    threePlanes();
+    const id = saveCurrentSectionCut('East wall', 'section');
+    const saved = () => useSavedSectionCuts.getState().cuts[0]!;
+    assert.deepEqual(saved().planes.map(p => p.axis), ['front']);
+    assert.equal(saved().activeIndex, 0);
+
+    const another = state().addSectionPlane('front')!;
+    state().setSectionPlanePosition(70);
+    assert.equal(state().sectionPlane.id, another);
+    updateSavedSectionCut(id);
+    assert.deepEqual(saved().planes.map(p => p.position), [70]);
+
+    applySavedSectionCut(id);
+    assert.equal(state().sectionPlane.position, 70);
+    assert.deepEqual(state().inactiveSectionPlanes, []);
+  });
+
+  it('reopens a legacy 2D view on its saved principal plane, even if it was second', () => {
+    threePlanes();
+    const id = saveCurrentSectionCut('Legacy', '3d');
+    const legacy = { ...useSavedSectionCuts.getState().cuts[0]!, kind: undefined };
+    const project = 'legacy-2d-plane-set';
+    const key = `ifc-lite:saved-drawing-views:v1:${project}`;
+    localStorage.setItem(key, JSON.stringify([legacy]));
+    try {
+      setSavedViewsProject(project);
+      const saved = useSavedSectionCuts.getState().cuts[0]!;
+      assert.deepEqual(saved.planes, [legacy.planes[1]]);
+      assert.equal(saved.activeIndex, 0);
+      applySavedSectionCut(id);
+      assert.equal(state().sectionPlane.name, 'East wall');
+      assert.equal(state().sectionPlane.position, 60);
+      assert.deepEqual(state().inactiveSectionPlanes, []);
+    } finally {
+      setSavedViewsProject(undefined);
+      localStorage.removeItem(key);
+    }
   });
 
   it('with nothing cutting, the active plane is what is saved', () => {

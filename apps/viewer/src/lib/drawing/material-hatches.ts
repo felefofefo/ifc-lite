@@ -80,21 +80,29 @@ export function materialNames(stores: readonly IfcDataStore[]): string[] {
 }
 
 export function materialNameForCut(store: IfcDataStore, entityId: number, materialId?: number): string | undefined {
-  if (materialId !== undefined && store.entities?.getTypeName(materialId) === 'IfcMaterial') {
-    const name = store.entities.getName(materialId);
-    if (name?.trim()) return name;
-  }
+  const id = materialIdForCut(store, entityId, materialId);
+  const name = id === undefined ? undefined : store.entities.getName(id);
+  return name?.trim() ? name : undefined;
+}
 
-  // Geometry may omit a material id on a single-material cut. Only use
-  // the association when every definition resolves to the same leaf.
-  const leaves = new Map<number, string>();
+export function materialIdForCut(store: IfcDataStore, entityId: number, materialId?: number): number | undefined {
+  if (materialId !== undefined && store.entities?.getTypeName(materialId) === 'IfcMaterial') return materialId;
+
+  // A polygon without a stamped layer can only identify one unambiguous leaf.
+  const leaves = new Set<number>();
   for (const definition of resolveAllMaterialDefIds(store, entityId)) {
     const materials = collectMaterialLeaves(store, definition);
     if (!materials.length) return undefined;
     for (const leaf of materials) {
       if (store.entities?.getTypeName(leaf.id) !== 'IfcMaterial' || !leaf.name?.trim()) return undefined;
-      leaves.set(leaf.id, leaf.name);
+      leaves.add(leaf.id);
     }
   }
   return leaves.size === 1 ? leaves.values().next().value : undefined;
+}
+
+export function reassignMaterialHatches(hatches: MaterialHatches, source: string, target?: string): MaterialHatches {
+  if (!Object.hasOwn(hatches, source) || source === target) return hatches;
+  const { [source]: style, ...remaining } = hatches;
+  return target ? { ...remaining, [target]: style } : remaining;
 }

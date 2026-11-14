@@ -5,7 +5,7 @@
 /**
  * The offset and plane controls of the active plane (#7545), driven like a user:
  * a typed value in the project's own unit, the wheel, the `− +` steppers, the
- * step menu, Flip / Set view / Show, and the one-click Fill. Assertions are on the
+ * step menu, Flip, Set view, and Show. Assertions are on the
  * store, the shown value and the camera calls, not on wiring.
  */
 
@@ -20,7 +20,6 @@ import { getDefaultSectionPlane } from '@/store/slices/sectionSlice.js';
 import { fixtureModel } from '@/test/store-fixture.js';
 import type { CameraCallbacks, CameraViewpoint } from '@/store/types';
 import { useSectionStep } from './sectionStep.js';
-import { resetRememberedHatch } from './useSectionFill.js';
 import { ViewportHud } from '../../viewport-ui/hud/ViewportHud.js';
 import { ToolOverlays } from '../ToolOverlays.js';
 import { SceneOverlayRoot } from '@/components/viewport-ui/scene';
@@ -54,7 +53,6 @@ const camera = {
 function setup(unitScale = 1): void {
   window.localStorage.clear();
   useSectionStep.setState({ stepM: 0.1 });
-  resetRememberedHatch();
   camera.applied = []; camera.presets = [];
   const m = model(unitScale);
   useViewerStore.setState({
@@ -234,41 +232,8 @@ describe('Flip, Set view and Show (#7545)', () => {
   });
 });
 
-describe('Fill slice (#7545)', () => {
-  it('one click paints the cut solid; a second returns to the hatch the user had', () => {
-    renderTool();
-    act(() => s().updateDrawing2DDisplayOptions({ show3DOverlay: false }));
-    act(() => s().setSectionCapStyle({ pattern: 'brick' }));
-    assert.equal(button('Fill').getAttribute('aria-pressed'), 'false');
-    click(button('Fill'));
-    assert.equal(s().sectionPlane.capStyle.pattern, 'solid');
-    assert.equal(s().sectionPlane.showCap, true);
-    assert.equal(button('Fill').getAttribute('aria-pressed'), 'true');
-    click(button('Fill'));
-    assert.equal(s().sectionPlane.capStyle.pattern, 'brick');
-  });
-
-  it('turns surfaces back on when they were off, and reaches every plane', () => {
-    renderTool();
-    act(() => s().updateDrawing2DDisplayOptions({ show3DOverlay: false }));
-    s().addSectionPlane('side');
-    act(() => s().setSectionShowCap(false));
-    click(button('Fill'));
-    for (const p of [s().sectionPlane, ...s().inactiveSectionPlanes]) {
-      assert.equal(p.showCap, true);
-      assert.equal(p.capStyle.pattern, 'solid');
-    }
-  });
-});
-
-it('toggles the drawing cap without changing the independent hatch style', () => {
+it('uses Cap as the only entry point for cut surfaces', () => {
   renderTool();
-  act(() => {
-    s().updateDrawing2DDisplayOptions({ show3DOverlay: true });
-    s().setSectionCapStyle({ pattern: 'brick' });
-    s().setSectionShowCap(true);
-  });
-  click(button('Fill'));
-  assert.equal(s().sectionPlane.showCap, false);
-  assert.equal(s().sectionPlane.capStyle.pattern, 'brick');
+  assert.equal(bar().querySelector('button[aria-label="Fill"]'), null);
+  assert.ok(button('Cap'));
 });

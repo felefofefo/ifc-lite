@@ -72,7 +72,7 @@ export function drawPublicationCanvasFills(
       const from = minX + (sign === 1 ? -maxY : minY);
       const to = maxX + (sign === 1 ? -minY : maxY);
       const anchor = map(0, 0);
-      const phase = polygon.isCut ? from : anchor.x - sign * anchor.y;
+      const phase = polygon.isCut && !polygon.cutOutline ? from : anchor.x - sign * anchor.y;
       const first = phase + Math.floor((from - phase) / gap) * gap;
       const steps = Math.ceil((to - first) / gap);
       for (let step = 0; step <= steps; step++) {

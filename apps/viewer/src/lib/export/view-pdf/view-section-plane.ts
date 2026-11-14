@@ -57,6 +57,7 @@ export interface ViewSectionPlaneState {
 }
 
 export interface ViewSectionResolveInput {
+  showCap?: boolean;
   plane: ViewSectionPlaneState;
   /**
    * World AABB the slider percentage is expressed against

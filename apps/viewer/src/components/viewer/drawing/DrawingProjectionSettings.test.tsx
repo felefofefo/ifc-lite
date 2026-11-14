@@ -18,11 +18,11 @@ async function projectionSettings() {
 
 const initial = useViewerStore.getState();
 afterEach(() => { cleanup(); useViewerStore.setState(initial, true); });
-async function open(unit = 'm') {
+async function open(unit = 'm', hiddenLinesOnly = false) {
   const DrawingProjectionSettings = await projectionSettings();
   useViewerStore.setState({ unitDisplayOverrides: { LENGTHUNIT: unit },
     drawing2DDisplayOptions: { ...initial.drawing2DDisplayOptions, constructionProjectionDepth: null } });
-  const ui = render(<DrawingProjectionSettings available />);
+  const ui = render(<DrawingProjectionSettings available hiddenLinesOnly={hiddenLinesOnly} />);
   const trigger = ui.querySelector<HTMLButtonElement>('button[aria-label="Projection settings"]'); assert.ok(trigger);
   click(trigger); await advance(0);
   const popup = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Projection settings"]'); assert.ok(popup);
@@ -100,4 +100,13 @@ test('Hidden Lines can be disabled without changing Projection depth', async () 
   click(control);
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showHiddenLines, false);
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.constructionProjectionDepth, null);
+});
+
+test('3D projection settings expose only the Hidden Lines control', async () => {
+  const popup = await open('m', true);
+  const controls = [...popup.querySelectorAll<HTMLInputElement>('input')];
+  assert.deepEqual(controls.map(control => control.getAttribute('aria-label')), ['Hidden Lines']);
+  act(() => useViewerStore.getState().updateDrawing2DDisplayOptions({ showHiddenLines: true }));
+  click(controls[0]!);
+  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showHiddenLines, false);
 });

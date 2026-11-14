@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Plus, SlidersHorizontal } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import type { DrawingScale } from '@ifc-lite/drawing-2d';
@@ -13,6 +13,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useViewerStore } from '@/store';
 import { drawingProjectId } from '@/lib/drawing/drawing-project';
 import { drawingLineweightScales, isCustomScale, LINEWEIGHT_PRESETS, lineweightTableKey, lineweightsAtScale, readLineweightTable, type LineweightTable } from '@/lib/drawing/lineweight-table';
+
+import { readLineweightSettingsFile } from '@/lib/drawing/publication-settings-file';
+import { DrawingSettingsTransfer } from './DrawingSettingsTransfer';
 
 export function useDrawingLineweights() {
   const projectId = useViewerStore(drawingProjectId);
@@ -49,7 +52,18 @@ export function DrawingLineweights({ scale, compact, onScaleChange, settings }: 
   const [added, setAdded] = useState<number[]>([]);
   const [denominator, setDenominator] = useState('');
   const [publicationScale, setPublicationScale] = useState<number | null>(null);
-  const scales = drawingLineweightScales(settings.table, scale, added);
+  const [draft, setDraft] = useState<LineweightTable | null>(null);
+  const [revision, setRevision] = useState(0);
+  const form = useRef<HTMLFormElement>(null);
+  const table = draft ?? settings.table;
+  const scales = drawingLineweightScales(table, scale, added);
+  function currentTable(): LineweightTable {
+    if (!form.current || !form.current.reportValidity()) throw new Error('Invalid lineweight fields.');
+    const data = new FormData(form.current);
+    return { ...table, ...Object.fromEntries(scales.map(({ factor }) => [
+      factor, Object.fromEntries(LINEWEIGHT_PRESETS.map(preset => [preset, Number(data.get(`${factor}-${preset}`))])),
+    ])) };
+  }
   const factor = Number(denominator.trim().replace(',', '.'));
   const canAdd = isCustomScale(factor) && !scales.some((entry) => entry.factor === factor);
   function addScale() {
@@ -65,6 +79,7 @@ export function DrawingLineweights({ scale, compact, onScaleChange, settings }: 
       setSaveError(false);
       if (next) {
         setAdded([]);
+        setDraft(null);
         setDenominator('');
         setPublicationScale(null);
       }
@@ -82,16 +97,18 @@ export function DrawingLineweights({ scale, compact, onScaleChange, settings }: 
             {t('drawingUnderlay.lineweights.description')}
           </DialogDescription>
         </DialogHeader>
-        <form key={`${settings.projectId ?? 'session'}:${scale}`} className="space-y-4" onSubmit={(event) => {
+        <DrawingSettingsTransfer filename="ifc-lite-lineweights.json"
+          getData={() => ({ version: 1, kind: 'ifc-lite-lineweights', scales: currentTable() })}
+          onImport={raw => {
+            const incoming = readLineweightSettingsFile(raw);
+            setDraft({ ...currentTable(), ...incoming });
+            setRevision(value => value + 1);
+          }} />
+        <form ref={form} key={`${settings.projectId ?? 'session'}:${scale}:${revision}`} className="space-y-4" onSubmit={(event) => {
           event.preventDefault();
-          const data = new FormData(event.currentTarget);
-          const table = Object.fromEntries(scales.map(({ factor }) => [
-            factor,
-            Object.fromEntries(LINEWEIGHT_PRESETS.map((preset) => [preset, Number(data.get(`${factor}-${preset}`))])),
-          ])) as LineweightTable;
           const selectedScale = scales.find(({ factor }) => factor === (publicationScale ?? scale));
           try {
-            settings.save({ ...settings.table, ...table });
+            settings.save(currentTable());
           } catch (error) {
             console.warn('Could not save drawing lineweights', error);
             setSaveError(true);
@@ -127,7 +144,7 @@ export function DrawingLineweights({ scale, compact, onScaleChange, settings }: 
             </thead>
             <tbody>
               {scales.map(({ name, factor }) => {
-                const row = lineweightsAtScale(settings.table, factor);
+                const row = lineweightsAtScale(table, factor);
                 return <tr key={factor}>
                   <th scope="row" className="text-left font-normal">{name}</th>
                   {LINEWEIGHT_PRESETS.map((preset) => <td key={preset} className="p-1">
