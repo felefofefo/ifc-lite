@@ -12,11 +12,14 @@ import { resolveCutPolygonStyle, type CutPolygonStyleContext } from '@/component
 import { resolveDrawingPaperTheme } from '@/components/viewer/drawing/paper-theme';
 import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import { drawingPublicationHatchStyle } from './drawingPublicationHatchStyle';
+import { useDrawingLineweights } from '@/components/viewer/drawing/DrawingLineweights';
+import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { makePropertiesGetter } from './drawingElementProperties';
 import { useDrawingMaterials } from './useDrawingMaterials';
 
 export function usePublicationFillPreview(retainNativeCaps = false, surface3D = false) {
   const projectId = useViewerStore(drawingProjectId);
+  const { table: lineweightTable } = useDrawingLineweights();
   const { patterns } = useDrawingPatterns();
   const { hatches } = useDrawingMaterials(projectId);
   const models = useViewerStore((s) => s.models);
@@ -49,7 +52,7 @@ export function usePublicationFillPreview(retainNativeCaps = false, surface3D = 
       fallbackStyle: (polygon: Parameters<typeof resolveCutPolygonStyle>[0]) =>
         resolveCutPolygonStyle(polygon, context),
       resolve: enabled ? drawingPublicationHatchStyle(hatches, scale, models, legacyStore, overrides ? context.overrideEngine.getRules() : [],
-        properties, resolveEntityRef, patterns, distant) : undefined,
+        properties, resolveEntityRef, patterns, distant, lineweightsAtScale(lineweightTable, scale)) : undefined,
     };
-  }, [enabled, hatches, scale, models, legacyStore, overrides, preset, rules, legacyRules, mutationVersion, retainNativeCaps, patterns, darkPaper, distant]);
+  }, [enabled, hatches, scale, models, legacyStore, overrides, preset, rules, legacyRules, mutationVersion, retainNativeCaps, patterns, darkPaper, distant, lineweightTable]);
 }

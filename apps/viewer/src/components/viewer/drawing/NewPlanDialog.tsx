@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ViewScaleSelect } from './ViewIdentityFields';
+import type { LineweightTable } from '@/lib/drawing/lineweight-table';
 import { useTranslation } from '@/i18n';
 import { buildStoreyWorkplane, isWorkplane } from '@/lib/commands/modeling/workplane';
 import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
@@ -18,7 +20,7 @@ import { createDrawingView, useSavedSectionCuts } from '@/store/savedSectionCuts
 
 const storeyKey = (storey: { modelId: string; expressId: number }) => JSON.stringify([storey.modelId, storey.expressId]);
 
-export function NewPlanDialog({ close }: { close: () => void }) {
+export function NewPlanDialog({ close, publicationScale, lineweightTable }: { close: () => void; publicationScale: number; lineweightTable: LineweightTable }) {
   const { t } = useTranslation();
   const models = useViewerStore(s => s.models);
   const legacy = useViewerStore(s => s.ifcDataStore);
@@ -26,6 +28,7 @@ export function NewPlanDialog({ close }: { close: () => void }) {
   const storeys = useMemo(() => collectStoreys(models, legacy, false), [models, legacy]);
   const [level, setLevel] = useState(storeys[0] ? storeyKey(storeys[0]) : 'absolute');
   const [name, setName] = useState('');
+  const [scale, setScale] = useState(publicationScale);
   const cuts = useSavedSectionCuts(s => s.cuts);
   const [code, setCode] = useState(() => nextViewCode('plan', cuts));
   const validCode = isViewCodeAvailable(code, cuts);
@@ -55,7 +58,7 @@ export function NewPlanDialog({ close }: { close: () => void }) {
         const position = planCutPosition(elevation, runtime.geometryResult?.coordinateInfo.shiftedBounds ?? null);
         if (position === null) { setError(true); return; }
         try {
-          createDrawingView(name.trim() || selected?.name || t('section2d.views.type.plan'), 'plan', { axis: 'down', position }, elevation, code);
+          createDrawingView(name.trim() || selected?.name || t('section2d.views.type.plan'), 'plan', { axis: 'down', position }, elevation, code, undefined, scale);
           close();
         } catch { setError(true); }
       }}>
@@ -64,6 +67,7 @@ export function NewPlanDialog({ close }: { close: () => void }) {
         <label className="block space-y-1 text-sm">{t('section2d.views.code')}
           <Input value={code} maxLength={24} onChange={e => setCode(e.target.value)} />
         </label>
+        <ViewScaleSelect value={scale} table={lineweightTable} onChange={entry => setScale(entry.factor)} />
         {!validCode && <p className="text-sm text-destructive">{t('section2d.views.codeConflict')}</p>}
         <Select value={level} onValueChange={next => { setLevel(next); setError(false); }}>
           <SelectTrigger aria-label={t('section2d.create.level')}><SelectValue /></SelectTrigger>

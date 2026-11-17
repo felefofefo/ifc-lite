@@ -2,37 +2,87 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { useRef, useState, type ChangeEvent } from 'react';
-import { Copy, Ellipsis, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Copy, Download, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import type { GraphicStyle } from '@ifc-lite/drawing-2d';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { toast } from '@/components/ui/toast';
 import { useTranslation } from '@/i18n';
-import { clearDeletedDrawingViewTemplate, setDrawingViewTemplate } from '@/store/savedSectionCutsStore';
-import { useViewerStore } from '@/store';
+import { applyDrawingTemplate, beginDrawingTemplateEdit, cancelDrawingTemplateEdit, captureDrawingTemplate, clearDeletedDrawingViewTemplate, saveDrawingViewRows, selectActiveSavedView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useDrawingTypeRows, useViewTemplates } from '@/hooks/useDrawingTemplateRules';
-import { decodeViewTemplates, encodeViewTemplates, TEMPLATE_PREFIX, type ViewTemplate } from '@/lib/drawing/view-templates';
+import { decodeViewTemplates, encodeViewTemplates, reusableViewRules, TEMPLATE_PREFIX, VIEW_TEMPLATE_GROUPS, viewTemplateGroups, type TemplateRow, type ViewTemplate, type ViewTemplateGroup } from '@/lib/drawing/view-templates';
 import { loadSavedFilters, saveFilter } from '@/lib/search/saved-filters';
 import { downloadFile } from '@/lib/export/download';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import { DrawingRulePaintControls } from './DrawingHatchSelect';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DrawingSettingsPanel } from '../DrawingSettingsPanel';
 import { DrawingPenControls } from './DrawingPenControls';
 
-export function DrawingViewTemplates({ lineweights }: { lineweights: LineweightRow }) {
+const GROUP_LABEL = {
+  projection: 'section2d.projection.settings',
+  filters: 'section2d.inspector.filters',
+  graphics: 'section2d.inspector.graphics',
+} as const;
+
+export function DrawingViewTemplates() {
   const { t } = useTranslation();
   const { templates, save } = useViewTemplates();
-  const active = useViewerStore(s => s.activePresetId);
-  const activeTemplate = templates.find(template => template.id === active);
+  const view = useSavedSectionCuts(selectActiveSavedView);
+  const active = templates.find(template => template.id === view?.graphics?.presetId);
+  const editing = useSavedSectionCuts(s => !!s.templateEdit);
+  const [capturedId, setCapturedId] = useState<string>();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [editor, setEditor] = useState<ViewTemplate | 'new'>();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<ViewTemplate>();
   const [pendingDeletion, setPendingDeletion] = useState<ViewTemplate>();
   const [failed, setFailed] = useState(false);
 
+  function attempt(action: () => void) {
+    try { action(); setFailed(false); }
+    catch (error) { console.warn('Could not change drawing templates', error); setFailed(true); }
+  }
+
+  function capture(): ViewTemplate | undefined {
+    if (!view) return;
+    const snapshot = captureDrawingTemplate(view);
+    const rules = new Map(view.graphics?.rows === undefined ? active?.rules?.map(rule => [rule.id, rule]) : []);
+    snapshot.rules?.forEach(rule => rules.set(rule.id, rule));
+    return {
+      ...snapshot, id: TEMPLATE_PREFIX + crypto.randomUUID(), name: '',
+      groups: [...VIEW_TEMPLATE_GROUPS], rows: structuredClone(view.graphics?.rows ?? active?.rows ?? []),
+      rules: [...rules.values()],
+    };
+  }
+
+  function saveDraft() {
+    if (!draft || !draft.name.trim()) return;
+    const groups = viewTemplateGroups(draft);
+    if (!groups.length) return;
+    attempt(() => {
+      const updated: ViewTemplate = {
+        id: draft.id, name: draft.name.trim(), groups: [...groups],
+        rows: draft.rows,
+        rules: draft.rules ? reusableViewRules(draft.rules) : undefined,
+        projection: draft.projection ?? (groups.includes('projection') && view ? captureDrawingTemplate(view).projection : undefined),
+        filters: draft.filters ?? (groups.includes('filters') && view ? captureDrawingTemplate(view).filters : undefined),
+      };
+      const previous = templates.find(item => item.id === updated.id);
+      const settings = (item: ViewTemplate) => JSON.stringify([viewTemplateGroups(item), item.rows, item.rules, item.projection, item.filters]);
+      updated.revision = previous && settings(previous) === settings(updated) ? previous.revision : crypto.randomUUID();
+      save(previous ? templates.map(item => item.id === updated.id ? updated : item) : [...templates, updated]);
+      setDraft(structuredClone(updated));
+      if (view && (capturedId === updated.id || active?.id === updated.id)) applyDrawingTemplate(updated, active);
+      setCapturedId(undefined);
+      toast.success(t('section2d.templateManager.saved', { name: updated.name }));
+    });
+  }
+
   async function importTemplates(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
     if (!file) return;
     try {
       if (file.size > 2_000_000) throw new Error('Template file too large.');
@@ -52,122 +102,166 @@ export function DrawingViewTemplates({ lineweights }: { lineweights: LineweightR
     }
   }
 
-  function applyTemplate(id: string | null) {
-    try {
-      setDrawingViewTemplate(id);
-      setFailed(false);
-    } catch (error) {
-      console.warn('Could not apply drawing template', error);
-      setFailed(true);
-    }
-  }
-
-  function duplicateTemplate(template: ViewTemplate) {
-    const suffixLength = t('drawingUnderlay.template.copyName', { name: '' }).length;
-    setEditor({
-      id: `${TEMPLATE_PREFIX}${crypto.randomUUID()}`,
-      name: t('drawingUnderlay.template.copyName', { name: template.name.slice(0, Math.max(0, 80 - suffixLength)) }),
-      rows: structuredClone(template.rows),
+  function saveTemplateSettings() {
+    if (!view || !active || !editing) return;
+    attempt(() => {
+      const snapshot = captureDrawingTemplate(view);
+      const updated: ViewTemplate = {
+        ...active, ...snapshot, rows: structuredClone(view.graphics?.rows ?? active.rows),
+        rules: reusableViewRules(snapshot.rules ?? []), revision: crypto.randomUUID(),
+      };
+      save(templates.map(item => item.id === updated.id ? updated : item));
+      cancelDrawingTemplateEdit();
+      applyDrawingTemplate(updated, active);
+      toast.success(t('section2d.templateManager.saved', { name: updated.name }));
     });
   }
 
-  function deleteTemplate() {
-    if (!pendingDeletion) return;
-    try {
-      save(templates.filter(template => template.id !== pendingDeletion.id));
-      try {
-        clearDeletedDrawingViewTemplate(pendingDeletion.id);
-      } catch (error) {
-        save(templates);
-        throw error;
-      }
-      setFailed(false);
-    } catch (error) {
-      console.warn('Could not delete drawing template', error);
-      setFailed(true);
-    }
-    setPendingDeletion(undefined);
-  }
-
-  const editorTitle = editor === 'new' ? 'drawingUnderlay.template.new'
-    : templates.some(template => template.id === editor?.id) ? 'drawingUnderlay.template.edit' : 'drawingUnderlay.template.duplicate';
-  return <>
-    <Dialog open={editor !== undefined} onOpenChange={open => { if (!open) setEditor(undefined); }}>
-      <div className="flex items-center gap-1">
-        <Select value={activeTemplate?.id ?? 'none'} onValueChange={value => applyTemplate(value === 'none' ? null : value)}>
-          <SelectTrigger className="h-8 min-w-0 flex-1 text-xs" aria-label={t('drawingUnderlay.template.title')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">{t('drawingUnderlay.template.none')}</SelectItem>
-            {templates.map(template => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Button type="button" size="icon" variant="outline" className="h-8 w-8 shrink-0"
-          aria-label={t('drawingUnderlay.template.new')} title={t('drawingUnderlay.template.new')} onClick={() => setEditor('new')}>
-          <Plus className="size-4" />
-        </Button>
-        {activeTemplate && <Button type="button" size="icon" variant="outline" className="h-8 w-8 shrink-0"
-          aria-label={t('drawingUnderlay.template.edit')} title={t('drawingUnderlay.template.edit')} onClick={() => setEditor(activeTemplate)}>
-          <Pencil className="size-4" />
-        </Button>}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" aria-label={t('drawingUnderlay.template.actions')}>
-              <Ellipsis className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => fileRef.current?.click()}>{t('drawingUnderlay.template.import')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => downloadFile(encodeViewTemplates(templates, loadSavedFilters()), 'ifc-lite-view-templates.json', 'application/json')}>
-              {t('drawingUnderlay.template.export')}
-            </DropdownMenuItem>
-            {activeTemplate && <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => duplicateTemplate(activeTemplate)}>
-                <Copy className="size-4" />{t('drawingUnderlay.template.duplicate')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setPendingDeletion(activeTemplate)} className="text-destructive">
-                <Trash2 className="size-4" />{t('drawingUnderlay.template.delete')}
-              </DropdownMenuItem>
-            </>}
-            {active !== null && <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => applyTemplate(null)}>{t('drawingUnderlay.template.detach')}</DropdownMenuItem>
-            </>}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <input type="file" hidden ref={fileRef} accept=".json" onChange={importTemplates} />
+  return <div className="space-y-1">
+    <p className="text-xs font-medium">{t('drawingUnderlay.template.title')}</p>
+    <div className="flex gap-1">
+      <Select value={active?.id ?? 'none'} disabled={!view || editing}
+        onValueChange={value => attempt(() => applyDrawingTemplate(templates.find(item => item.id === value), active))}>
+        <SelectTrigger className="h-8 min-w-0 flex-1 text-xs [&>svg]:opacity-100" aria-label={t('drawingUnderlay.template.title')}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">{t('drawingUnderlay.template.none')}</SelectItem>
+          {templates.map(template => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Button type="button" size="sm" variant="outline" disabled={editing} onClick={() => {
+        const selected = active ?? templates[0];
+        setDraft(selected && structuredClone(selected));
+        setOpen(true);
+      }}>{t('section2d.templateManager.manage')}</Button>
+      {active && !editing && <Button type="button" size="icon" variant="outline" className="size-8 shrink-0"
+        aria-label={t('section2d.templateManager.editSettings')} title={t('section2d.templateManager.editSettings')}
+        onClick={() => attempt(() => beginDrawingTemplateEdit(active))}><Pencil className="size-4" /></Button>}
+    </div>
+    {editing && <div className="space-y-2 rounded-md border border-primary/40 p-2">
+      <p className="text-xs font-medium">{t('section2d.templateManager.editing', { name: active?.name ?? '' })}</p>
+      <div className="flex flex-wrap gap-1">
+        <Button type="button" size="sm" onClick={saveTemplateSettings}>{t('section2d.templateManager.saveSettings')}</Button>
+        <Button type="button" size="sm" variant="outline" onClick={() => attempt(cancelDrawingTemplateEdit)}>{t('section2d.create.cancel')}</Button>
       </div>
-      {failed && <p role="alert" className="mt-2 text-xs text-destructive">{t('drawingUnderlay.template.error')}</p>}
-      <DialogContent scrollBody aria-describedby={undefined} className="gap-3 p-4 sm:max-w-3xl sm:p-6">
-        <DialogHeader><DialogTitle>{t(editorTitle)}</DialogTitle></DialogHeader>
-        {editor !== undefined && <TemplateEditor template={editor === 'new' ? undefined : editor} lineweights={lineweights} onClose={() => setEditor(undefined)} />}
-      </DialogContent>
-    </Dialog>
-    <Dialog open={pendingDeletion !== undefined} onOpenChange={open => { if (!open) setPendingDeletion(undefined); }}>
-      <DialogContent>
+    </div>}
+    {!active && <p className="text-xs text-muted-foreground">{t('drawingUnderlay.template.local')}</p>}
+    {failed && !open && <p role="alert" className="text-xs text-destructive">{t('drawingUnderlay.template.error')}</p>}
+    <Dialog open={open} onOpenChange={next => { setOpen(next); if (!next) { setDraft(undefined); setCapturedId(undefined); setPendingDeletion(undefined); setFailed(false); } }}>
+      <DialogContent scrollBody className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t('drawingUnderlay.template.delete')}</DialogTitle>
-          <DialogDescription>{t('drawingUnderlay.template.deleteDescription', { name: pendingDeletion?.name ?? '' })}</DialogDescription>
+          <DialogTitle>{t('drawingUnderlay.template.title')}</DialogTitle>
+          <DialogDescription>{t('section2d.templateManager.description')}</DialogDescription>
         </DialogHeader>
-        <DialogFooter>
-          <Button size="sm" variant="outline" autoFocus onClick={() => setPendingDeletion(undefined)}>{t('section2d.create.cancel')}</Button>
-          <Button size="sm" variant="destructive" onClick={deleteTemplate}>{t('drawingUnderlay.template.delete')}</Button>
-        </DialogFooter>
+        <DialogBody className="space-y-3">
+          <div className="flex flex-wrap gap-1">
+            <Button type="button" size="sm" variant="outline" disabled={!view} onClick={() => { const next = capture(); setDraft(next); setCapturedId(next?.id); setPendingDeletion(undefined); }}>
+              <Plus className="size-4" />{t('section2d.templateManager.capture')}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
+              <Upload className="size-4" />{t('drawingUnderlay.template.import')}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => downloadFile(encodeViewTemplates(templates, loadSavedFilters()), 'ifc-lite-view-templates.json', 'application/json')}>
+              <Download className="size-4" />{t('drawingUnderlay.template.export')}
+            </Button>
+            <input type="file" hidden ref={fileRef} accept=".json" onChange={importTemplates} />
+          </div>
+          <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+            <ul className="max-h-72 divide-y overflow-auto rounded-md border">
+              {templates.map(template => <li key={template.id} className="flex items-center gap-1 p-1">
+                <Button type="button" size="sm" variant="toggle" aria-pressed={draft?.id === template.id}
+                  title={template.name} className="min-w-0 flex-1 justify-start px-2 text-xs"
+                  onClick={() => { setDraft(structuredClone(template)); setPendingDeletion(undefined); }}>
+                  <span className="truncate">{template.name}</span>
+                </Button>
+                <Button type="button" size="icon-xs" variant="ghost" aria-label={t('drawingUnderlay.template.duplicate')}
+                  title={t('drawingUnderlay.template.duplicate')} onClick={() => {
+                    setPendingDeletion(undefined);
+                    setDraft({ ...structuredClone(template), id: TEMPLATE_PREFIX + crypto.randomUUID(),
+                      name: t('drawingUnderlay.template.copyName', { name: template.name }).slice(0, 80) });
+                  }}><Copy className="size-4" /></Button>
+                <Button type="button" size="icon-xs" variant="ghost" aria-label={t('drawingUnderlay.template.delete')}
+                  title={t('drawingUnderlay.template.delete')} onClick={() => { setPendingDeletion(template); setDraft(undefined); }}>
+                  <Trash2 className="size-4" />
+                </Button>
+              </li>)}
+              {!templates.length && <li className="p-3 text-xs text-muted-foreground">{t('section2d.templateManager.empty')}</li>}
+            </ul>
+            <div className="min-w-0">
+          {draft && <div className="space-y-2 rounded-md border p-3">
+            <label className="grid gap-1 text-sm">{t('drawingUnderlay.template.name')}
+              <Input maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.currentTarget.value })} />
+            </label>
+            <fieldset className="space-y-1 text-sm">
+              <legend className="font-medium">{t('section2d.templateManager.groups')}</legend>
+              {VIEW_TEMPLATE_GROUPS.map(group => <label key={group} className="flex items-center gap-2">
+                <input type="checkbox" className="accent-primary" checked={viewTemplateGroups(draft).includes(group)}
+                  disabled={!view && (group === 'projection' ? !draft.projection : group === 'filters' ? !draft.filters : false)}
+                  onChange={event => {
+                    const groups: ViewTemplateGroup[] = viewTemplateGroups(draft).filter(item => item !== group);
+                    if (event.currentTarget.checked) groups.push(group);
+                    setDraft({ ...draft, groups });
+                  }} />
+                {t(GROUP_LABEL[group])}
+              </label>)}
+            </fieldset>
+            <div className="flex justify-end gap-1">
+              <Button type="button" variant="outline" size="sm" onClick={() => setDraft(undefined)}>{t('section2d.create.cancel')}</Button>
+              <Button type="button" size="sm" disabled={!draft.name.trim() || !viewTemplateGroups(draft).length} onClick={saveDraft}>
+                {t('section2d.views.save')}
+              </Button>
+            </div>
+          </div>}
+          {pendingDeletion && <div className="space-y-2 rounded-md border p-3 text-sm">
+            <p>{t('drawingUnderlay.template.deleteDescription', { name: pendingDeletion.name })}</p>
+            <div className="flex justify-end gap-1">
+              <Button type="button" size="sm" variant="outline" onClick={() => setPendingDeletion(undefined)}>{t('section2d.create.cancel')}</Button>
+              <Button type="button" size="sm" variant="destructive" onClick={() => attempt(() => {
+                save(templates.filter(item => item.id !== pendingDeletion.id));
+                try { clearDeletedDrawingViewTemplate(pendingDeletion.id); }
+                catch (error) { save(templates); throw error; }
+                setPendingDeletion(undefined);
+                const next = templates.find(item => item.id !== pendingDeletion.id);
+                setDraft(next && structuredClone(next));
+              })}>{t('drawingUnderlay.template.delete')}</Button>
+            </div>
+          </div>}
+          {!draft && !pendingDeletion && <p className="p-3 text-xs text-muted-foreground">{t('section2d.templateManager.select')}</p>}
+            </div>
+          </div>
+          {failed && <p role="alert" className="text-xs text-destructive">{t('drawingUnderlay.template.error')}</p>}
+        </DialogBody>
       </DialogContent>
     </Dialog>
-  </>;
+  </div>;
 }
 
-function TemplateEditor({ template, lineweights, onClose }: {
-  template?: ViewTemplate; lineweights: LineweightRow; onClose: () => void;
+export function DrawingViewOptions({ lineweights, locked }: { lineweights: LineweightRow; locked?: boolean }) {
+  const { t } = useTranslation();
+  const { templates } = useViewTemplates();
+  const view = useSavedSectionCuts(selectActiveSavedView);
+  const [open, setOpen] = useState(false);
+  const legacy = view?.graphics?.rows === undefined ? templates.find(item => item.id === view?.graphics?.presetId) : undefined;
+  const rows = view?.graphics?.rows ?? legacy?.rows ?? [];
+  return <Dialog open={open} onOpenChange={setOpen}>
+    <DialogTrigger asChild>
+      <Button type="button" variant="ghost" size="sm" disabled={!view || locked}
+        className="w-full justify-between rounded-none border-b px-3 text-xs font-medium">
+        {t('section2d.viewOptions.title')}<ChevronRight aria-hidden="true" className="size-4 shrink-0" />
+      </Button>
+    </DialogTrigger>
+    <DialogContent scrollBody aria-describedby={undefined} className="sm:max-w-3xl">
+      <DialogHeader><DialogTitle>{t('section2d.viewOptions.title')}</DialogTitle></DialogHeader>
+      {open && view && <ClassOptions key={view.id} initialRows={rows} inheritedRules={legacy?.rules} lineweights={lineweights} onClose={() => setOpen(false)} />}
+    </DialogContent>
+  </Dialog>;
+}
+
+function ClassOptions({ initialRows, inheritedRules, lineweights, onClose }: {
+  initialRows: TemplateRow[]; inheritedRules?: ViewTemplate['rules']; lineweights: LineweightRow; onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const { templates, save } = useViewTemplates();
   const classes = useDrawingTypeRows();
-  const [name, setName] = useState(template?.name ?? '');
-  const [rows, setRows] = useState(template?.rows ?? []);
+  const [rows, setRows] = useState(initialRows);
   const [selectedRow, setRow] = useState<{ ifcClass: string; typeName?: string }>();
   const classNames = [...new Set([...classes.keys(), ...rows.map(r => r.ifcClass)])].sort();
   const row = selectedRow && classNames.includes(selectedRow.ifcClass)
@@ -180,28 +274,19 @@ function TemplateEditor({ template, lineweights, onClose }: {
     if (!row) return;
     setRows(current => [...current.filter(candidate => !sameRow(candidate)), { ...row, style }]);
   }
-  function saveAndApply() {
-    try {
-      const updated = {
-        id: template?.id ?? `${TEMPLATE_PREFIX}${crypto.randomUUID()}`,
-        name: name.trim(),
-        rows,
-      };
-      save(templates.some(existing => existing.id === updated.id)
-        ? templates.map(existing => existing.id === updated.id ? updated : existing)
-        : [...templates, updated]);
-      setDrawingViewTemplate(updated.id);
-      onClose();
-    } catch (error) {
-      console.warn('Could not save drawing template', error);
-      setFailed(true);
-    }
+  function saveOptions() {
+    try { saveDrawingViewRows(rows, inheritedRules); onClose(); }
+    catch (error) { console.warn('Could not save view options', error); setFailed(true); }
   }
 
   return <>
     <DialogBody className="space-y-3 p-1 text-sm">
-      <Input className="h-8" aria-label={t('drawingUnderlay.template.name')} placeholder={t('drawingUnderlay.template.name')}
-        value={name} onChange={e => setName(e.target.value)} maxLength={80} />
+      <Tabs defaultValue="classes">
+        <TabsList>
+          <TabsTrigger value="classes">{t('section2d.viewOptions.classes')}</TabsTrigger>
+          <TabsTrigger value="rules">{t('drawingUnderlay.settings.customRulesHeading')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="classes">
       <div className="grid items-start gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <div className="max-h-48 min-w-0 overflow-auto rounded-md border md:max-h-[min(55dvh,36rem)]">
           <table className="w-full table-fixed text-left text-xs">
@@ -224,7 +309,7 @@ function TemplateEditor({ template, lineweights, onClose }: {
                 <td className="p-1">
                   <Select value={selected && row?.typeName ? `type:${row.typeName}` : 'all'} disabled={types.length === 0}
                     onValueChange={value => setRow({ ifcClass, typeName: value === 'all' ? undefined : value.slice(5) })}>
-                    <SelectTrigger className="h-7 px-2 text-xs" aria-label={`${ifcClass} ${t('drawingUnderlay.template.type')}`}>
+                    <SelectTrigger className="[&>svg]:text-foreground [&>svg]:opacity-100 h-7 px-2 text-xs" aria-label={`${ifcClass} ${t('drawingUnderlay.template.type')}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="max-w-[75vw]">
@@ -242,7 +327,7 @@ function TemplateEditor({ template, lineweights, onClose }: {
           <div className="flex items-center justify-between gap-2 text-xs">
             <span>{t('drawingUnderlay.template.visibility')}</span>
             <Select value={String(style.visible)} onValueChange={value => edit({ ...style, visible: value === 'undefined' ? undefined : value === 'true' })}>
-              <SelectTrigger className="h-7 w-auto text-xs" aria-label={t('drawingUnderlay.template.visibility')}><SelectValue /></SelectTrigger>
+              <SelectTrigger className="[&>svg]:text-foreground [&>svg]:opacity-100 h-7 w-auto text-xs" aria-label={t('drawingUnderlay.template.visibility')}><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="undefined">{t('drawingUnderlay.pen.inherit')}</SelectItem>
                 <SelectItem value="true">{t('drawingUnderlay.template.show')}</SelectItem>
@@ -255,11 +340,14 @@ function TemplateEditor({ template, lineweights, onClose }: {
           <Button size="sm" variant="ghost" disabled={!rows.some(sameRow)} onClick={() => setRows(current => current.filter(candidate => !sameRow(candidate)))}>{t('drawingUnderlay.template.reset')}</Button>
         </div>}
       </div>
+        </TabsContent>
+        <TabsContent value="rules"><DrawingSettingsPanel lineweights={lineweights} /></TabsContent>
+      </Tabs>
       {failed && <p role="alert" className="text-destructive">{t('drawingUnderlay.template.error')}</p>}
     </DialogBody>
     <DialogFooter className="gap-2 border-t pt-3 sm:space-x-0">
       <Button size="sm" variant="outline" onClick={onClose}>{t('section2d.create.cancel')}</Button>
-      <Button size="sm" disabled={!name.trim()} onClick={saveAndApply}>{t('drawingUnderlay.template.apply')}</Button>
+      <Button size="sm" onClick={saveOptions}>{t('section2d.views.save')}</Button>
     </DialogFooter>
   </>;
 }

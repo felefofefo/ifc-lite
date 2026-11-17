@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, SlidersHorizontal } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import type { DrawingScale } from '@ifc-lite/drawing-2d';
@@ -17,6 +17,8 @@ import { drawingLineweightScales, isCustomScale, LINEWEIGHT_PRESETS, lineweightT
 import { readLineweightSettingsFile } from '@/lib/drawing/publication-settings-file';
 import { DrawingSettingsTransfer } from './DrawingSettingsTransfer';
 
+const lineweightChanges = new EventTarget();
+
 export function useDrawingLineweights() {
   const projectId = useViewerStore(drawingProjectId);
   const [edited, setEdited] = useState<{ projectId: string | undefined; table: LineweightTable }>();
@@ -30,9 +32,19 @@ export function useDrawingLineweights() {
     }
   }, [projectId]);
 
+  useEffect(() => {
+    function update(event: Event) {
+      const change = (event as CustomEvent<{ projectId: string | undefined; table: LineweightTable }>).detail;
+      if (change.projectId === projectId) setEdited(change);
+    }
+    lineweightChanges.addEventListener('change', update);
+    return () => lineweightChanges.removeEventListener('change', update);
+  }, [projectId]);
+
   function save(table: LineweightTable) {
     if (projectId) localStorage.setItem(lineweightTableKey(projectId), JSON.stringify(table));
     setEdited({ projectId, table });
+    lineweightChanges.dispatchEvent(new CustomEvent('change', { detail: { projectId, table } }));
   }
 
   return { projectId, table: edited && edited.projectId === projectId ? edited.table : saved, save };

@@ -296,7 +296,7 @@ function DimensionStyleForm({ settings, unitOverrides, lineweights, selection, i
       </p>}
       <DialogBody>
         <div className="grid items-start gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-          {preview && <svg viewBox="0 0 100 48" className="h-36 w-full rounded-md border bg-paper text-paper-ink md:sticky md:top-0 md:h-48"
+          {preview && <svg viewBox="0 0 100 48" className="block h-36 w-full rounded-md border bg-paper text-paper-ink md:sticky md:top-0 md:h-48"
             role="img" aria-label={t('section2d.dimensionStyle.preview')}>
             <g stroke={ink} strokeWidth={preview.lineWidth}>
               {preview.strokes.map(([from, to], i) => <line key={i} x1={from.x} y1={from.y} x2={to.x} y2={to.y} />)}
@@ -388,8 +388,9 @@ function DimensionStyleForm({ settings, unitOverrides, lineweights, selection, i
 }
 
 function StyleGroup({ title, children }: { title: string; children: ReactNode }) {
-  return <fieldset className="min-w-0 rounded-md border px-3 pb-3 pt-1.5">
-    <legend className="px-1 text-xs font-medium">{title}</legend>
+  return <fieldset className="min-w-0 rounded-md border p-3">
+    <legend className="sr-only">{title}</legend>
+    <div aria-hidden="true" className="mb-2 text-xs font-medium">{title}</div>
     <div className="grid grid-cols-2 items-start gap-2.5">{children}</div>
   </fieldset>;
 }

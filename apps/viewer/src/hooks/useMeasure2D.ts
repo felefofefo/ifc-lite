@@ -6,20 +6,35 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isOccludedDrawingLine, type Drawing2D } from '@ifc-lite/drawing-2d';
+import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
 import { axisFlipForSection } from '@/hooks/pdfSectionLayout';
 import { KEYBOARD_PRIORITY, registerKeyboardCommand } from '@/lib/commands/dispatcher';
-import { clickDimension, dimensionSegments, EMPTY_DIMENSION_DRAFT, finishDimensionPoints, isCurvedDimension, type DimensionSegment, type DimensionType, curvedDimension, snapDrawingAngle } from '@/lib/drawing/dimension-line';
+import { clickDimension, dimensionSegments, EMPTY_DIMENSION_DRAFT, finishDimensionPoints, isCurvedDimension, type DimensionSegment, type DimensionType, curvedDimension } from '@/lib/drawing/dimension-line';
 import type { Point2D } from '@/store/slices/drawing2DSlice';
+
+export const DEFAULT_OBJECT_SNAPS = { endpoint: true, midpoint: false, intersection: false, nearest: true };
+export type DrawingObjectSnaps = typeof DEFAULT_OBJECT_SNAPS;
+
+function segmentIntersection(a: Point2D, b: Point2D, c: Point2D, d: Point2D): Point2D | null {
+  const dx = b.x - a.x, dy = b.y - a.y, ex = d.x - c.x, ey = d.y - c.y;
+  const det = dx * ey - dy * ex;
+  if (Math.abs(det) <= 1e-12) return null;
+  const x = c.x - a.x, y = c.y - a.y;
+  const t = (x * ey - y * ex) / det, u = (x * dy - y * dx) / det;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { x: a.x + t * dx, y: a.y + t * dy } : null;
+}
 
 interface UseMeasure2DParams {
   drawing: Drawing2D | null;
   drawingKey?: string;
+  objectSnaps?: DrawingObjectSnaps;
   viewTransform: { x: number; y: number; scale: number };
   setViewTransform: React.Dispatch<React.SetStateAction<{ x: number; y: number; scale: number }>>;
   sectionAxis: 'down' | 'front' | 'side';
   containerRef: React.RefObject<HTMLDivElement | null>;
   measure2DMode: boolean;
   dimensionType: DimensionType;
+  angularSnap?: AngularSnap;
   showHiddenLines?: boolean;
   setMeasure2DSnapPoint: (point: Point2D | null) => void;
   onCancel: () => void;
@@ -27,12 +42,12 @@ interface UseMeasure2DParams {
 }
 
 export function useMeasure2D({
-  drawing, drawingKey, viewTransform, setViewTransform, sectionAxis, containerRef,
-  measure2DMode, dimensionType, showHiddenLines, setMeasure2DSnapPoint, onCancel, onPlace,
+  drawing, drawingKey, objectSnaps = DEFAULT_OBJECT_SNAPS, viewTransform, setViewTransform, sectionAxis, containerRef,
+  measure2DMode, dimensionType, angularSnap = 'off', showHiddenLines, setMeasure2DSnapPoint, onCancel, onPlace,
 }: UseMeasure2DParams) {
   const pan = useRef<Point2D | null>(null);
   const [draft, setDraft] = useState(EMPTY_DIMENSION_DRAFT);
-  const [cursor, setCursor] = useState<{ point: Point2D; snapped: boolean } | null>(null);
+  const [cursor, setCursor] = useState<{ point: Point2D; snapped: boolean; alignedAxis?: Point2D } | null>(null);
 
   const reset = useCallback(() => {
     setDraft(EMPTY_DIMENSION_DRAFT);
@@ -85,82 +100,51 @@ export function useMeasure2D({
     return { point: nearest, dist };
   }, []);
 
-  // Find snap point near cursor (check polygon vertices, edges, and line endpoints)
-  const findSnapPoint = useCallback((drawingCoord: { x: number; y: number }): { x: number; y: number } | null => {
-    if (!drawing) return null;
-
-    const snapThreshold = 10 / viewTransform.scale; // 10 screen pixels
-    let bestSnap: { x: number; y: number } | null = null;
-    let bestDist = snapThreshold;
-
-    // Priority 1: Check polygon vertices (endpoints are highest priority)
-    for (const polygon of drawing.cutPolygons) {
-      for (const pt of polygon.polygon.outer) {
-        const dist = Math.sqrt((pt.x - drawingCoord.x) ** 2 + (pt.y - drawingCoord.y) ** 2);
-        if (dist < bestDist * 0.7) { // Vertices get priority (70% threshold)
-          return { x: pt.x, y: pt.y }; // Return immediately for vertex snaps
-        }
-      }
-      for (const hole of polygon.polygon.holes) {
-        for (const pt of hole) {
-          const dist = Math.sqrt((pt.x - drawingCoord.x) ** 2 + (pt.y - drawingCoord.y) ** 2);
-          if (dist < bestDist * 0.7) {
-            return { x: pt.x, y: pt.y };
-          }
-        }
+  const findSnapPoint = useCallback((cursor: Point2D): Point2D | null => {
+    if (!drawing || !(viewTransform.scale > 0) || !Object.values(objectSnaps).some(Boolean)) return null;
+    const threshold = 10 / viewTransform.scale;
+    let bestFixed: Point2D | null = null;
+    let bestFixedDist = threshold * 0.7;
+    let bestNearest: Point2D | null = null;
+    let bestNearestDist = threshold;
+    const nearby: { a: Point2D; b: Point2D; dist: number }[] = [];
+    function fixed(point: Point2D) {
+      const distance = Math.hypot(point.x - cursor.x, point.y - cursor.y);
+      if (distance < bestFixedDist) {
+        bestFixedDist = distance;
+        bestFixed = point;
       }
     }
-
-    // Priority 2: Check line endpoints
+    function consider(a: Point2D, b: Point2D) {
+      if (objectSnaps.endpoint) { fixed(a); fixed(b); }
+      if (objectSnaps.midpoint) fixed({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      if (!(objectSnaps.nearest || objectSnaps.intersection)) return;
+      const { point, dist } = nearestPointOnSegment(cursor, a, b);
+      if (objectSnaps.intersection && dist < threshold) nearby.push({ a, b, dist });
+      if (objectSnaps.nearest && dist < bestNearestDist) {
+        bestNearestDist = dist;
+        bestNearest = point;
+      }
+    }
+    for (const { polygon } of drawing.cutPolygons) {
+      for (const ring of [polygon.outer, ...polygon.holes]) {
+        ring.forEach((point, index) => consider(point, ring[(index + 1) % ring.length]));
+      }
+    }
     for (const line of drawing.lines) {
       if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
-      const { start, end } = line.line;
-      for (const pt of [start, end]) {
-        const dist = Math.sqrt((pt.x - drawingCoord.x) ** 2 + (pt.y - drawingCoord.y) ** 2);
-        if (dist < bestDist * 0.7) {
-          return { x: pt.x, y: pt.y };
-        }
+      consider(line.line.start, line.line.end);
+    }
+    const candidates = nearby.sort((a, b) => a.dist - b.dist).slice(0, 64);
+    for (let i = 0; i < candidates.length; i++) {
+      const { a, b } = candidates[i];
+      for (let j = i + 1; j < candidates.length; j++) {
+        const crossing = segmentIntersection(a, b, candidates[j].a, candidates[j].b);
+        if (crossing) fixed(crossing);
       }
     }
-
-    // Priority 3: Check polygon edges
-    for (const polygon of drawing.cutPolygons) {
-      const outer = polygon.polygon.outer;
-      for (let i = 0; i < outer.length; i++) {
-        const a = outer[i];
-        const b = outer[(i + 1) % outer.length];
-        const { point, dist } = nearestPointOnSegment(drawingCoord, a, b);
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestSnap = point;
-        }
-      }
-      for (const hole of polygon.polygon.holes) {
-        for (let i = 0; i < hole.length; i++) {
-          const a = hole[i];
-          const b = hole[(i + 1) % hole.length];
-          const { point, dist } = nearestPointOnSegment(drawingCoord, a, b);
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestSnap = point;
-          }
-        }
-      }
-    }
-
-    // Priority 4: Check drawing lines
-    for (const line of drawing.lines) {
-      if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
-      const { start, end } = line.line;
-      const { point, dist } = nearestPointOnSegment(drawingCoord, start, end);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestSnap = point;
-      }
-    }
-
-    return bestSnap;
-  }, [drawing, showHiddenLines, viewTransform.scale, nearestPointOnSegment]);
+    return bestFixed ?? bestNearest;
+  }, [drawing, showHiddenLines, viewTransform.scale, nearestPointOnSegment, objectSnaps]);
 
 
   useEffect(() => {
@@ -185,30 +169,47 @@ export function useMeasure2D({
 
   const choosingAngularSide = dimensionType === 'angular' && draft.points.length === 3 && !draft.placing;
 
-  function anglePoint(point: { x: number; y: number }, shift: boolean) {
-    if (!shift) return null;
+  const { resolve: resolveDirection, getLockedAxis } = useDrawingDirection(measure2DMode && drawing ? draft : null, angularSnap);
+
+  function resolveDimensionSnap(point: Point2D, shift: boolean, reference: Point2D | null) {
     const [origin, firstLeg] = draft.points;
     if (!draft.placing && origin && draft.points.length === 1 && dimensionType === 'aligned') {
-      return snapDrawingAngle(origin, point);
+      return resolveDirection(origin, point, reference, shift);
     }
     if (!draft.placing && origin && draft.points.length < 3 && dimensionType === 'angular') {
       const base = firstLeg ? Math.atan2(firstLeg.y - origin.y, firstLeg.x - origin.x) : 0;
-      return snapDrawingAngle(origin, point, base);
+      return resolveDirection(origin, point, reference, shift, base);
     }
     if (draft.placing && (dimensionType === 'radius' || dimensionType === 'diameter')) {
       const center = curvedDimension(draft.points, dimensionType)?.shape?.center;
-      return center ? snapDrawingAngle(center, point) : null;
+      return resolveDirection(center ?? null, point, reference, shift);
     }
-    return null;
+    return reference;
+  }
+
+  function dimensionInput(point: Point2D, shift: boolean) {
+    const reference = draft.placing || choosingAngularSide ? null : findSnapPoint(point);
+    const lockedAligned = shift && dimensionType === 'aligned' && !draft.placing && draft.points.length === 1;
+    const snapped = resolveDimensionSnap(point, shift, lockedAligned ? null : reference);
+    if (lockedAligned && snapped && reference) {
+      const alignedAxis = getLockedAxis();
+      if (alignedAxis) {
+        const normal = { x: -alignedAxis.y, y: alignedAxis.x };
+        const offset = (reference.x - snapped.x) * normal.x + (reference.y - snapped.y) * normal.y;
+        // The snap guides the extension only. Its tangential position cannot move the tick.
+        const anchor = { x: snapped.x + offset * normal.x, y: snapped.y + offset * normal.y };
+        return { point: anchor, snapped: true, alignedAxis, reference };
+      }
+    }
+    return { point: snapped ?? point, snapped: snapped !== null, reference };
   }
 
   function handleClick(e: React.MouseEvent) {
     if (!measure2DMode || !drawing || e.button !== 0) return;
     const point = drawingPoint(e);
     if (!point) return;
-    const angular = anglePoint(point, e.shiftKey);
-    const snapped = angular ?? (draft.placing || choosingAngularSide ? null : findSnapPoint(point));
-    const next = clickDimension(draft, dimensionType, snapped ?? point, snapped !== null);
+    const input = dimensionInput(point, e.shiftKey);
+    const next = clickDimension(draft, dimensionType, input.point, input.snapped, input.alignedAxis);
     if (draft.placing && isCurvedDimension(dimensionType) && !next.segments.length) return;
     setDraft(next.draft);
     if (next.draft.placing) {
@@ -226,10 +227,9 @@ export function useMeasure2D({
     if (measure2DMode && drawing) {
       const point = drawingPoint(e);
       if (!point) return;
-      const angular = anglePoint(point, e.shiftKey);
-      const snapped = angular ?? (draft.placing || choosingAngularSide ? null : findSnapPoint(point));
-      setCursor({ point: snapped ?? point, snapped: snapped !== null });
-      setMeasure2DSnapPoint(angular ? null : snapped);
+      const { reference, ...input } = dimensionInput(point, e.shiftKey);
+      setCursor(input);
+      setMeasure2DSnapPoint(reference);
     } else if (pan.current && (e.buttons & 1)) {
       const dx = e.clientX - pan.current.x;
       const dy = e.clientY - pan.current.y;
@@ -255,8 +255,11 @@ export function useMeasure2D({
     const points = !draft.placing && cursor && canPreviewPoint
       ? [...draft.points, cursor.point] : draft.points;
     const side = choosingAngularSide ? cursor?.point : draft.angularSide;
-    return dimensionSegments(points, dimensionType, draft.placing ? cursor?.point : undefined, side);
+    return dimensionSegments(
+      points, dimensionType, draft.placing ? cursor?.point : undefined, side,
+      draft.alignedAxis ?? cursor?.alignedAxis,
+    );
   }, [choosingAngularSide, cursor, dimensionType, draft, measure2DMode]);
 
-  return { handleClick, handleMouseDown, handleMouseMove, handleMouseUp, handleMouseLeave, draft, preview, reset };
+  return { handleClick, handleMouseDown, handleMouseMove, handleMouseUp, handleMouseLeave, findSnapPoint, draft, preview, reset };
 }

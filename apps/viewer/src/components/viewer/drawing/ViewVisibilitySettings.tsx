@@ -11,11 +11,11 @@ import { captureViewVisibility } from '@/lib/drawing/view-visibility';
 import { DEFAULT_VIEW_MARKERS } from '@/lib/drawing/view-markers';
 import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import { loadSavedFilters } from '@/lib/search/saved-filters';
-import { savedViewKind, setDrawingProjectionDisplay, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { savedViewKind, selectActiveSavedView, setDrawingProjectionDisplay, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 
 export function ViewVisibilitySettings({ annotations = false }: { annotations?: boolean }) {
   const { t } = useTranslation();
-  const cut = useSavedSectionCuts(s => s.cuts.find(c => c.id === s.activeCutId));
+  const cut = useSavedSectionCuts(selectActiveSavedView);
   const showAnnotations = useViewerStore(s => s.drawing2DDisplayOptions.showAnnotations);
   const [failed, setFailed] = useState(false);
   const runtime = useDrawingRuntime();
@@ -58,7 +58,7 @@ export function ViewVisibilitySettings({ annotations = false }: { annotations?: 
           const preset = presets.find(p => p.name === value);
           save({ filter: preset ? { preset, mode: cut.filter?.mode ?? 'hide' } : undefined });
         }}>
-          <SelectTrigger aria-label={t('section2d.viewSettings.filter')}><SelectValue placeholder={t('section2d.viewSettings.filter')} /></SelectTrigger>
+          <SelectTrigger className="[&>svg]:text-foreground [&>svg]:opacity-100" aria-label={t('section2d.viewSettings.filter')}><SelectValue placeholder={t('section2d.viewSettings.filter')} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__no_drawing_filter__">{t('section2d.viewSettings.noFilter')}</SelectItem>
             {cut.filter && !presets.some(p => p.name === cut.filter?.preset.name) &&
@@ -69,7 +69,7 @@ export function ViewVisibilitySettings({ annotations = false }: { annotations?: 
         {cut.filter && <Select value={cut.filter.mode} onValueChange={mode => {
           if (cut.filter) save({ filter: { ...cut.filter, mode: mode === 'show' ? 'show' : 'hide' } });
         }}>
-          <SelectTrigger aria-label={t('section2d.viewSettings.filterMode')}><SelectValue /></SelectTrigger>
+          <SelectTrigger className="[&>svg]:text-foreground [&>svg]:opacity-100" aria-label={t('section2d.viewSettings.filterMode')}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="hide">{t('section2d.viewSettings.hideMatches')}</SelectItem>
             <SelectItem value="show">{t('section2d.viewSettings.showMatches')}</SelectItem>

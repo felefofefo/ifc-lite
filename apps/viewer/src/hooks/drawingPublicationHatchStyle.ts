@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { lineweightsAtScale, type LineweightRow } from '@/lib/drawing/lineweight-table';
 import { distantColor, type DistantElements } from '@/lib/drawing/distant-elements';
 import { GraphicOverrideEngine, type DrawingPolygon, type DXFHatchLayer, type ElementData, type GraphicOverrideRule } from '@ifc-lite/drawing-2d';
 import type { IfcDataStore } from '@ifc-lite/parser';
@@ -20,6 +21,7 @@ export function drawingPublicationHatchStyle(
   resolveEntityRef: (entityId: number) => EntityRef,
   patterns: readonly ImportedPattern[] = [],
   distant?: DistantElements,
+  lineweights: LineweightRow = lineweightsAtScale({}, scale),
 ) {
   const imported = new Map(patterns.map(p => [p.id, p]));
   const cutRules = rules.filter(({ enabled, style }) => enabled &&
@@ -81,7 +83,8 @@ export function drawingPublicationHatchStyle(
         if (!backgroundPattern) background.pattern = 'solid';
       }
       if (polygon.isCut && style.hatchSpacing !== undefined && Number.isFinite(style.hatchSpacing) && style.hatchSpacing >= 0.1) spacing = style.hatchSpacing;
-      const weight = polygon.isCut ? style.hatchLineWeight : style.surfaceHatchLineWeight;
+      const preset = polygon.isCut ? style.hatchLineWeight : style.surfaceHatchLineWeight;
+      const weight = typeof preset === 'string' ? lineweights[preset] : preset;
       if (weight !== undefined && Number.isFinite(weight) && weight > 0) lineWeight = weight;
     }
 
@@ -89,8 +92,10 @@ export function drawingPublicationHatchStyle(
     return [background, foreground].flatMap<DXFHatchLayer>(({ pattern, color }) => {
       if (!pattern || pattern === 'none') return [];
       const ink = color ?? '#666666';
+      const distantWeight = distant?.weight;
+      const resolvedWeight = typeof distantWeight === 'number' ? distantWeight : distantWeight && lineweights[distantWeight];
       const paint = { color: polygon.distant && distant ? distantColor(ink, distant) : ink, spacing: spacing * scale / 1000,
-        lineWeight: polygon.distant && distant ? distant.weight ?? lineWeight : lineWeight };
+        lineWeight: polygon.distant ? resolvedWeight ?? lineWeight : lineWeight };
       if (pattern === 'solid' || pattern === 'diagonal' || pattern === 'cross-hatch') return [{ ...paint, pattern }];
       const definition = imported.get(pattern);
       return definition ? [{ ...paint, pattern: 'custom', spacing: patternRepeatScale(definition) * scale / 1000, families: definition.lines, patternKey: definition.id }] : [];

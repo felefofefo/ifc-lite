@@ -27,7 +27,6 @@ export function DrawingProjectionSettings({ hiddenLinesOnly = false }: { hiddenL
       <DrawingSettingSwitch label={t(hiddenLinesOnly ? 'section2d.projection.exportHiddenLines' : 'section2d.projection.hiddenLines')}
         checked={hidden} onCheckedChange={showHiddenLines => setDrawingProjectionDisplay({ showHiddenLines })} />
       {!hiddenLinesOnly && <>
-        <p className="font-medium">{t('section2d.projection.depth')}</p>
         <DrawingSettingSwitch label={t('section2d.projection.auto')} checked={depth == null}
           onCheckedChange={auto => setDrawingProjectionDisplay({ constructionProjectionDepth: auto ? null : 3 })} />
         {depth != null && <label className="block space-y-1">

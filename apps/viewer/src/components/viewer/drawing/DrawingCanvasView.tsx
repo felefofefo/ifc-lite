@@ -16,6 +16,7 @@ import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
 import { ViewMarkers } from './ViewMarkers';
 import { DrawingElementTags } from './DrawingElementTags';
+import { useDrawingModelSelection } from './DrawingModelSelection';
 import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
@@ -26,6 +27,8 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   const fillPreview = usePublicationFillPreview();
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
+  const selection = useDrawingModelSelection(vm,
+    status === 'ready' && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing);
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
   const editingAnnotation = vm.textAnnotation2DEditing
     ? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
@@ -36,7 +39,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       ref={vm.containerRef}
       data-drawing-canvas
       className={`relative min-h-0 flex-1 overflow-hidden bg-paper ${vm.cursorClass}`}
-      {...vm.canvasMouseHandlers}
+      {...selection.mouseHandlers}
     >
       {status === 'generating' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80">
@@ -110,6 +113,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         />
       )}
 
+      {status === 'ready' && selection.overlay}
       {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} />}
       {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags tags={vm.tags} />}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}

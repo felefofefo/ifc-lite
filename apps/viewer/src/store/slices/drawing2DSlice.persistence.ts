@@ -145,8 +145,9 @@ function isPoint2DArray(v: unknown): v is Point2D[] {
 }
 function isMeasure2DResult(v: unknown): v is Measure2DResult {
   if (!v || typeof v !== 'object') return false;
-  const { id, start, end, distance, dimension } = v as Partial<Measure2DResult>;
+  const { id, start, end, distance, dimension, viewKey } = v as Partial<Measure2DResult>;
   if (typeof id !== 'string' || !id || !isPoint2D(start) || !isPoint2D(end) || !isFiniteNumber(distance)) return false;
+  if (viewKey !== undefined && typeof viewKey !== 'string') return false;
   return dimension === undefined || (
     !!dimension && typeof dimension.chainId === 'string' && dimension.chainId.length > 0 &&
     (dimension.styleId === undefined || typeof dimension.styleId === 'string') &&
@@ -163,6 +164,7 @@ function isPolygonArea2DResult(v: unknown): v is PolygonArea2DResult {
   const r = v as Record<string, unknown>;
   return (
     typeof r.id === 'string' && r.id.length > 0 &&
+    (r.viewKey === undefined || typeof r.viewKey === 'string') &&
     isPoint2DArray(r.points) && r.points.length >= 3 &&
     isFiniteNumber(r.area) && isFiniteNumber(r.perimeter)
   );
@@ -173,6 +175,7 @@ function isTextAnnotation2D(v: unknown): v is TextAnnotation2D {
   const a = v as Record<string, unknown>;
   return (
     typeof a.id === 'string' && a.id.length > 0 &&
+    (a.viewKey === undefined || typeof a.viewKey === 'string') &&
     isPoint2D(a.position) &&
     typeof a.text === 'string' &&
     isFiniteNumber(a.fontSize) &&
@@ -187,6 +190,7 @@ function isCloudAnnotation2D(v: unknown): v is CloudAnnotation2D {
   const a = v as Record<string, unknown>;
   return (
     typeof a.id === 'string' && a.id.length > 0 &&
+    (a.viewKey === undefined || typeof a.viewKey === 'string') &&
     isPoint2DArray(a.points) && a.points.length >= 2 &&
     typeof a.color === 'string' &&
     typeof a.label === 'string'

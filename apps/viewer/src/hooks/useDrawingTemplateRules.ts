@@ -7,26 +7,26 @@ import { RelationshipType } from '@ifc-lite/data';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import type { GraphicOverrideRule } from '@ifc-lite/drawing-2d';
 import { evaluateFilterGroupsFederated, resolveCapturedEntityScope } from '@ifc-lite/rules';
+import { selectActiveSavedView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useViewerStore } from '@/store';
 import { toGlobalIdFromModels } from '@/store/globalId';
 import { definedModelTagIdsOf, evaluatorModelsFromState } from '@/lib/model-tags/evaluator-models';
 import { decodeSavedFilter } from '@/lib/search/saved-filters';
-import { decodeViewTemplates, encodeViewTemplates, type ViewTemplate } from '@/lib/drawing/view-templates';
+import { encodeViewTemplates, readDrawingViewTemplates, VIEW_TEMPLATES_STORAGE_KEY, type ViewTemplate } from '@/lib/drawing/view-templates';
 
-const key = 'ifc-lite:drawing-view-templates:v1';
 const EMPTY_TEMPLATES: ViewTemplate[] = [];
 const EMPTY_RULES: GraphicOverrideRule[] = [];
 const catalog = create<{ templates?: ViewTemplate[] }>(() => ({}));
 export function useViewTemplates() {
   const templates = catalog(s => s.templates);
   const initial = useMemo(() => {
-    try { const raw = localStorage.getItem(key); return raw ? decodeViewTemplates(raw).templates : EMPTY_TEMPLATES; }
+    try { return readDrawingViewTemplates(); }
     catch (error) { console.warn('Could not read drawing templates', error); return EMPTY_TEMPLATES; }
   }, []);
   return {
     templates: templates ?? initial,
     save(next: ViewTemplate[]) {
-      localStorage.setItem(key, encodeViewTemplates(next, []));
+      localStorage.setItem(VIEW_TEMPLATES_STORAGE_KEY, encodeViewTemplates(next, []));
       catalog.setState({ templates: next });
     },
   };
@@ -77,7 +77,14 @@ export function useDrawingTemplateRules() {
   const lenses = useViewerStore(s => s.savedLenses);
   const tagDefinitions = useViewerStore(s => s.modelTags);
   const legacyRules = useViewerStore(s => s.graphicOverridePresets);
-  const filters = useMemo(() => custom.map(rule => [rule, decodeSavedFilter(rule.savedFilter)] as const).filter(([rule, preset]) => rule.enabled && preset), [custom]);
+  const viewRows = useSavedSectionCuts(s => selectActiveSavedView(s)?.graphics?.rows);
+  const template = viewRows === undefined ? templates.find(candidate => candidate.id === id) : undefined;
+  const shared = useMemo(() => {
+    const localIds = new Set(custom.map(rule => rule.id));
+    return template?.rules?.filter(rule => !localIds.has(rule.id)) ?? EMPTY_RULES;
+  }, [custom, template]);
+  const filters = useMemo(() => [...shared, ...custom].map(rule => [rule, decodeSavedFilter(rule.savedFilter)] as const)
+    .filter(([rule, preset]) => rule.enabled && preset), [shared, custom]);
   const [result, setResult] = useState<{ filters: typeof filters; models: typeof models; matches: Map<string, number[]> }>();
   useEffect(() => {
     if (!enabled || !filters.length) return;
@@ -102,21 +109,21 @@ export function useDrawingTemplateRules() {
   }, [enabled, filters, models, legacy, revision, tags, lenses, tagDefinitions]);
   const graphicRules = useMemo(() => {
     if (!enabled) return EMPTY_RULES;
-    const template = templates.find(t => t.id === id);
-    const base = template?.rows.map<GraphicOverrideRule>((row, index) => ({
+    const base = (viewRows ?? template?.rows)?.map<GraphicOverrideRule>((row, index) => ({
       id: `${id}:${index}`, name: row.typeName ?? row.ifcClass, enabled: true, priority: row.typeName ? 1 : 0,
       criteria: row.typeName ? { type: 'expressId', expressIds: classes.get(row.ifcClass)?.get(row.typeName) ?? [] }
         : { type: 'ifcType', ifcTypes: [row.ifcClass], includeSubtypes: false },
       style: row.style,
     })) ?? legacyRules.find(preset => preset.id === id)?.rules ?? [];
     const matches = result?.filters === filters && result.models === models ? result.matches : undefined;
-    return [...base, ...custom.flatMap<GraphicOverrideRule>(rule => {
+    const resolve = (rule: GraphicOverrideRule, offset: number): GraphicOverrideRule[] => {
       const withFilter = rule.savedFilter !== undefined;
       const ids = matches?.get(rule.id);
       if (withFilter && !ids?.length) return [];
-      return [{ ...rule, priority: rule.priority + 1000,
+      return [{ ...rule, priority: rule.priority + offset,
         criteria: withFilter ? { type: 'expressId' as const, expressIds: ids } : rule.criteria }];
-    })];
-  }, [enabled, templates, id, custom, legacyRules, classes, filters, models, result]);
+    };
+    return [...base, ...shared.flatMap(rule => resolve(rule, 10)), ...custom.flatMap(rule => resolve(rule, 1000))];
+  }, [enabled, template, viewRows, id, custom, shared, legacyRules, classes, filters, models, result]);
   return { graphicRules, pending: enabled && filters.length > 0 && (result?.filters !== filters || result.models !== models) };
 }

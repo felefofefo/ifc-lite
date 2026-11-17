@@ -309,7 +309,7 @@ function mergeStyle(base: ResolvedGraphicStyle, override: GraphicStyle, weights:
     hatchAngle: override.hatchAngle ?? base.hatchAngle,
     hatchSecondaryAngle: override.hatchSecondaryAngle ?? base.hatchSecondaryAngle,
     hatchColor: override.hatchColor ?? base.hatchColor,
-    hatchLineWeight: override.hatchLineWeight ?? base.hatchLineWeight,
+    hatchLineWeight: override.hatchLineWeight === undefined ? base.hatchLineWeight : resolveLineWeight(override.hatchLineWeight, weights),
     visible: override.visible ?? base.visible,
     opacity: override.opacity ?? base.opacity,
     drawOrder: override.drawOrder ?? base.drawOrder,

@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import type { Point2D } from '@ifc-lite/drawing-2d';
+import { useDrawingDirection } from '@/hooks/useDrawingDirection';
 import { DEFAULT_DISTANT, type DistantElements } from '@/lib/drawing/distant-elements';
 import { Button } from '@/components/ui/button';
 import { ViewIdentityDialog } from './ViewIdentityFields';
@@ -27,11 +28,12 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
   const [reverse, setReverse] = useState(edit?.reverse ?? false);
   const [distant, setDistant] = useState<DistantElements | null>(edit?.distant ?? null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const drag = useRef<{ id: number; grip: 'line' | 'start' | 'end' | 'distant'; trace: MarkerTrace; distant: DistantElements | null; x: number; y: number; scale: number } | null>(null);
+  const drag = useRef<{ id: number; grip: 'line' | 'start' | 'end' | 'distant'; trace: MarkerTrace; distant: DistantElements | null; x: number; y: number; scale: number; moved: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [naming, setNaming] = useState(false);
   const { drawing, drawnPlane, viewTransform, sheetEnabled, activeSheet, isPinned, cachedSheetTransformRef } = vm;
   const project = useSavedSectionCuts(s => s.projectId);
+  const { resolve: resolveDirection, resetDirection } = useDrawingDirection(edit?.id ?? null, vm.angularSnap);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -56,10 +58,8 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rect.left - tx) / scale;
     const y = (event.clientY - rect.top - ty) / scale;
-    if (!edit && start && event.shiftKey) {
-      return Math.abs(x - start.x) >= Math.abs(y - start.y) ? { x, y: start.y } : { x: start.x, y };
-    }
-    return { x, y };
+    const raw = { x, y };
+    return resolveDirection(start ?? null, raw, vm.findSnapPoint(raw), event.shiftKey) ?? raw;
   }
 
   const second = end ?? cursor;
@@ -82,7 +82,9 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     event.stopPropagation();
     event.preventDefault();
     svg.setPointerCapture(event.pointerId);
-    drag.current = { id: event.pointerId, grip, trace: [start, end], distant, x: event.clientX, y: event.clientY, scale };
+    if (grip === 'start') resetDirection(Math.atan2(start.y - end.y, start.x - end.x));
+    if (grip === 'end') resetDirection(Math.atan2(end.y - start.y, end.x - start.x));
+    drag.current = { id: event.pointerId, grip, trace: [start, end], distant, x: event.clientX, y: event.clientY, scale, moved: false };
     setDragging(true);
   }
 
@@ -94,6 +96,8 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       x: (event.clientX - current.x) / current.scale,
       y: (event.clientY - current.y) / current.scale,
     };
+    current.moved ||= delta.x !== 0 || delta.y !== 0;
+    if (!current.moved) return;
     if (current.grip === 'distant') {
       if (current.distant && arrow) {
         const r = arrow.angle * Math.PI / 180;
@@ -101,7 +105,16 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       }
       return;
     }
-    const trace = dragVerticalViewTrace(current.trace, current.grip, delta);
+    let offset = delta;
+    if (current.grip === 'start' || current.grip === 'end') {
+      const [from, to] = current.trace;
+      const anchor = current.grip === 'start' ? to : from;
+      const grip = current.grip === 'start' ? from : to;
+      const point = { x: grip.x + delta.x, y: grip.y + delta.y };
+      const constrained = resolveDirection(anchor, point, vm.findSnapPoint(point), event.shiftKey);
+      if (constrained) offset = { x: constrained.x - grip.x, y: constrained.y - grip.y };
+    }
+    const trace = dragVerticalViewTrace(current.trace, current.grip, offset);
     if (trace) {
       setStart(trace[0]);
       setEnd(trace[1]);
@@ -120,6 +133,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       updateDrag(event);
     }
     drag.current = null;
+    resetDirection();
     setDragging(false);
   }
 
@@ -136,7 +150,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       onClick={event => {
         if (edit || naming || !(scale > 0)) return;
         const next = point(event);
-        if (!start || end) { setStart(next); setEnd(undefined); setCursor(next); }
+        if (!start || end) { resetDirection(); setStart(next); setEnd(undefined); setCursor(next); }
         else if (verticalViewPlane(start, next, drawnPlane.flipped, reverse)) setEnd(next);
       }}>
       {a && !edit && <circle cx={a.x} cy={a.y} r="3" fill="currentColor" />}
@@ -176,10 +190,11 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
 
     </div>
     {naming && start && end && custom && <ViewIdentityDialog name={t(`section2d.views.type.${kind}`)}
+      scale={{ value: vm.publicationScale, table: vm.lineweightSettings.table }}
       code={nextViewCode(kind, useSavedSectionCuts.getState().cuts)} close={() => setNaming(false)}
-      save={(name, code) => {
+      save={(name, code, scale) => {
         if (useSavedSectionCuts.getState().projectId !== project) return;
-        createDrawingView(name, kind, { axis: 'front', position: 50, custom }, undefined, code, [world(start), world(end)]);
+        createDrawingView(name, kind, { axis: 'front', position: 50, custom }, undefined, code, [world(start), world(end)], scale);
         close();
       }} />}
   </div>;

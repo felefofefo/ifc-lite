@@ -43,6 +43,7 @@ export interface DimensionDraft {
   points: Point[];
   placing: boolean;
   angularSide?: Point;
+  alignedAxis?: Point;
 }
 
 export interface DimensionSegment {
@@ -160,14 +161,16 @@ function project(origin: Point, point: Point, axis: Point): number {
   return (point.x - origin.x) * axis.x + (point.y - origin.y) * axis.y;
 }
 
-export function dimensionSegments(points: readonly Point[], type: DimensionType, offsetPoint?: Point, angularSide?: Point): DimensionSegment[] {
+export function dimensionSegments(
+  points: readonly Point[], type: DimensionType, offsetPoint?: Point, angularSide?: Point, alignedAxis?: Point,
+): DimensionSegment[] {
   if (isCurvedDimension(type)) {
     const segment = curvedDimension(points, type, offsetPoint, angularSide);
     return segment ? [segment] : [];
   }
   if (points.length < 2) return [];
   const origin = points[0];
-  const axis = dimensionAxis(type, origin, points[1]);
+  const axis = (type === 'aligned' ? alignedAxis : undefined) ?? dimensionAxis(type, origin, points[1]);
   if (!axis) return [];
   const normal = { x: -axis.y, y: axis.x };
   const offset = offsetPoint ? project(origin, offsetPoint, normal) : 0;
@@ -193,12 +196,12 @@ export function dimensionSegments(points: readonly Point[], type: DimensionType,
   return segments;
 }
 
-export function snapDrawingAngle(anchor: Point, point: Point, baseAngle = 0): Point {
+export function snapDrawingAngle(anchor: Point, point: Point, baseAngle = 0, increment = 15): Point {
   const dx = point.x - anchor.x;
   const dy = point.y - anchor.y;
   const radius = Math.hypot(dx, dy);
   if (!radius) return point;
-  const step = Math.PI / 12;
+  const step = increment * Math.PI / 180;
   const angle = baseAngle + Math.round((Math.atan2(dy, dx) - baseAngle) / step) * step;
   return { x: anchor.x + Math.cos(angle) * radius, y: anchor.y + Math.sin(angle) * radius };
 }
@@ -207,10 +210,12 @@ export function finishDimensionPoints(draft: DimensionDraft): DimensionDraft | n
   return draft.placing || draft.points.length < 2 ? null : { ...draft, placing: true };
 }
 
-export function clickDimension(draft: DimensionDraft, type: DimensionType, point: Point, snapped: boolean):
+export function clickDimension(
+  draft: DimensionDraft, type: DimensionType, point: Point, snapped: boolean, alignedAxis = draft.alignedAxis,
+):
   { draft: DimensionDraft; segments: DimensionSegment[] } {
   if (draft.placing) {
-    return { draft: EMPTY_DIMENSION_DRAFT, segments: dimensionSegments(draft.points, type, point, draft.angularSide) };
+    return { draft: EMPTY_DIMENSION_DRAFT, segments: dimensionSegments(draft.points, type, point, draft.angularSide, draft.alignedAxis) };
   }
   if (isCurvedDimension(type)) {
     if (type === 'angular' && draft.points.length === 3) {
@@ -231,8 +236,8 @@ export function clickDimension(draft: DimensionDraft, type: DimensionType, point
     return { draft: finishDimensionPoints(draft) ?? draft, segments: [] };
   }
   const points = [...draft.points, point];
-  if (points.length > 1 && dimensionSegments(points, type).length < points.length - 1) {
+  if (points.length > 1 && dimensionSegments(points, type, undefined, undefined, alignedAxis).length < points.length - 1) {
     return { draft, segments: [] };
   }
-  return { draft: { points, placing: false }, segments: [] };
+  return { draft: { points, placing: false, alignedAxis }, segments: [] };
 }

@@ -151,9 +151,9 @@ export interface GraphicStyle {
   hatchSecondaryAngle?: number;
   /** Hatch line color */
   hatchColor?: string;
-  /** Hatch line weight in mm */
-  hatchLineWeight?: number;
-  surfaceHatchLineWeight?: number;
+  /** Hatch line weight preset; numbers are retained for existing drawings. */
+  hatchLineWeight?: LineWeightPreset | number;
+  surfaceHatchLineWeight?: LineWeightPreset | number;
 
   // ─── Visibility ────────────────────────────────────────────────────────────
   /** Whether element is visible */

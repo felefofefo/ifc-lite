@@ -59,6 +59,10 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   const saved3D = activeSavedView?.kind === '3d';
   const panelVisible = drawingPanelOpen && !saved3D;
   const sourceDrawing = useViewerStore((s) => s.drawing2D);
+  const placingTag = useViewerStore(s => s.annotation2DActiveTool === 'tag');
+  const hasMeasurementSymbol = useSavedSectionCuts(s => s.tagLibrary.templates.some(
+    template => template.use === 'spotElevation' || template.use === 'slope',
+  ));
   const setDrawing = useViewerStore((s) => s.setDrawing2D);
   const setDrawingStatus = useViewerStore((s) => s.setDrawing2DStatus);
   const setDrawingProgress = useViewerStore((s) => s.setDrawing2DProgress);
@@ -102,8 +106,10 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
     : isolatedEntities, [filterMode, filterIds, isolatedEntities]);
   const { hatches } = useDrawingMaterials(projectId);
   const surfaceOverrides = graphicRules.some(({ style }) => hasHatchPaint(style.surfaceHatch));
-  const includeProjectionPolygons = panelVisible && displayOptions.showHatching
-    && (surfaceOverrides || Object.values(hatches).some((style) => hasHatchPaint(style?.surface)));
+  const needsPlanMeasurement = sectionPlane.axis === 'down' && !sectionPlane.custom
+    && ((placingTag && hasMeasurementSymbol) || activeSavedView?.elementTags?.some(tag => !!tag.measurement));
+  const includeProjectionPolygons = panelVisible && (needsPlanMeasurement
+    || (displayOptions.showHatching && (surfaceOverrides || Object.values(hatches).some(style => hasHatchPaint(style?.surface)))));
   const { showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth } = displayOptions;
   const generationOptions = useMemo(() => ({
     showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth,

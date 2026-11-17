@@ -344,7 +344,7 @@ function useDrawingExport({
       context.stroke = drawingPublicationStrokeStyle(row, context, displayOptions.distantElements);
       context.fills = displayOptions.showHatching === false ? () => [] : drawingPublicationHatchStyle(
         materialHatches, scale, storeModels, ifcDataStore,
-        overridesEnabled ? context.overrideEngine.getRules() : [], context.getElementProperties, resolveEntityRef, patterns, displayOptions.distantElements);
+        overridesEnabled ? context.overrideEngine.getRules() : [], context.getElementProperties, resolveEntityRef, patterns, displayOptions.distantElements, row);
     }
     return context;
   }, [activePresetId, entityColorMap, overridesEnabled, overrideEngine, storeModels, ifcDataStore,
@@ -666,10 +666,10 @@ function useDrawingExport({
     }
 
     svg += drawingTagsSvg(elementTags, mapUnderlay, mmToModel(1), escapeXml);
-    svg += viewMarkersSvg(markers, mapUnderlay, mmToModel(1), mmToModel(1), escapeXml);
+    svg += viewMarkersSvg(markers, mapUnderlay, mmToModel(1), mmToModel(1), escapeXml, lineweightsAtScale(lineweightTable ?? {}, displayOptions.scale));
     svg += '</svg>';
     return svg;
-  }, [drawing, displayOptions, cutPolygonStyleContext, expandDimensionBounds, dimensionsSvg, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, sectionPlane.axis, dxfUnderlays, scanSection, markers, elementTags]);
+  }, [drawing, displayOptions, cutPolygonStyleContext, expandDimensionBounds, dimensionsSvg, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, sectionPlane.axis, dxfUnderlays, scanSection, markers, elementTags, lineweightTable]);
 
   // Generate SVG with drawing sheet (frame, title block, scale bar)
   // This generates coordinates directly in paper mm space (like the canvas rendering)
@@ -850,7 +850,7 @@ function useDrawingExport({
 
     svg += dimensionsSvg(modelToPaper, 1, activeSheet.scale.factor, escapeXml);
     svg += drawingTagsSvg(elementTags, modelToPaper, 1, escapeXml);
-    svg += viewMarkersSvg(markers, modelToPaper, 1 / Math.abs(scaleFactor), 1, escapeXml);
+    svg += viewMarkersSvg(markers, modelToPaper, 1 / Math.abs(scaleFactor), 1, escapeXml, lineweightsAtScale(lineweightTable ?? {}, activeSheet.scale.factor));
     svg += '  </g>\n\n';
 
     // Render frame (on top of drawing content)
@@ -886,7 +886,7 @@ function useDrawingExport({
     // identity when the axis changes, and the canvas rewrote the cache on
     // every fresh draw — neither of which this callback controls.
     // `cachedSheetTransformRef` is a ref: stable identity, read at call time.
-  }, [drawing, activeSheet, displayOptions, cutPolygonStyleContext, dxfUnderlays, scanSection, sectionPlane.axis, isPinned, markers, dimensionsSvg, elementTags]);
+  }, [drawing, activeSheet, displayOptions, cutPolygonStyleContext, dxfUnderlays, scanSection, sectionPlane.axis, isPinned, markers, dimensionsSvg, elementTags, lineweightTable]);
   const buildSVG = useCallback(() => sheetEnabled && activeSheet ? generateSheetSVG(false) : generateExportSVG(),
     [generateExportSVG, generateSheetSVG, sheetEnabled, activeSheet]);
   const handleExportSVG = useCallback(() => {
@@ -1156,7 +1156,7 @@ function useDrawingExport({
           doc.setLineDashPattern(pen ? [...(pen.dash ?? [])] : dash, 0);
           doc.line(p0.x, p0.y, p1.x, p1.y);
         }
-        drawViewMarkersPdf(doc, markers, mapPoint, effectiveScale);
+        drawViewMarkersPdf(doc, markers, mapPoint, effectiveScale, lineweightsAtScale(lineweightTable ?? {}, effectiveScale));
         drawDrawingTagsPdf(doc, elementTags, mapPoint);
         doc.setLineDashPattern([], 0);
         for (const { graphic, position, label, style, font, angle } of annotations) {
@@ -1192,7 +1192,7 @@ function useDrawingExport({
       if (destination) throw err;
       toast.error(err instanceof Error ? t('section2d.export.pdfFailed', { error: err.message }) : t('section2d.export.pdfFailedGeneric'));
     });
-  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers, expandDimensionBounds, dimensionGraphics, elementTags]);
+  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers, expandDimensionBounds, dimensionGraphics, elementTags, lineweightTable]);
 
   // Print handler
   const handlePrint = useCallback(() => {

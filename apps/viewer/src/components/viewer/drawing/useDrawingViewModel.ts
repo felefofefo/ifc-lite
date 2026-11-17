@@ -9,17 +9,19 @@
  * builds the overlays and exports on top of it.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { GraphicOverrideEngine, suppressCutJoints, suppressDrawingCutJoints } from '@ifc-lite/drawing-2d';
+import type { AngularSnap } from '@/hooks/useDrawingDirection';
 import { useViewerStore } from '@/store';
 import { selectActiveSavedView, setDrawingProjectionDisplay, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
+import { transferViewMarkup } from '@/lib/drawing/dimension-view';
 import { useViewDimensions } from './useViewDimensions';
 import type { DimensionType } from '@/lib/drawing/dimension-line';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
-import { useMeasure2D } from '@/hooks/useMeasure2D';
+import { DEFAULT_OBJECT_SNAPS, useMeasure2D } from '@/hooks/useMeasure2D';
 import { useAnnotation2D } from '@/hooks/useAnnotation2D';
 import { useDrawingWithReferences } from '@/hooks/useReferenceImagesForDrawing';
 import { useDxfUnderlaysForDrawing } from '@/hooks/useDxfUnderlay';
@@ -106,6 +108,8 @@ export function useDrawingViewModel() {
 
   const measure2DMode = useViewerStore((s) => s.measure2DMode);
   const [dimensionType, setDimensionType] = useState<DimensionType>('aligned');
+  const [angularSnap, setAngularSnap] = useState<AngularSnap>('off');
+  const [objectSnaps, setObjectSnaps] = useState(DEFAULT_OBJECT_SNAPS);
   const measure2DSnapPoint = useViewerStore((s) => s.measure2DSnapPoint);
   const setMeasure2DSnapPoint = useViewerStore((s) => s.setMeasure2DSnapPoint);
 
@@ -114,18 +118,18 @@ export function useDrawingViewModel() {
   const annotation2DCursorPos = useViewerStore((s) => s.annotation2DCursorPos);
   const setAnnotation2DCursorPos = useViewerStore((s) => s.setAnnotation2DCursorPos);
   const polygonArea2DPoints = useViewerStore((s) => s.polygonArea2DPoints);
-  const polygonArea2DResults = useViewerStore((s) => s.polygonArea2DResults);
+  const allPolygonArea2DResults = useViewerStore((s) => s.polygonArea2DResults);
   const addPolygonArea2DPoint = useViewerStore((s) => s.addPolygonArea2DPoint);
   const completePolygonArea2D = useViewerStore((s) => s.completePolygonArea2D);
   const cancelPolygonArea2D = useViewerStore((s) => s.cancelPolygonArea2D);
-  const textAnnotations2D = useViewerStore((s) => s.textAnnotations2D);
+  const allTextAnnotations2D = useViewerStore((s) => s.textAnnotations2D);
   const textAnnotation2DEditing = useViewerStore((s) => s.textAnnotation2DEditing);
   const addTextAnnotation2D = useViewerStore((s) => s.addTextAnnotation2D);
   const updateTextAnnotation2D = useViewerStore((s) => s.updateTextAnnotation2D);
   const removeTextAnnotation2D = useViewerStore((s) => s.removeTextAnnotation2D);
   const setTextAnnotation2DEditing = useViewerStore((s) => s.setTextAnnotation2DEditing);
   const cloudAnnotation2DPoints = useViewerStore((s) => s.cloudAnnotation2DPoints);
-  const cloudAnnotations2D = useViewerStore((s) => s.cloudAnnotations2D);
+  const allCloudAnnotations2D = useViewerStore((s) => s.cloudAnnotations2D);
   const addCloudAnnotation2DPoint = useViewerStore((s) => s.addCloudAnnotation2DPoint);
   const completeCloudAnnotation2D = useViewerStore((s) => s.completeCloudAnnotation2D);
   const cancelCloudAnnotation2D = useViewerStore((s) => s.cancelCloudAnnotation2D);
@@ -137,7 +141,25 @@ export function useDrawingViewModel() {
   // Everything drawn with or exported from the drawing follows the cut it was generated at.
   const drawnPlane = useViewerStore(drawnSectionPlane);
   const dimensions = useViewDimensions(drawnPlane, sectionPlane.id, saved3D ? undefined : savedView?.id, drawingPlaneId, dimensionSettings.library.defaultId);
-  const { viewKey, measure2DResults, selectedAnnotation2D } = dimensions;
+  const { viewKey, measure2DResults } = dimensions;
+  const polygonArea2DResults = useMemo(() => allPolygonArea2DResults.filter(item => item.viewKey === viewKey), [allPolygonArea2DResults, viewKey]);
+  const textAnnotations2D = useMemo(() => allTextAnnotations2D.filter(item => item.viewKey === viewKey), [allTextAnnotations2D, viewKey]);
+  const cloudAnnotations2D = useMemo(() => allCloudAnnotations2D.filter(item => item.viewKey === viewKey), [allCloudAnnotations2D, viewKey]);
+  const selection = dimensions.selectedAnnotation2D;
+  const selectedAnnotation2D = selection && (selection.type === 'measure' ||
+    (selection.type === 'text' ? textAnnotations2D : selection.type === 'cloud' ? cloudAnnotations2D : polygonArea2DResults)
+      .some(item => item.id === selection.id)) ? selection : null;
+  useEffect(() => {
+    if (status !== 'ready' || !viewKey || saved3D) return;
+    const state = useViewerStore.getState();
+    // Older markup had no view identity. Adopt it once in the first ready drawing.
+    if (state.measure2DResults.some(item => !(item.dimension?.viewKey ?? item.viewKey))
+      || state.polygonArea2DResults.some(item => !item.viewKey)
+      || state.textAnnotations2D.some(item => !item.viewKey)
+      || state.cloudAnnotations2D.some(item => !item.viewKey)) {
+      useViewerStore.setState(transferViewMarkup(state, undefined, viewKey));
+    }
+  }, [status, viewKey, saved3D]);
   const dxfUnderlayData = useDxfUnderlaysForDrawing({enabled:status==='ready', plane:sourceDrawing?.config.plane,
     sectionAxis:drawnPlane.axis,isCustomPlane:drawnPlane.custom!==undefined,flipped:drawnPlane.flipped,coordinateInfo:geometryResult?.coordinateInfo});
   const drawing = useMemo(() => {
@@ -204,10 +226,11 @@ export function useDrawingViewModel() {
 
   const finishDimension = useCallback(() => setAnnotation2DActiveTool('none'), [setAnnotation2DActiveTool]);
   const measureHandlers = useMeasure2D({
+    objectSnaps,
     drawing: status === 'ready' && viewKey ? drawing : null,
     drawingKey: viewKey ?? undefined,
     viewTransform: markupTransform, setViewTransform, sectionAxis: drawnPlane.axis, containerRef,
-    measure2DMode: measure2DMode && !saved3D, dimensionType,
+    measure2DMode: measure2DMode && !saved3D, dimensionType, angularSnap,
     showHiddenLines: displayOptions.showHiddenLines, setMeasure2DSnapPoint,
     onCancel: finishDimension, onPlace: dimensions.placeDimension,
   });
@@ -218,14 +241,18 @@ export function useDrawingViewModel() {
     transform: markupTransform, axis: drawnPlane.axis, container: containerRef,
     tool: annotation2DActiveTool, setTool: setAnnotation2DActiveTool,
     showHidden: displayOptions.showHiddenLines, scale: publicationScale,
+    findSnapPoint: measureHandlers.findSnapPoint, angularSnap,
   });
 
   const annotationHandlers = useAnnotation2D({
     drawing, viewTransform: markupTransform, sectionAxis: drawnPlane.axis, containerRef,
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
-    polygonArea2DPoints, addPolygonArea2DPoint, completePolygonArea2D, cancelPolygonArea2D,
-    textAnnotations2D: displayOptions.showAnnotations ? textAnnotations2D : [], addTextAnnotation2D, setTextAnnotation2DEditing,
-    cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint, completeCloudAnnotation2D, cancelCloudAnnotation2D,
+    polygonArea2DPoints, addPolygonArea2DPoint,
+    completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey); }, cancelPolygonArea2D,
+    textAnnotations2D: displayOptions.showAnnotations ? textAnnotations2D : [],
+    addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey }); }, setTextAnnotation2DEditing,
+    cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint,
+    completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey); }, cancelCloudAnnotation2D,
     measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? polygonArea2DResults : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
     selectedAnnotation2D, setSelectedAnnotation2D, deleteSelectedAnnotation2D, moveAnnotation2D,
@@ -239,6 +266,7 @@ export function useDrawingViewModel() {
       // Try annotation selection/drag first; if it consumed the click, don't pan
       const consumed = annotationHandlers.handleMouseDown(e);
       if (!consumed) measureHandlers.handleMouseDown(e);
+      return consumed;
     } else {
       annotationHandlers.handleMouseDown(e);
     }
@@ -371,7 +399,7 @@ export function useDrawingViewModel() {
       case 'text':
         return 'cursor-text';
       default:
-        return 'cursor-grab active:cursor-grabbing';
+        return 'cursor-default';
     }
   }, [annotation2DActiveTool, selectedAnnotation2D]);
 
@@ -392,11 +420,13 @@ export function useDrawingViewModel() {
     viewTransform, markupTransform, zoomIn, zoomOut, fitToView,
     tags, canvasMouseHandlers: {
       ...canvasMouseHandlers,
-      onMouseDown: (e: React.MouseEvent) => { if (!tags.active) canvasMouseHandlers.onMouseDown(e); },
+      onMouseDown: (e: React.MouseEvent) => tags.active || canvasMouseHandlers.onMouseDown(e),
       onMouseMove: (e: React.MouseEvent) => { if (!tags.move(e)) canvasMouseHandlers.onMouseMove(e); },
+      onMouseLeave: () => { tags.leave(); canvasMouseHandlers.onMouseLeave(); },
       onClick: (e: React.MouseEvent) => { if (!tags.click(e)) canvasMouseHandlers.onClick(e); },
     }, cursorClass: tags.active ? 'cursor-crosshair' : cursorClass,
-    measure2DMode, measure2DResults, measure2DSnapPoint, dimensionType, selectDimensionType,
+    measure2DMode, measure2DResults, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
+    objectSnaps, setObjectSnaps, findSnapPoint: measureHandlers.findSnapPoint,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,
     polygonArea2DPoints, polygonArea2DResults,

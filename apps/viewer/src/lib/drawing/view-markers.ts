@@ -1,6 +1,8 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+import type { LineweightRow } from './lineweight-table';
+import { DEFAULT_MARKER_END_LENGTH, type MarkerLineStyle, type MarkerSlot } from './drawing-tag-library';
 import type { Point2D } from '@ifc-lite/drawing-2d';
 import type { SectionPlane } from '@/store/section-types';
 import { percentToWorld, sectionAxisRange, type AxisBounds } from '../section/section-distance.js';
@@ -51,6 +53,8 @@ type MarkerView = ViewCode & {
   kind?: 'plan' | 'section' | 'elevation' | '3d';
   name: string;
   markerTrace?: MarkerTrace;
+  markerSymbolId?: string;
+  markerStyleId?: string;
   planes: readonly MarkerPlane[];
   activeIndex: number;
 };
@@ -63,13 +67,47 @@ export function collectViewMarkers(
     const kind = view.kind ?? (plane?.axis === 'down' ? 'plan' : 'section');
     if (!plane || (kind !== 'section' && kind !== 'elevation') || !flags[kind]) return [];
     const marker = viewMarker(plane, bounds, planFlipped, view.markerTrace);
-    return marker ? [{ ...marker, kind, id: view.id, name: view.name, code: view.code ?? view.name }] : [];
+    return marker ? [{ ...marker, kind, id: view.id, name: view.name, code: view.code ?? view.name, symbolId: view.markerSymbolId, styleId: view.markerStyleId }] : [];
   });
+}
+
+export function markerHeadPoint(marker: { start: Point2D; end: Point2D }, slot: MarkerSlot): Point2D {
+  if (slot !== 'center') return marker[slot];
+  return { x: (marker.start.x + marker.end.x) / 2, y: (marker.start.y + marker.end.y) / 2 };
+}
+
+export function markerLineDash(line: MarkerLineStyle | undefined, kind: string): number[] {
+  switch (line?.pattern) {
+    case 'solid': return [];
+    case 'dash-dot': return [3, 1, 0.5, 1];
+    default: return kind === 'elevation' ? [1, 1] : [3, 1];
+  }
+}
+
+export function markerLineWidth(line: MarkerLineStyle | undefined, weights?: LineweightRow): number {
+  return line ? weights?.[line.weight] ?? 0.25 : 0.25;
+}
+
+export function markerTraceLines(
+  { start, end }: { start: Point2D; end: Point2D }, unit: number, line?: MarkerLineStyle,
+): Point2D[][] {
+  if (line?.extent !== 'ends') return [[start, end]];
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (!(length > 0)) return [];
+  const first = (line.startLength ?? DEFAULT_MARKER_END_LENGTH) * unit;
+  const last = (line.endLength ?? DEFAULT_MARKER_END_LENGTH) * unit;
+  const factor = Math.min(1, 0.9 * length / (first + last));
+  const a = first * factor / length, b = last * factor / length;
+  return [
+    ...(a > 0 ? [[start, { x: start.x + dx * a, y: start.y + dy * a }]] : []),
+    ...(b > 0 ? [[{ x: end.x - dx * b, y: end.y - dy * b }, end]] : []),
+  ];
 }
 
 export function viewMarkerGraphics(marker: NonNullable<ReturnType<typeof viewMarker>>, unit: number) {
   const { start, end, direction: { x, y } } = marker;
-  const center = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  const center = markerHeadPoint(marker, 'center');
   const offset = (forward: number, lateral = 0): Point2D => ({
     x: center.x + (x * forward - y * lateral) * unit,
     y: center.y + (y * forward + x * lateral) * unit,

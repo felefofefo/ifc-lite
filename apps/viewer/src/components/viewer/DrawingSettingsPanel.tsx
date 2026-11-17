@@ -33,7 +33,7 @@ import { useViewerStore } from '@/store';
 import { useTranslation } from '@/i18n';
 import { LINE_WEIGHT_VALUES } from '@ifc-lite/drawing-2d';
 import { type LineweightRow } from '@/lib/drawing/lineweight-table';
-import { DrawingViewTemplates } from './drawing/DrawingViewTemplates';
+import { saveDrawingViewGraphics } from '@/store/savedSectionCutsStore';
 import { loadSavedFilters, encodeSavedFilter, decodeSavedFilter } from '@/lib/search/saved-filters';
 import { DrawingPenControls } from './drawing/DrawingPenControls';
 import { DrawingRulePaintControls } from './drawing/DrawingHatchSelect';
@@ -64,6 +64,18 @@ export function DrawingSettingsPanel({ lineweights = LINE_WEIGHT_VALUES }: { lin
   const updateCustomRule = useViewerStore((s) => s.updateCustomRule);
   const removeCustomRule = useViewerStore((s) => s.removeCustomRule);
 
+  const [saveFailed, setSaveFailed] = useState(false);
+  const saveRuleChange = useCallback((apply: () => void) => {
+    try {
+      apply();
+      saveDrawingViewGraphics();
+      setSaveFailed(false);
+    } catch (error) {
+      console.warn('Could not save view graphics', error);
+      setSaveFailed(true);
+    }
+  }, []);
+
   // Expanded sections
   const [customRulesOpen, setCustomRulesOpen] = useState(true);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -82,15 +94,13 @@ export function DrawingSettingsPanel({ lineweights = LINE_WEIGHT_VALUES }: { lin
       },
       style: {},
     };
-    addCustomRule(newRule);
+    saveRuleChange(() => addCustomRule(newRule));
     setEditingRuleId(newRule.id);
-  }, [customOverrideRules.length, addCustomRule]);
+  }, [customOverrideRules.length, addCustomRule, saveRuleChange]);
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <div className="border-b bg-muted/50 px-4 py-2">
-        <DrawingViewTemplates lineweights={lineweights} />
-      </div>
+      {saveFailed && <p role="alert" className="px-4 py-2 text-xs text-destructive">{t('section2d.views.saveError')}</p>}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
@@ -127,8 +137,8 @@ export function DrawingSettingsPanel({ lineweights = LINE_WEIGHT_VALUES }: { lin
                       isEditing={editingRuleId === rule.id}
                       onEdit={() => setEditingRuleId(rule.id)}
                       onSave={() => setEditingRuleId(null)}
-                      onUpdate={(updates) => updateCustomRule(rule.id, updates)}
-                      onRemove={() => removeCustomRule(rule.id)}
+                      onUpdate={updates => saveRuleChange(() => updateCustomRule(rule.id, updates))}
+                      onRemove={() => saveRuleChange(() => removeCustomRule(rule.id))}
                     />
                   ))
                 )}
@@ -262,7 +272,7 @@ function CustomRuleItem({
           const filter = filters.find(preset => `filter:${preset.name}` === value);
           onUpdate({ savedFilter: filter ? encodeSavedFilter(filter) : undefined });
         }}>
-          <SelectTrigger aria-label={t('drawingUnderlay.template.filter')} className="mt-1 h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label={t('drawingUnderlay.template.filter')} className="mt-1 h-8 min-w-0 text-xs [&>svg]:text-foreground [&>svg]:opacity-100"><SelectValue /></SelectTrigger>
           <SelectContent className="max-w-[min(26rem,85vw)]">
             <SelectItem value="class">{t('drawingUnderlay.template.classRule')}</SelectItem>
             {savedFilter && !filters.some(filter => filter.name === savedFilter.name) &&
@@ -279,7 +289,7 @@ function CustomRuleItem({
           value={ifcTypes[0] || ''}
           onValueChange={handleIfcTypeChange}
         >
-          <SelectTrigger className="h-8 text-sm mt-1" aria-label={t('drawingUnderlay.settings.ifcClassLabel')}>
+          <SelectTrigger className="[&>svg]:text-foreground [&>svg]:opacity-100 h-8 text-sm mt-1" aria-label={t('drawingUnderlay.settings.ifcClassLabel')}>
             <SelectValue placeholder={t('drawingUnderlay.settings.selectClassPlaceholder')} />
           </SelectTrigger>
           <SelectContent>

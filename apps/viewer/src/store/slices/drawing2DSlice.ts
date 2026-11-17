@@ -38,6 +38,7 @@ export interface Point2D {
 /** Measurement result */
 export interface Measure2DResult {
   id: string;
+  viewKey?: string;
   start: Point2D;
   end: Point2D;
   distance: number; // degrees for angular dimensions, drawing units otherwise
@@ -48,6 +49,7 @@ export interface Measure2DResult {
 /** Polygon area measurement result */
 export interface PolygonArea2DResult {
   id: string;
+  viewKey?: string;
   points: Point2D[];  // Closed polygon vertices (drawing coords)
   area: number;       // Computed area in m²
   perimeter: number;  // Computed perimeter in m
@@ -56,6 +58,7 @@ export interface PolygonArea2DResult {
 /** Text box annotation */
 export interface TextAnnotation2D {
   id: string;
+  viewKey?: string;
   position: Point2D;       // Top-left corner (drawing coords)
   text: string;
   fontSize: number;        // Font size in screen px (default 14)
@@ -67,6 +70,7 @@ export interface TextAnnotation2D {
 /** Cloud (revision cloud) annotation */
 export interface CloudAnnotation2D {
   id: string;
+  viewKey?: string;
   points: Point2D[];  // Rectangle corners (drawing coords, 2 points: topLeft, bottomRight)
   color: string;      // Cloud stroke color (default '#E53935')
   label: string;      // Optional label text inside cloud
@@ -325,7 +329,7 @@ export interface Drawing2DSlice extends Drawing2DState {
 
   // Polygon Area Actions
   addPolygonArea2DPoint: (point: Point2D) => void;
-  completePolygonArea2D: (area: number, perimeter: number) => void;
+  completePolygonArea2D: (area: number, perimeter: number, viewKey?: string) => void;
   cancelPolygonArea2D: () => void;
   removePolygonArea2DResult: (id: string) => void;
   clearPolygonArea2DResults: () => void;
@@ -339,7 +343,7 @@ export interface Drawing2DSlice extends Drawing2DState {
 
   // Cloud Annotation Actions
   addCloudAnnotation2DPoint: (point: Point2D) => void;
-  completeCloudAnnotation2D: (label?: string) => void;
+  completeCloudAnnotation2D: (label?: string, viewKey?: string) => void;
   cancelCloudAnnotation2D: () => void;
   removeCloudAnnotation2D: (id: string) => void;
   clearCloudAnnotations2D: () => void;
@@ -672,13 +676,14 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     polygonArea2DPoints: [...state.polygonArea2DPoints, point],
   })),
 
-  completePolygonArea2D: (area, perimeter) => {
+  completePolygonArea2D: (area, perimeter, viewKey) => {
     const state = get();
     if (state.polygonArea2DPoints.length < 3) return;
 
     if (isDegenerateArea(area)) { set({ polygonArea2DPoints: [], annotation2DCursorPos: null }); return; } // near-zero-area guard (#4197)
     const result: PolygonArea2DResult = {
       id: `poly-area-${Date.now()}`,
+      viewKey,
       points: [...state.polygonArea2DPoints],
       area,
       perimeter,
@@ -730,13 +735,14 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     cloudAnnotation2DPoints: [...state.cloudAnnotation2DPoints, point],
   })),
 
-  completeCloudAnnotation2D: (label = '') => {
+  completeCloudAnnotation2D: (label = '', viewKey) => {
     const state = get();
     if (state.cloudAnnotation2DPoints.length < 2) return;
 
     if (isDegenerateCloud(state.cloudAnnotation2DPoints)) { set({ cloudAnnotation2DPoints: [], annotation2DCursorPos: null }); return; } // near-zero-size guard (#4197)
     const result: CloudAnnotation2D = {
       id: `cloud-${Date.now()}`,
+      viewKey,
       points: [...state.cloudAnnotation2DPoints],
       color: '#E53935',
       label,
@@ -871,7 +877,7 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
   // Bulk Actions
   clearAllAnnotations2D: (dimensionViewKey) => set((state) => ({
     measure2DResults: dimensionViewKey === undefined ? [] : state.measure2DResults.filter(
-      (result) => result.dimension && result.dimension.viewKey !== dimensionViewKey,
+      (result) => (result.dimension?.viewKey ?? result.viewKey ?? null) !== dimensionViewKey,
     ),
     measure2DStart: null,
     measure2DCurrent: null,
@@ -879,11 +885,11 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     measure2DLockedAxis: null,
     measure2DSnapPoint: null,
     polygonArea2DPoints: [],
-    polygonArea2DResults: [],
-    textAnnotations2D: [],
+    polygonArea2DResults: dimensionViewKey === undefined ? [] : state.polygonArea2DResults.filter(item => (item.viewKey ?? null) !== dimensionViewKey),
+    textAnnotations2D: dimensionViewKey === undefined ? [] : state.textAnnotations2D.filter(item => (item.viewKey ?? null) !== dimensionViewKey),
     textAnnotation2DEditing: null,
     cloudAnnotation2DPoints: [],
-    cloudAnnotations2D: [],
+    cloudAnnotations2D: dimensionViewKey === undefined ? [] : state.cloudAnnotations2D.filter(item => (item.viewKey ?? null) !== dimensionViewKey),
     annotation2DCursorPos: null,
     selectedAnnotation2D: null,
   })),

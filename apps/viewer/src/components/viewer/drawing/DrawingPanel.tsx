@@ -23,11 +23,12 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, PanelLeft, RefreshCw, Video } from 'lucide-react';
+import { Box, FileSearch, Magnet, PanelLeft, RefreshCw, Video } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useViewerStore } from '@/store';
+import { useDialogs } from '@/components/ui/confirm-dialog';
 import { useTranslation } from '@/i18n';
 import { AXIS_INFO, presetViewForAxis } from '../tools/sectionConstants';
 import { TitleBlockEditor } from '../TitleBlockEditor';
@@ -35,12 +36,14 @@ import { useDrawingViewModel } from './useDrawingViewModel';
 import { useDrawingLayers } from './useDrawingLayers';
 import { AssistantAction } from '../assistant/AssistantAction';
 import { DrawingToolbar, type DrawingWidthTier } from './DrawingToolbar';
-import { DrawingLineweights } from './DrawingLineweights';
-import { DrawingMaterials } from './DrawingMaterials';
-import { setDrawingPublicationScale } from '@/store/savedSectionCutsStore';
+import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { DrawingExportMenu } from './DrawingExportMenu';
+import { DrawingTagLibraryDialog } from './DrawingTagLibraryDialog';
 import { DrawingCanvasView } from './DrawingCanvasView';
 import { DrawingStatusLine } from './DrawingStatusLine';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { DrawingInspector } from './DrawingInspector';
 import type { VerticalViewKind } from './PlaceVerticalView';
 import { DrawingViewsBrowser } from './DrawingViewsBrowser';
@@ -92,8 +95,18 @@ function HeaderAction({ label, onClick, disabled, children }: { label: string; o
   );
 }
 
+function DrawingHeaderToggle({ icon: Icon, label, onClick, compact, pressed }: {
+  icon: typeof Magnet; label: string; onClick: () => void; compact: boolean; pressed?: boolean;
+}) {
+  return <Button type="button" variant={pressed === undefined ? "ghost" : "toggle"} size={compact ? 'icon-xs' : 'sm'} aria-label={label}
+    title={label} aria-pressed={pressed} onClick={onClick} className={compact ? undefined : 'h-7 gap-1 px-2 text-xs'}>
+    <Icon className="size-3.5" />{!compact && label}
+  </Button>;
+}
+
 export function DrawingPanel(): React.ReactElement {
   const { t } = useTranslation();
+  const { confirmDialog } = useDialogs();
   const activeTool = useViewerStore((s) => s.activeTool);
   const setActiveTool = useViewerStore((s) => s.setActiveTool);
   const setProjectionMode = useViewerStore((s) => s.setProjectionMode);
@@ -102,6 +115,9 @@ export function DrawingPanel(): React.ReactElement {
   const selected3D = vm.saved3D;
   const layers = useDrawingLayers(vm);
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [snapsOpen, setSnapsOpen] = useState(false);
+  const [tagLibraryOpen, setTagLibraryOpen] = useState(false);
+  const tagProject = useSavedSectionCuts(s => s.projectId);
   const [placement, setPlacement] = useState<VerticalViewKind>();
   const stopPlacement = useCallback(() => setPlacement(undefined), []);
   const canTrace = !selected3D && !!vm.sourceDrawing && vm.status === 'ready' && !vm.runtime.isRegenerating && vm.drawnPlane.axis === 'down'
@@ -183,9 +199,10 @@ export function DrawingPanel(): React.ReactElement {
         <PanelLeft className="h-3.5 w-3.5" />
         {tier !== 'narrow' && t('section2d.views.title')}
       </Button>
-      <DrawingMaterials settings={vm.materialSettings} compact={tier === 'narrow'} />
-      <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale} settings={vm.lineweightSettings}
-        compact={tier === 'narrow'} onScaleChange={setDrawingPublicationScale} />
+      <DrawingHeaderToggle icon={Magnet} compact={tier === 'narrow'} label={t('section2d.snaps.title')}
+        onClick={() => setSnapsOpen(true)} />
+      {!selected3D && <DrawingHeaderToggle icon={FileSearch} compact={tier === 'narrow'} label={t('section2d.display.printPreview')}
+        pressed={displayOptions.showPrintPreview} onClick={vm.togglePrintPreview} />}
       <DrawingExportMenu
         batch={layers.batch} hasDrawing={!!vm.exportableDrawing} compact={tier === 'narrow'}
         selected3D={selected3D}
@@ -242,11 +259,23 @@ export function DrawingPanel(): React.ReactElement {
         view3D={!!selected3D}
         tier={tier}
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
+        onOpenTags={() => setTagLibraryOpen(true)}
         dimensionType={vm.dimensionType} onSelectDimensionType={vm.selectDimensionType}
         selectHint={t(navigationPreset === 'trackpad' ? 'section2d.tip.trackpad' : 'section2d.tip.pan')}
-        hasMarkup={vm.hasMarkup} onClearMarkup={vm.clearAllAnnotations2D}
-        settingsOpen={vm.openDrawer !== null}
-        onToggleSettings={() => vm.openDrawer ? vm.closeDrawer() : vm.toggleDrawer('display')}
+        hasMarkup={vm.hasMarkup} onClearMarkup={async () => {
+          const before = useSavedSectionCuts.getState();
+          const activeView = before.activeCutId;
+          const livePlane = useViewerStore.getState().sectionPlane.id;
+          if (!await confirmDialog({
+            title: t('section2d.annotations.clear'),
+            description: t('section2d.annotations.clearConfirm'),
+            confirmLabel: t('section2d.annotations.clear'),
+            destructive: true,
+          })) return;
+          const current = useSavedSectionCuts.getState();
+          if (current.projectId === before.projectId && current.activeCutId === activeView
+            && useViewerStore.getState().sectionPlane.id === livePlane) vm.clearAllAnnotations2D();
+        }}
         zoomPercent={Math.round(vm.viewTransform.scale * 100)}
         onZoomIn={vm.zoomIn} onZoomOut={vm.zoomOut} onFit={vm.fitToView}
         pinned={vm.isPinned} onTogglePinned={vm.togglePinned}
@@ -283,6 +312,38 @@ export function DrawingPanel(): React.ReactElement {
         updating={vm.runtime.isRegenerating}
       />}
 
+      {!selected3D && tagLibraryOpen && <DrawingTagLibraryDialog key={tagProject}
+        canInsert={vm.tags.canPlace && !placement}
+        close={() => setTagLibraryOpen(false)}
+        insert={id => {
+          vm.selectTool('tag');
+          vm.tags.selectTemplate(id);
+          setTagLibraryOpen(false);
+        }}
+      />}
+      {snapsOpen && <Dialog open onOpenChange={open => { if (!open) setSnapsOpen(false); }}>
+        <DialogContent className="sm:max-w-sm" aria-describedby={undefined}>
+          <DialogHeader><DialogTitle>{t('section2d.snaps.title')}</DialogTitle></DialogHeader>
+          <div className="space-y-1">
+            {(['endpoint', 'midpoint', 'intersection', 'nearest'] as const).map(key => (
+              <label key={key} className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                <input type="checkbox" className="accent-primary" checked={vm.objectSnaps[key]}
+                  onChange={event => vm.setObjectSnaps({ ...vm.objectSnaps, [key]: event.currentTarget.checked })} />
+                {t(`section2d.snaps.${key}`)}
+              </label>
+            ))}
+            <DrawingSettingSwitch label={t('section2d.tools.angularSnap')} checked={vm.angularSnap !== 'off'}
+              onCheckedChange={enabled => vm.setAngularSnap(enabled ? '15' : 'off')} />
+            {vm.angularSnap !== 'off' && <Select value={vm.angularSnap} onValueChange={value => vm.setAngularSnap(value === '90' ? '90' : '15')}>
+              <SelectTrigger aria-label={t('section2d.tools.angularSnap')}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="15">{t('section2d.tools.angularSnap15')}</SelectItem>
+                <SelectItem value="90">{t('section2d.tools.angularSnapOrtho')}</SelectItem>
+              </SelectContent>
+            </Select>}
+          </div>
+        </DialogContent>
+      </Dialog>}
       {!selected3D && <TitleBlockEditor open={vm.titleBlockEditorVisible} onOpenChange={vm.setTitleBlockEditorVisible} />}
     </div>
   );

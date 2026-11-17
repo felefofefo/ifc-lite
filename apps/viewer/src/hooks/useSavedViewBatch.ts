@@ -85,7 +85,7 @@ export function useSavedViewBatch(sourceDrawing: Drawing2D | null, builders: Dra
       || rules.some(({ style }) => hasHatchPaint(style.surfaceHatch)));
     const caps = [source.section, ...source.extraSections].some(cut => cut && cut.showCap !== false);
     const hatchStyle = drawingPublicationHatchStyle(materialHatches, scaleFactor, live.models, live.ifcDataStore,
-      rules, getElementProperties, resolveEntityRef, patterns);
+      rules, getElementProperties, resolveEntityRef, patterns, undefined, row);
     return exportViewVector({
       view: {
         ...source.view,
