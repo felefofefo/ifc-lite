@@ -86,7 +86,7 @@ export interface DXFExportOptions {
    */
   polylineLayers?: DXFPolylineLayer[];
   /** Additional drawing-space labels, kept on the same layer as their marker lines. */
-  labels?: readonly { layer: string; color: string; text: string; position: Point2D; height: number }[];
+  labels?: readonly { layer: string; color: string; text: string; position: Point2D; height: number; rotationDeg?: number }[];
 }
 
 /** One named layer of polylines to embed. */
@@ -98,6 +98,7 @@ export interface DXFPolylineLayer {
   polylines: readonly (readonly Point2D[])[];
   /** Close every polyline back to its first point. Default true. */
   closed?: boolean;
+  lineWeight?: number;
 }
 
 /** One DXF reference underlay to embed (mirrors `SVGUnderlayOptions`). */
@@ -243,13 +244,18 @@ export class DXFExporter {
     for (const extra of polylineLayers) {
       const layer = writer.layer(extra.name, extra.color);
       for (const polyline of extra.polylines) {
-        writer.addPolyline(polyline.map(map), layer, extra.closed ?? true);
+        const points = polyline.map(map);
+        if (writer instanceof ModernDxfWriter && extra.lineWeight !== undefined) {
+          writer.addPolyline(points, layer, extra.closed ?? true, undefined, { color: extra.color, lineWeight: extra.lineWeight });
+        } else {
+          writer.addPolyline(points, layer, extra.closed ?? true);
+        }
       }
     }
 
     for (const label of options.labels ?? []) {
       const layer = writer.layer(label.layer, label.color);
-      writer.addText(map(label.position), label.text, label.height, layer, { hAlign: 'center', vAlign: 'middle' });
+      writer.addText(map(label.position), label.text, label.height, layer, { hAlign: 'center', vAlign: 'middle', rotationDeg: label.rotationDeg, colorOverride: label.color });
     }
 
     return writer.toString();

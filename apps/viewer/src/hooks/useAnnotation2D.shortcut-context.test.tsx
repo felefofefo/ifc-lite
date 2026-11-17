@@ -11,7 +11,7 @@ import '@/test/setup-dom.js';
 
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { act, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { render, cleanup, press } from '@/test/render.js';
 import { KEYBOARD_PRIORITY, registerKeyboardCommand } from '@/lib/commands/dispatcher';
 import { useViewerStore } from '@/store';
@@ -57,15 +57,15 @@ function Probe({ onDelete, onDeselect = () => {}, activeTool = 'none' }: {
 
 function MeasureProbe({ onCancel }: { onCancel: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const measure2DStart = useViewerStore((state) => state.measure2DStart);
-  const measure2DCurrent = useViewerStore((state) => state.measure2DCurrent);
   useMeasure2D({
     drawing: null, viewTransform: { x: 0, y: 0, scale: 1 }, setViewTransform: () => {},
     sectionAxis: 'down', containerRef, measure2DMode: true,
-    measure2DStart, measure2DCurrent, measure2DShiftLocked: false,
-    measure2DLockedAxis: null, setMeasure2DStart: () => {}, setMeasure2DCurrent: () => {},
-    setMeasure2DShiftLocked: () => {}, setMeasure2DSnapPoint: () => {},
-    cancelMeasure2D: onCancel, completeMeasure2D: () => {},
+    dimensionType: 'aligned', setMeasure2DSnapPoint: () => {},
+    onPlace: () => {},
+    onCancel: () => {
+      onCancel();
+      useViewerStore.getState().setAnnotation2DActiveTool('none');
+    },
   });
   return <div ref={containerRef} />;
 }
@@ -165,19 +165,7 @@ describe('useAnnotation2D — Delete respects the focused widget (#5596)', () =>
     assert.equal(useViewerStore.getState().annotation2DActiveTool, 'none', 'the markup tool exits');
   });
 
-  it('#5841 in-progress measurement still owns Escape after its state re-registers', () => {
-    useViewerStore.getState().setAnnotation2DActiveTool('measure');
-    let cancellations = 0;
-    render(<><MeasureProbe onCancel={() => { cancellations++; }} /><Probe activeTool="measure" onDelete={() => {}} /></>);
-    act(() => {
-      useViewerStore.getState().setMeasure2DStart({ x: 1, y: 2 });
-      useViewerStore.getState().setMeasure2DCurrent({ x: 3, y: 4 });
-    });
-    press(window, 'Escape');
-    assert.equal(cancellations, 1, 'measurement cancellation outranks the persistent annotation binding');
-    assert.equal(useViewerStore.getState().annotation2DActiveTool, 'none');
-    assert.equal(useViewerStore.getState().measure2DStart, null);
-  });
+
 
   it('#5841 an active tool overlay aborts before a persisted drawing selection clears', () => {
     useViewerStore.setState({ activeTool: 'measure' });

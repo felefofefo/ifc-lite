@@ -23,7 +23,7 @@ export const section2dIt = {
   "section2d.construction.showTitle": "Mostra proiezione costruttiva (linee superiori e riferimenti visibili)",
   "section2d.tools.group": "Strumenti di annotazione",
   "section2d.tools.select": "Seleziona",
-  "section2d.tools.distance": "Distanza",
+  "section2d.tools.distance": "Quota",
   "section2d.tools.area": "Area",
   "section2d.tools.text": "Testo",
   "section2d.tools.cloud": "Nuvola",

@@ -2,10 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Pin, PinOff, Ruler, Settings2, Trash2, Type, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronDown, Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Pin, PinOff, Ruler, Settings2, Trash2, Type, ZoomIn, ZoomOut, Tag } from 'lucide-react';
+import { DIMENSION_TYPES, type DimensionType } from '@/lib/drawing/dimension-line';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n/en';
 import { DrawerToggle, IconAction, ToolSegment, ToolbarDivider } from './DrawingToolbarControls';
@@ -17,14 +18,26 @@ const TOOLS: ReadonlyArray<{ tool: Annotation2DTool; icon: typeof Ruler; labelKe
   { tool: 'measure', icon: Ruler, labelKey: 'section2d.tools.distance' },
   { tool: 'polygon-area', icon: Hexagon, labelKey: 'section2d.tools.area' },
   { tool: 'text', icon: Type, labelKey: 'section2d.tools.text' },
+  { tool: 'tag', icon: Tag, labelKey: 'section2d.tools.tag' },
   { tool: 'cloud', icon: Cloud, labelKey: 'section2d.tools.cloud' },
 ];
+
+const DIMENSION_LABELS = {
+  aligned: 'section2d.tools.dimensionAligned',
+  horizontal: 'section2d.tools.dimensionHorizontal',
+  vertical: 'section2d.tools.dimensionVertical',
+  angular: 'section2d.tools.dimensionAngular',
+  radius: 'section2d.tools.dimensionRadius',
+  diameter: 'section2d.tools.dimensionDiameter',
+} as const;
 
 export interface DrawingToolbarProps {
   view3D?: boolean;
   tier: DrawingWidthTier;
   activeTool: Annotation2DTool;
   onSelectTool: (tool: Annotation2DTool) => void;
+  dimensionType: DimensionType;
+  onSelectDimensionType: (type: DimensionType) => void;
   /** The Select tool's tooltip: how to pan and zoom (was a permanent hint line). */
   selectHint: string;
   hasMarkup: boolean;
@@ -57,7 +70,33 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
   return (
     <div className={toolbarClass}>
       <div role="radiogroup" aria-label={t('section2d.tools.group')} className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
-        {TOOLS.map(({ tool, icon, labelKey }) => (
+        {TOOLS.map(({ tool, icon, labelKey }) => tool === 'measure' ? (
+          <div key={tool} className="inline-flex shrink-0 items-center">
+            <ToolSegment
+              icon={icon} label={t(labelKey)} tip={t(DIMENSION_LABELS[p.dimensionType])}
+              active={p.activeTool === tool} showLabel={showLabels}
+              onSelect={() => p.onSelectTool(tool)} className="rounded-r-none"
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="toggle" size="icon-xs"
+                  className="h-6 w-5 rounded-l-none border-l border-border px-0"
+                  aria-label={t('section2d.tools.dimensionType')}>
+                  <ChevronDown aria-hidden="true" className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuRadioGroup value={p.dimensionType}>
+                  {DIMENSION_TYPES.map(type => (
+                    <DropdownMenuRadioItem key={type} value={type} checkmark onSelect={() => p.onSelectDimensionType(type)}>
+                      {t(DIMENSION_LABELS[type])}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : (
           <ToolSegment
             key={tool} icon={icon} label={t(labelKey)} tip={tool === 'none' ? p.selectHint : undefined}
             active={p.activeTool === tool} showLabel={showLabels} onSelect={() => p.onSelectTool(tool)}

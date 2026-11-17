@@ -13,6 +13,18 @@ export function drawingPublicationStrokeStyle(
   distant?: DistantElements,
 ): DXFExportOptions['strokeStyle'] {
   const rules = overrideEngine.getRules();
+  const resolvedWidths = new Map<number, number>();
+  function publicationWeight(nominal: number): number {
+    if (!lineweights || !(nominal > 0)) return nominal;
+    const cached = resolvedWidths.get(nominal);
+    if (cached !== undefined) return cached;
+    const preset = LINEWEIGHT_PRESETS.reduce((nearest, candidate) =>
+      Math.abs(LINE_WEIGHT_VALUES[candidate] - nominal) < Math.abs(LINE_WEIGHT_VALUES[nearest] - nominal)
+        ? candidate : nearest);
+    const weight = lineweights[preset];
+    resolvedWidths.set(nominal, weight);
+    return weight;
+  }
   const styles = new Map<string, ReturnType<NonNullable<DXFExportOptions['strokeStyle']>>>();
   const resolve: NonNullable<DXFExportOptions['strokeStyle']> = (element, role, drawingLine) => {
     if (drawingLine?.category === 'annotation') {
@@ -21,11 +33,10 @@ export function drawingPublicationStrokeStyle(
     }
     const objectStyle = resolveObjectStyle(element.ifcType);
     const line = role === 'cut' ? objectStyle.cutLines : objectStyle.projectionLines;
-    const preset = LINEWEIGHT_PRESETS.find((name) => LINE_WEIGHT_VALUES[name] === line.lineWeight);
     const hidden = drawingLine?.visibility === 'hidden' || drawingLine?.category === 'hidden';
     const obscured = hidden ? getLineStyle('hidden', element.ifcType) : undefined;
-    const base = obscured ? { color: obscured.color, lineWeight: obscured.weight, dash: obscured.dashPattern }
-      : { color: line.lineColor, lineWeight: preset && lineweights ? lineweights[preset] : line.lineWeight, dash: LINE_STYLE_PRESET_DASHES[line.linePattern] };
+    const base = obscured ? { color: obscured.color, lineWeight: publicationWeight(obscured.weight), dash: obscured.dashPattern }
+      : { color: line.lineColor, lineWeight: publicationWeight(line.lineWeight), dash: LINE_STYLE_PRESET_DASHES[line.linePattern] };
     if (!overridesEnabled || !rules.length) return base;
 
     const key = `${role}:${hidden}:${makeEntityKey(element.modelIndex, element.entityId)}`;
@@ -48,6 +59,7 @@ export function drawingPublicationStrokeStyle(
   };
   return (element, role, line) => {
     const pen = resolve(element, role, line);
-    return line?.distant && distant ? { ...pen, color: distantColor(pen.color, distant), lineWeight: distant.weight ?? pen.lineWeight } : pen;
+    return line?.distant && distant ? { ...pen, color: distantColor(pen.color, distant), lineWeight: distant.weight && LINEWEIGHT_PRESETS.includes(distant.weight)
+      ? (lineweights ?? LINE_WEIGHT_VALUES)[distant.weight] : pen.lineWeight } : pen;
   };
 }

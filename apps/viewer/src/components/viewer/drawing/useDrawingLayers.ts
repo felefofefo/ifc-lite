@@ -41,7 +41,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
   ), [geometryResult, runtime.sourceCoordinateInfo, drawnPlane]);
 
   const ifcAnnotationData = useSymbolicAnnotationsForDrawing({
-    enabled: symbolicAnnotationsOverlayEnabled(displayOptions.showIfcAnnotations, status, typeVisibility.ifcAnnotations),
+    enabled: symbolicAnnotationsOverlayEnabled(displayOptions.showAnnotations && displayOptions.showIfcAnnotations, status, typeVisibility.ifcAnnotations),
     axis: drawnPlane.axis,
     sectionPosWorld: ifcAnnotationsForDrawing.sectionPosWorld,
     viewDepth: ifcAnnotationsForDrawing.viewDepth,
@@ -114,8 +114,10 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     // fails must not write the drawing the error now hides.
     drawing: vm.exportableDrawing, lineweights: vm.lineweights, lineweightTable: vm.lineweightSettings.table, materialHatches: vm.materialSettings.hatches, displayOptions, sectionPlane: drawnPlane, activePresetId: vm.activePresetId,
     entityColorMap: vm.entityColorMap, overridesEnabled: vm.overridesEnabled, overrideEngine: vm.overrideEngine,
-    measure2DResults: vm.measure2DResults, polygonArea2DResults: vm.polygonArea2DResults,
-    textAnnotations2D: vm.textAnnotations2D, cloudAnnotations2D: vm.cloudAnnotations2D,
+    dimensionStyles: vm.dimensionSettings.styles,
+    measure2DResults: displayOptions.showAnnotations ? vm.measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? vm.polygonArea2DResults : [],
+    elementTags: displayOptions.showAnnotations ? vm.tags.items : [],
+    textAnnotations2D: displayOptions.showAnnotations ? vm.textAnnotations2D : [], cloudAnnotations2D: displayOptions.showAnnotations ? vm.cloudAnnotations2D : [],
     sheetEnabled: vm.sheetEnabled, activeSheet: vm.activeSheet, dxfUnderlays: dxfUnderlayData,
     ifcDataStore, coordinateInfo: geometryResult?.coordinateInfo,
     scanSection: scanSectionLayer,

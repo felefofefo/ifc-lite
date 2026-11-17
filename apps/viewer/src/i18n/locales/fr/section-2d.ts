@@ -23,7 +23,7 @@ export const section2dFr = {
   "section2d.construction.showTitle": "Afficher la projection constructive (lignes de référence supérieures et visibles)",
   "section2d.tools.group": "Outils d’annotation",
   "section2d.tools.select": "Sélectionner",
-  "section2d.tools.distance": "Distance",
+  "section2d.tools.distance": "Cote",
   "section2d.tools.area": "Surface",
   "section2d.tools.text": "Texte",
   "section2d.tools.cloud": "Nuage",

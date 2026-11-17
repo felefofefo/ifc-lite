@@ -35,8 +35,8 @@ function Tipped({ tip, children }: { tip: ReactNode; children: ReactNode }) {
 }
 
 /** One option of the markup tool radio group. `tip` may say more than the label (Select's pan/zoom hint). */
-export function ToolSegment({ icon: Icon, label, tip, active, showLabel, onSelect }: {
-  icon: IconType; label: string; tip?: string; active: boolean; showLabel: boolean; onSelect: () => void;
+export function ToolSegment({ icon: Icon, label, tip, active, showLabel, onSelect, className }: {
+  icon: IconType; label: string; tip?: string; active: boolean; showLabel: boolean; onSelect: () => void; className?: string;
 }) {
   return (
     <Tipped tip={tip ?? label}>
@@ -47,7 +47,7 @@ export function ToolSegment({ icon: Icon, label, tip, active, showLabel, onSelec
         aria-checked={active}
         aria-label={label}
         onClick={onSelect}
-        className={cn(CONTROL, active && 'font-medium')}
+        className={cn(CONTROL, active && 'font-medium', className)}
       >
         <Icon className="shrink-0" />
         {showLabel && <span>{label}</span>}

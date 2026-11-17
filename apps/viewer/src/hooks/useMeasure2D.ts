@@ -2,77 +2,46 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * Hook for 2D measurement tool logic
- * Extracts pan/measure mouse handling, snapping, orthogonal constraints,
- * and keyboard/global-mouseup effects from the 2D drawing view.
- */
+/** Drawing pan and dimension placement, sharing the existing model snap. */
 
-import { useCallback, useEffect, useRef } from 'react';
-import type { Drawing2D } from '@ifc-lite/drawing-2d';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isOccludedDrawingLine, type Drawing2D } from '@ifc-lite/drawing-2d';
 import { axisFlipForSection } from '@/hooks/pdfSectionLayout';
-import { KEYBOARD_PRIORITY, registerKeyboardCommand, registerKeyboardKeyUp } from '@/lib/commands/dispatcher';
-import { useViewerStore } from '@/store';
+import { KEYBOARD_PRIORITY, registerKeyboardCommand } from '@/lib/commands/dispatcher';
+import { clickDimension, dimensionSegments, EMPTY_DIMENSION_DRAFT, finishDimensionPoints, isCurvedDimension, type DimensionSegment, type DimensionType, curvedDimension, snapDrawingAngle } from '@/lib/drawing/dimension-line';
+import type { Point2D } from '@/store/slices/drawing2DSlice';
 
-// ─── Public interfaces ──────────────────────────────────────────────────────
-
-export interface UseMeasure2DParams {
+interface UseMeasure2DParams {
   drawing: Drawing2D | null;
+  drawingKey?: string;
   viewTransform: { x: number; y: number; scale: number };
   setViewTransform: React.Dispatch<React.SetStateAction<{ x: number; y: number; scale: number }>>;
   sectionAxis: 'down' | 'front' | 'side';
   containerRef: React.RefObject<HTMLDivElement | null>;
-  // Store state
   measure2DMode: boolean;
-  measure2DStart: { x: number; y: number } | null;
-  measure2DCurrent: { x: number; y: number } | null;
-  measure2DShiftLocked: boolean;
-  measure2DLockedAxis: 'x' | 'y' | null;
-  setMeasure2DStart: (pt: { x: number; y: number }) => void;
-  setMeasure2DCurrent: (pt: { x: number; y: number }) => void;
-  setMeasure2DShiftLocked: (locked: boolean, axis?: 'x' | 'y') => void;
-  setMeasure2DSnapPoint: (pt: { x: number; y: number } | null) => void;
-  cancelMeasure2D: () => void;
-  completeMeasure2D: () => void;
+  dimensionType: DimensionType;
+  showHiddenLines?: boolean;
+  setMeasure2DSnapPoint: (point: Point2D | null) => void;
+  onCancel: () => void;
+  onPlace: (segments: DimensionSegment[]) => void;
 }
-
-export interface UseMeasure2DResult {
-  handleMouseDown: (e: React.MouseEvent) => void;
-  handleMouseMove: (e: React.MouseEvent) => void;
-  handleMouseUp: () => void;
-  handleMouseLeave: () => void;
-  handleMouseEnter: (e: React.MouseEvent) => void;
-}
-
-// ─── Hook implementation ────────────────────────────────────────────────────
 
 export function useMeasure2D({
-  drawing,
-  viewTransform,
-  setViewTransform,
-  sectionAxis,
-  containerRef,
-  measure2DMode,
-  measure2DStart,
-  measure2DCurrent,
-  measure2DShiftLocked,
-  measure2DLockedAxis,
-  setMeasure2DStart,
-  setMeasure2DCurrent,
-  setMeasure2DShiftLocked,
-  setMeasure2DSnapPoint,
-  cancelMeasure2D,
-  completeMeasure2D,
-}: UseMeasure2DParams): UseMeasure2DResult {
-  // ── Internal refs ───────────────────────────────────────────────────────
-  const isPanning = useRef(false);
-  const lastPanPoint = useRef({ x: 0, y: 0 });
-  const isMouseButtonDown = useRef(false);
-  const isMouseInsidePanel = useRef(true);
+  drawing, drawingKey, viewTransform, setViewTransform, sectionAxis, containerRef,
+  measure2DMode, dimensionType, showHiddenLines, setMeasure2DSnapPoint, onCancel, onPlace,
+}: UseMeasure2DParams) {
+  const pan = useRef<Point2D | null>(null);
+  const [draft, setDraft] = useState(EMPTY_DIMENSION_DRAFT);
+  const [cursor, setCursor] = useState<{ point: Point2D; snapped: boolean } | null>(null);
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // 2D MEASURE TOOL HELPER FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════════════
+  const reset = useCallback(() => {
+    setDraft(EMPTY_DIMENSION_DRAFT);
+    setCursor(null);
+    setMeasure2DSnapPoint(null);
+    pan.current = null;
+  }, [setMeasure2DSnapPoint]);
+
+  useEffect(reset, [measure2DMode, dimensionType, drawing, drawingKey, sectionAxis, reset]);
 
   // Convert screen coordinates to drawing coordinates
   const screenToDrawing = useCallback((screenX: number, screenY: number): { x: number; y: number } => {
@@ -144,6 +113,7 @@ export function useMeasure2D({
 
     // Priority 2: Check line endpoints
     for (const line of drawing.lines) {
+      if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
       const { start, end } = line.line;
       for (const pt of [start, end]) {
         const dist = Math.sqrt((pt.x - drawingCoord.x) ** 2 + (pt.y - drawingCoord.y) ** 2);
@@ -180,6 +150,7 @@ export function useMeasure2D({
 
     // Priority 4: Check drawing lines
     for (const line of drawing.lines) {
+      if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
       const { start, end } = line.line;
       const { point, dist } = nearestPointOnSegment(drawingCoord, start, end);
       if (dist < bestDist) {
@@ -189,173 +160,103 @@ export function useMeasure2D({
     }
 
     return bestSnap;
-  }, [drawing, viewTransform.scale, nearestPointOnSegment]);
+  }, [drawing, showHiddenLines, viewTransform.scale, nearestPointOnSegment]);
 
-  // Apply orthogonal constraint if shift is held
-  const applyOrthogonalConstraint = useCallback((start: { x: number; y: number }, current: { x: number; y: number }, lockedAxis: 'x' | 'y' | null): { x: number; y: number } => {
-    if (!lockedAxis) return current;
 
-    if (lockedAxis === 'x') {
-      return { x: current.x, y: start.y };
-    } else {
-      return { x: start.x, y: current.y };
-    }
-  }, []);
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // EFFECTS
-  // ═══════════════════════════════════════════════════════════════════════
-
-  // Keyboard handlers for shift key (orthogonal constraint)
   useEffect(() => {
     if (!measure2DMode) return;
-    const removeOrthogonal = registerKeyboardCommand('drawing2d.orthogonal', () => {
-      if (measure2DStart && measure2DCurrent && !measure2DShiftLocked) {
-        const dx = Math.abs(measure2DCurrent.x - measure2DStart.x);
-        const dy = Math.abs(measure2DCurrent.y - measure2DStart.y);
-        setMeasure2DShiftLocked(true, dx > dy ? 'x' : 'y');
-      }
-      return false; // Both 2D tools observe Shift without consuming it.
-    }, { ignoreModifiers: true, allowInTextEntry: true });
-    const removeCancel = registerKeyboardCommand('drawing2d.cancel', () => {
-      cancelMeasure2D();
-      // Measurement and markup share Escape. Clear the active markup tool here
-      // so cancellation is independent of hook registration order.
-      if (useViewerStore.getState().annotation2DActiveTool === 'measure') {
-        useViewerStore.getState().setAnnotation2DActiveTool('none');
+    return registerKeyboardCommand('drawing2d.cancel', (event) => {
+      if (event.repeat) return;
+      const placing = isCurvedDimension(dimensionType) ? null : finishDimensionPoints(draft);
+      if (placing) {
+        setDraft(placing);
+        setMeasure2DSnapPoint(null);
+      } else {
+        reset();
+        onCancel();
       }
     }, { allowInTextEntry: true, ignoreModifiers: true, priority: KEYBOARD_PRIORITY.drawingMeasure });
-    const removeKeyUp = registerKeyboardKeyUp((event) => {
-      if (event.key === 'Shift') setMeasure2DShiftLocked(false);
-    });
-    return () => {
-      removeOrthogonal(); removeCancel(); removeKeyUp();
-    };
-  }, [measure2DMode, measure2DStart, measure2DCurrent, measure2DShiftLocked, setMeasure2DShiftLocked, cancelMeasure2D]);
+  }, [measure2DMode, dimensionType, draft, onCancel, reset, setMeasure2DSnapPoint]);
 
-  // Global mouseup handler to cancel measurement if released outside panel
-  useEffect(() => {
-    if (!measure2DMode) return;
-
-    const handleGlobalMouseUp = (e: MouseEvent) => {
-      // If mouse button is released and we're outside the panel with a measurement started, cancel it
-      if (!isMouseInsidePanel.current && measure2DStart && e.button === 0) {
-        cancelMeasure2D();
-      }
-      isMouseButtonDown.current = false;
-    };
-
-    window.addEventListener('mouseup', handleGlobalMouseUp);
-    return () => {
-      window.removeEventListener('mouseup', handleGlobalMouseUp);
-    };
-  }, [measure2DMode, measure2DStart, cancelMeasure2D]);
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // PAN / MEASURE HANDLERS
-  // ═══════════════════════════════════════════════════════════════════════
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-
-    isMouseButtonDown.current = true;
+  function drawingPoint(e: React.MouseEvent) {
     const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    return rect ? screenToDrawing(e.clientX - rect.left, e.clientY - rect.top) : null;
+  }
 
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+  const choosingAngularSide = dimensionType === 'angular' && draft.points.length === 3 && !draft.placing;
 
-    if (measure2DMode) {
-      // Measure mode: set start point
-      const drawingCoord = screenToDrawing(screenX, screenY);
-      const snapPoint = findSnapPoint(drawingCoord);
-      const startPoint = snapPoint || drawingCoord;
-      setMeasure2DStart(startPoint);
-      setMeasure2DCurrent(startPoint);
-    } else {
-      // Pan mode
-      isPanning.current = true;
-      lastPanPoint.current = { x: e.clientX, y: e.clientY };
+  function anglePoint(point: { x: number; y: number }, shift: boolean) {
+    if (!shift) return null;
+    const [origin, firstLeg] = draft.points;
+    if (!draft.placing && origin && draft.points.length === 1 && dimensionType === 'aligned') {
+      return snapDrawingAngle(origin, point);
     }
-  }, [measure2DMode, screenToDrawing, findSnapPoint, setMeasure2DStart, setMeasure2DCurrent]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
-
-    if (measure2DMode) {
-      const drawingCoord = screenToDrawing(screenX, screenY);
-
-      // Find snap point and update
-      const snapPoint = findSnapPoint(drawingCoord);
-      setMeasure2DSnapPoint(snapPoint);
-
-      if (measure2DStart) {
-        // If measuring, update current point
-        let currentPoint = snapPoint || drawingCoord;
-
-        // Apply orthogonal constraint if shift is held
-        if (measure2DShiftLocked && measure2DLockedAxis) {
-          currentPoint = applyOrthogonalConstraint(measure2DStart, currentPoint, measure2DLockedAxis);
-        }
-
-        setMeasure2DCurrent(currentPoint);
-      }
-    } else if (isPanning.current) {
-      // Pan mode
-      const dx = e.clientX - lastPanPoint.current.x;
-      const dy = e.clientY - lastPanPoint.current.y;
-      lastPanPoint.current = { x: e.clientX, y: e.clientY };
-      setViewTransform((prev) => ({
-        ...prev,
-        x: prev.x + dx,
-        y: prev.y + dy,
-      }));
+    if (!draft.placing && origin && draft.points.length < 3 && dimensionType === 'angular') {
+      const base = firstLeg ? Math.atan2(firstLeg.y - origin.y, firstLeg.x - origin.x) : 0;
+      return snapDrawingAngle(origin, point, base);
     }
-  }, [measure2DMode, measure2DStart, measure2DShiftLocked, measure2DLockedAxis, screenToDrawing, findSnapPoint, setMeasure2DSnapPoint, setMeasure2DCurrent, applyOrthogonalConstraint]);
-
-  const handleMouseUp = useCallback(() => {
-    isMouseButtonDown.current = false;
-    if (measure2DMode && measure2DStart && measure2DCurrent) {
-      // Complete the measurement
-      completeMeasure2D();
+    if (draft.placing && (dimensionType === 'radius' || dimensionType === 'diameter')) {
+      const center = curvedDimension(draft.points, dimensionType)?.shape?.center;
+      return center ? snapDrawingAngle(center, point) : null;
     }
-    isPanning.current = false;
-  }, [measure2DMode, measure2DStart, measure2DCurrent, completeMeasure2D]);
+    return null;
+  }
 
-  const handleMouseLeave = useCallback(() => {
-    isMouseInsidePanel.current = false;
-    // Don't cancel if button is still down - user might re-enter
-    // Cancel will happen on global mouseup if released outside
-    isPanning.current = false;
-  }, []);
-
-  const handleMouseEnter = useCallback((e: React.MouseEvent) => {
-    isMouseInsidePanel.current = true;
-    // If re-entering with button down and measurement started, resume tracking
-    if (isMouseButtonDown.current && measure2DMode && measure2DStart) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (rect) {
-        const screenX = e.clientX - rect.left;
-        const screenY = e.clientY - rect.top;
-        const drawingCoord = screenToDrawing(screenX, screenY);
-        const snapPoint = findSnapPoint(drawingCoord);
-        const currentPoint = snapPoint || drawingCoord;
-        setMeasure2DCurrent(currentPoint);
-      }
+  function handleClick(e: React.MouseEvent) {
+    if (!measure2DMode || !drawing || e.button !== 0) return;
+    const point = drawingPoint(e);
+    if (!point) return;
+    const angular = anglePoint(point, e.shiftKey);
+    const snapped = angular ?? (draft.placing || choosingAngularSide ? null : findSnapPoint(point));
+    const next = clickDimension(draft, dimensionType, snapped ?? point, snapped !== null);
+    if (draft.placing && isCurvedDimension(dimensionType) && !next.segments.length) return;
+    setDraft(next.draft);
+    if (next.draft.placing) {
+      setCursor({ point, snapped: false });
+      setMeasure2DSnapPoint(null);
     }
-  }, [measure2DMode, measure2DStart, screenToDrawing, findSnapPoint, setMeasure2DCurrent]);
+    if (next.segments.length) onPlace(next.segments);
+  }
 
-  return {
-    handleMouseDown,
-    handleMouseMove,
-    handleMouseUp,
-    handleMouseLeave,
-    handleMouseEnter,
-  };
+  function handleMouseDown(e: React.MouseEvent) {
+    if (!measure2DMode && e.button === 0) pan.current = { x: e.clientX, y: e.clientY };
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (measure2DMode && drawing) {
+      const point = drawingPoint(e);
+      if (!point) return;
+      const angular = anglePoint(point, e.shiftKey);
+      const snapped = angular ?? (draft.placing || choosingAngularSide ? null : findSnapPoint(point));
+      setCursor({ point: snapped ?? point, snapped: snapped !== null });
+      setMeasure2DSnapPoint(angular ? null : snapped);
+    } else if (pan.current && (e.buttons & 1)) {
+      const dx = e.clientX - pan.current.x;
+      const dy = e.clientY - pan.current.y;
+      pan.current = { x: e.clientX, y: e.clientY };
+      setViewTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+    }
+  }
+
+  function handleMouseUp() {
+    pan.current = null;
+  }
+
+  function handleMouseLeave() {
+    pan.current = null;
+    setMeasure2DSnapPoint(null);
+  }
+
+  const preview = useMemo(() => {
+    if (!measure2DMode) return [];
+    const canPreviewPoint = isCurvedDimension(dimensionType)
+      ? draft.points.length === 2 && (dimensionType === 'angular' || cursor?.snapped)
+      : draft.points.length === 1 || cursor?.snapped;
+    const points = !draft.placing && cursor && canPreviewPoint
+      ? [...draft.points, cursor.point] : draft.points;
+    const side = choosingAngularSide ? cursor?.point : draft.angularSide;
+    return dimensionSegments(points, dimensionType, draft.placing ? cursor?.point : undefined, side);
+  }, [choosingAngularSide, cursor, dimensionType, draft, measure2DMode]);
+
+  return { handleClick, handleMouseDown, handleMouseMove, handleMouseUp, handleMouseLeave, draft, preview, reset };
 }
-
-export default useMeasure2D;

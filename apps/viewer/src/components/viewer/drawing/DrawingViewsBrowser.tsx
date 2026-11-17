@@ -19,7 +19,7 @@ import type { VerticalViewKind } from './PlaceVerticalView';
 import { useViewerStore } from '@/store';
 import {
   applySavedSectionCut, canSaveDrawingView, duplicateSavedSectionCut, removeSavedSectionCut,
-  SAVED_VIEW_KINDS, saveCurrentSectionCut, savedViewKind, setDrawingPublicationScale, updateSavedSectionCut,
+  SAVED_VIEW_KINDS, currentDrawingViewKind, saveCurrentSectionCut, savedViewKind, setDrawingPublicationScale, updateSavedSectionCut,
   useSavedSectionCuts, type SavedViewKind,
 } from '@/store/savedSectionCutsStore';
 
@@ -33,14 +33,15 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
   const { promptDialog, confirmDialog } = useDialogs();
   const cuts = useSavedSectionCuts((s) => s.cuts);
   const active = useSavedSectionCuts((s) => s.activeCutId);
-  const axis = useViewerStore((s) => s.sectionPlane.axis);
+  const currentKind = useViewerStore(currentDrawingViewKind);
   const [query, setQuery] = useState('');
   const [newPlan, setNewPlan] = useState(false);
   const [kind, setKind] = useState<SavedViewKind>();
   const [identity, setIdentity] = useState<string | { name: string; code: string; save: (name: string, code: string) => void }>();
   const [failed, setFailed] = useState(false);
   const visible = cuts.filter(({ name, code }) => `${code ?? ''} ${name}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const selectedKind = kind ?? (axis === 'down' ? 'plan' : 'section');
+  const selectedKind = kind === '3d' ? '3d' : currentKind ?? '3d';
+  const selectableKinds: SavedViewKind[] = currentKind ? [currentKind, '3d'] : ['3d'];
   const canSave = useViewerStore((s) => canSaveDrawingView(s, selectedKind));
   const activeView = cuts.find((cut) => cut.id === active);
   const scales = drawingLineweightScales(lineweightTable, publicationScale, []);
@@ -83,7 +84,7 @@ export function DrawingViewsBrowser({ overlay, close, canCreatePlan, canTrace, t
           <Select value={selectedKind} onValueChange={(value) => setKind(value as SavedViewKind)}>
             <SelectTrigger className="h-7 min-w-0 text-xs" aria-label={t('section2d.views.type')}><SelectValue /></SelectTrigger>
             <SelectContent>
-              {SAVED_VIEW_KINDS.map((entry) => <SelectItem key={entry} value={entry}>{t(`section2d.views.type.${entry}`)}</SelectItem>)}
+              {selectableKinds.map((entry) => <SelectItem key={entry} value={entry}>{t(`section2d.views.type.${entry}`)}</SelectItem>)}
             </SelectContent>
           </Select>
           <Button size="sm" className="h-7 shrink-0 gap-1 text-xs" variant="outline" disabled={!canSave} onClick={() => setIdentity({ name: '', code: nextViewCode(selectedKind, cuts), save: (name, code) => {

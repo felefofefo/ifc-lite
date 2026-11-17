@@ -3,6 +3,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { drawingPublicationStrokeStyle } from '@/hooks/drawingPublicationStrokeStyle';
+import type { DimensionSegment } from '@/lib/drawing/dimension-line';
+import { mapDimensionShape } from '@/lib/drawing/dimension-line';
+import { DEFAULT_DIMENSION_STYLE, DIMENSION_FONTS, drawDimensionStrokes, formatDimensionLabel, resolveDimensionStyle, styledDimension, type DimensionLabelHit, type DimensionStyle } from '@/lib/drawing/dimension-style';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
 import type { usePublicationFillPreview } from '@/hooks/usePublicationFillPreview';
@@ -22,7 +25,7 @@ import type { DrawingLine2D } from '@ifc-lite/renderer';
 import { formatDistance } from './tools/formatDistance';
 import { formatArea, computePolygonCentroid } from './tools/computePolygonArea';
 import { drawCloudOnCanvas } from './tools/cloudPathGenerator';
-import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D, Annotation2DTool, Point2D, SelectedAnnotation2D } from '@/store/slices/drawing2DSlice';
+import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D, Annotation2DTool, Measure2DResult, Point2D, SelectedAnnotation2D } from '@/store/slices/drawing2DSlice';
 import type { DxfUnderlayRenderData } from '@/hooks/useDxfUnderlay';
 import type { AnnotationFill2D, AnnotationText2D } from '@/hooks/useSymbolicAnnotations';
 import type { ScanBandPoint } from '@/hooks/scanSectionMath';
@@ -172,14 +175,11 @@ function drawIfcAnnotationsScreenSpace(
 
 const CANVAS_STYLE = { imageRendering: 'crisp-edges' as const };
 const EMPTY_MEASURE_RESULTS: Measure2DResultData[] = [];
+const EMPTY_DIMENSION_PREVIEW: DimensionSegment[] = [];
+const EMPTY_DIMENSION_POINTS: Point2D[] = [];
 const EMPTY_UNIT_DISPLAY_OVERRIDES: Record<string, string> = {};
 
-export interface Measure2DResultData {
-  id: string;
-  start: { x: number; y: number };
-  end: { x: number; y: number };
-  distance: number;
-}
+export type Measure2DResultData = Measure2DResult;
 
 interface Drawing2DCanvasProps {
   drawing: Drawing2D;
@@ -195,8 +195,13 @@ interface Drawing2DCanvasProps {
   fillPreview?: ReturnType<typeof usePublicationFillPreview>;
   // Measure tool props
   measureMode?: boolean;
-  measureStart?: { x: number; y: number } | null;
-  measureCurrent?: { x: number; y: number } | null;
+  markupTransform?: { x: number; y: number; scale: number };
+  dimensionStyle?: DimensionStyle;
+  dimensionStyles?: ReadonlyMap<string, DimensionStyle>;
+  dimensionLabelHits?: React.RefObject<DimensionLabelHit[]>;
+  publicationScale?: number;
+  dimensionPreview?: DimensionSegment[];
+  dimensionPoints?: Point2D[];
   measureResults?: Measure2DResultData[];
   measureSnapPoint?: { x: number; y: number } | null;
   // Sheet mode props
@@ -254,8 +259,13 @@ export function Drawing2DCanvas({
   entityColorMap,
   useIfcMaterials, fillPreview, lineweights, printPreview,
   measureMode = false,
-  measureStart = null,
-  measureCurrent = null,
+  markupTransform = transform,
+  dimensionStyle = DEFAULT_DIMENSION_STYLE,
+  dimensionStyles,
+  dimensionLabelHits,
+  publicationScale = 100,
+  dimensionPreview = EMPTY_DIMENSION_PREVIEW,
+  dimensionPoints = EMPTY_DIMENSION_POINTS,
   measureResults = EMPTY_MEASURE_RESULTS,
   measureSnapPoint = null,
   sheetEnabled = false,
@@ -320,6 +330,7 @@ export function Drawing2DCanvas({
   }, []);
 
   useEffect(() => {
+    if (dimensionLabelHits) dimensionLabelHits.current = [];
     const canvas = canvasRef.current;
     if (!canvas || canvasSize.width === 0 || canvasSize.height === 0) return;
 
@@ -728,6 +739,8 @@ export function Drawing2DCanvas({
         const lineMinY = lineBounds.min.y - lineMargin;
         const lineMaxY = lineBounds.max.y + lineMargin;
 
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
         for (const line of strokeLines) {
           if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
 
@@ -1017,7 +1030,7 @@ export function Drawing2DCanvas({
       // - 'side': also flip X to look from conventional direction
       const scaleX = sectionAxis === 'side' ? -transform.scale : transform.scale;
       const scaleY = sectionAxis === 'down' ? transform.scale : -transform.scale;
-      const penMm = printPreview ? (fillPreview?.scale ?? 100) / 1000 : 1 / transform.scale;
+      const penMm = printPreview ? (publicationScale || 100) / 1000 : 1 / transform.scale;
       drawReferenceImages(ctx, referenceImages, (x, y) => ({ x: x * scaleX + transform.x, y: y * scaleY + transform.y }));
 
       // DXF reference underlays render first, beneath the cut geometry
@@ -1087,6 +1100,8 @@ export function Drawing2DCanvas({
       const lineMinY = lineBounds.min.y - lineMargin;
       const lineMaxY = lineBounds.max.y + lineMargin;
 
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
       for (const line of strokeLines) {
         // Skip hidden lines if not showing
         if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
@@ -1239,98 +1254,78 @@ export function Drawing2DCanvas({
       );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 4. RENDER MEASUREMENTS (in screen space)
-    // ═══════════════════════════════════════════════════════════════════════
+    // Dimensions and annotations share the drawing-to-screen transform.
+    const annotScaleX = sectionAxis === 'side' ? -markupTransform.scale : markupTransform.scale;
+    const annotScaleY = sectionAxis === 'down' ? markupTransform.scale : -markupTransform.scale;
+    const drawingToScreenX = (x: number) => x * annotScaleX + markupTransform.x;
+    const drawingToScreenY = (y: number) => y * annotScaleY + markupTransform.y;
+    const markupToScreen = (point: Point2D) => ({ x: drawingToScreenX(point.x), y: drawingToScreenY(point.y) });
+    const paperUnit = activeSheet && sheetEnabled ? transform.scale : markupTransform.scale * (publicationScale || 100) / 1000;
     const drawMeasureLine = (
-      start: { x: number; y: number },
-      end: { x: number; y: number },
-      distance: number,
-      color: string = '#2196F3',
-      isActive: boolean = false
+      start: Point2D, end: Point2D, distance: number, fallback: string,
+      placed?: Measure2DResultData['dimension'], isActive = false, id?: string,
     ) => {
-      // Convert drawing coords to screen coords with axis-specific transforms
-      const measureScaleX = sectionAxis === 'side' ? -transform.scale : transform.scale;
-      const measureScaleY = sectionAxis === 'down' ? transform.scale : -transform.scale;
-      const screenStart = {
-        x: start.x * measureScaleX + transform.x,
-        y: start.y * measureScaleY + transform.y,
-      };
-      const screenEnd = {
-        x: end.x * measureScaleX + transform.x,
-        y: end.y * measureScaleY + transform.y,
-      };
-
-      // Draw line
-      ctx.strokeStyle = color;
-      ctx.lineWidth = isActive ? 2 : 1.5;
+      const style = !isActive ? resolveDimensionStyle(dimensionStyles, placed?.styleId, dimensionStyle) : dimensionStyle;
+      const anchors = placed?.anchors;
+      const dimension = styledDimension(markupToScreen(start), markupToScreen(end),
+        anchors && [markupToScreen(anchors[0]), markupToScreen(anchors[1])], style, paperUnit,
+        mapDimensionShape(placed?.shape, markupToScreen), lineweights);
+      if (!dimension) return;
+      ctx.save();
+      ctx.strokeStyle = id && style.lineColor ? style.lineColor : fallback;
+      ctx.lineWidth = dimension.lineWidth;
       ctx.setLineDash(isActive ? [6, 3] : []);
-      ctx.beginPath();
-      ctx.moveTo(screenStart.x, screenStart.y);
-      ctx.lineTo(screenEnd.x, screenEnd.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Draw endpoints
-      ctx.fillStyle = color;
-      const endpointRadius = isActive ? 5 : 4;
-      ctx.beginPath();
-      ctx.arc(screenStart.x, screenStart.y, endpointRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(screenEnd.x, screenEnd.y, endpointRadius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw distance label
-      const midX = (screenStart.x + screenEnd.x) / 2;
-      const midY = (screenStart.y + screenEnd.y) / 2;
-
-      // Format distance using shared utility
-      const labelText = formatDistance(distance, unitDisplayOverrides);
-
-      // Background for label
-      ctx.font = '12px system-ui, sans-serif';
-      const textMetrics = ctx.measureText(labelText);
-      const padding = 4;
-      const bgWidth = textMetrics.width + padding * 2;
-      const bgHeight = 18;
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.fillRect(midX - bgWidth / 2, midY - bgHeight / 2, bgWidth, bgHeight);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(midX - bgWidth / 2, midY - bgHeight / 2, bgWidth, bgHeight);
-
-      // Text
-      ctx.fillStyle = '#000000';
+      drawDimensionStrokes(ctx, dimension);
+      ctx.fillStyle = id && style.textColor ? style.textColor : fallback;
+      ctx.font = `${dimension.textSize}px ${DIMENSION_FONTS[style.fontFamily]}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(labelText, midX, midY);
+      const label = formatDimensionLabel(distance, style, (value, precision, showUnit) =>
+        formatDistance(value, unitDisplayOverrides, precision, showUnit), placed?.shape?.kind);
+      const center = {
+        x: dimension.label.x + (placed?.textOffset?.x ?? 0) * annotScaleX,
+        y: dimension.label.y + (placed?.textOffset?.y ?? 0) * annotScaleY,
+      };
+      const angle = placed?.textAngle ?? 0;
+      const labelSelected = id && selectedAnnotation?.id === id && selectedAnnotation?.dimensionLabel && dimensionLabelHits;
+      const width = id && placed && dimensionLabelHits ? ctx.measureText(label).width + 4 : 0;
+      const height = dimension.textSize + 4;
+      if (id && placed && dimensionLabelHits) dimensionLabelHits.current.push({ id, center, width, height, angle });
+      if (angle || labelSelected) {
+        ctx.translate(center.x, center.y);
+        ctx.rotate(angle * Math.PI / 180);
+        ctx.fillText(label, 0, 0);
+        if (labelSelected) {
+          ctx.strokeStyle = '#1976D2';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(-width / 2, -height / 2, width, height);
+        }
+      } else {
+        ctx.fillText(label, center.x, center.y);
+      }
+      ctx.restore();
     };
 
-    // Draw completed measurements
     for (const result of measureResults) {
-      drawMeasureLine(result.start, result.end, result.distance, '#2196F3', false);
+      drawMeasureLine(result.start, result.end, result.distance, activeSheet && sheetEnabled ? '#000' : paperTheme.ink,
+        result.dimension, false, result.id);
     }
 
-    // Draw active measurement
-    if (measureStart && measureCurrent) {
-      const dx = measureCurrent.x - measureStart.x;
-      const dy = measureCurrent.y - measureStart.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      drawMeasureLine(measureStart, measureCurrent, distance, '#FF5722', true);
+    if (measureMode) {
+      for (const segment of dimensionPreview) {
+        drawMeasureLine(segment.start, segment.end, segment.distance, '#FF5722', { anchors: segment.anchors, shape: segment.shape, chainId: '' }, true);
+      }
+      ctx.fillStyle = '#FF5722';
+      for (const point of dimensionPoints) {
+        const screen = markupToScreen(point);
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
-    // Draw snap indicator
     if (measureMode && measureSnapPoint) {
-      // Use axis-specific transforms (matching canvas rendering)
-      const snapScaleX = sectionAxis === 'side' ? -transform.scale : transform.scale;
-      const snapScaleY = sectionAxis === 'down' ? transform.scale : -transform.scale;
-      const screenSnap = {
-        x: measureSnapPoint.x * snapScaleX + transform.x,
-        y: measureSnapPoint.y * snapScaleY + transform.y,
-      };
-
+      const screenSnap = markupToScreen(measureSnapPoint);
       // Draw snap crosshair
       ctx.strokeStyle = '#4CAF50';
       ctx.lineWidth = 1.5;
@@ -1355,11 +1350,6 @@ export function Drawing2DCanvas({
     // ═══════════════════════════════════════════════════════════════════════
     // 5. RENDER POLYGON AREA MEASUREMENTS (in screen space)
     // ═══════════════════════════════════════════════════════════════════════
-    const annotScaleX = sectionAxis === 'side' ? -transform.scale : transform.scale;
-    const annotScaleY = sectionAxis === 'down' ? transform.scale : -transform.scale;
-    const drawingToScreenX = (x: number) => x * annotScaleX + transform.x;
-    const drawingToScreenY = (y: number) => y * annotScaleY + transform.y;
-
     // Draw completed polygon areas
     for (const result of polygonAreaResults) {
       if (result.points.length < 3) continue;
@@ -1627,15 +1617,21 @@ export function Drawing2DCanvas({
 
       switch (selectedAnnotation.type) {
         case 'measure': {
+          if (selectedAnnotation.dimensionLabel) break;
           const result = measureResults.find((r) => r.id === selectedAnnotation.id);
           if (result) {
-            const sa = { x: drawingToScreenX(result.start.x), y: drawingToScreenY(result.start.y) };
-            const sb = { x: drawingToScreenX(result.end.x), y: drawingToScreenY(result.end.y) };
-            const minX = Math.min(sa.x, sb.x);
-            const minY = Math.min(sa.y, sb.y);
-            const w = Math.abs(sb.x - sa.x);
-            const h = Math.abs(sb.y - sa.y);
-            drawSelectionRect(minX, minY, w, h);
+            const chainId = result.dimension?.chainId;
+            const start = markupToScreen(result.start);
+            const end = markupToScreen(result.end);
+            if (!chainId) {
+              drawSelectionRect(Math.min(start.x, end.x), Math.min(start.y, end.y), Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+              break;
+            }
+            for (const segment of measureResults) {
+              if (segment.dimension?.chainId === chainId) {
+                drawMeasureLine(segment.start, segment.end, segment.distance, SEL_COLOR, segment.dimension);
+              }
+            }
           }
           break;
         }
@@ -1691,7 +1687,7 @@ export function Drawing2DCanvas({
       }
     }
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, measureStart, measureCurrent, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas

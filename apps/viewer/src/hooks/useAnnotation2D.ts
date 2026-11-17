@@ -50,6 +50,7 @@ export interface UseAnnotation2DParams {
   polygonArea2DResults: PolygonArea2DResult[];
   // Selection
   selectedAnnotation2D: SelectedAnnotation2D | null;
+  pickDimensionLabel?: (x: number, y: number) => string | undefined;
   setSelectedAnnotation2D: (sel: SelectedAnnotation2D | null) => void;
   deleteSelectedAnnotation2D: () => void;
   moveAnnotation2D: (sel: SelectedAnnotation2D, newOrigin: Point2D) => void;
@@ -96,6 +97,7 @@ export function useAnnotation2D({
   cancelCloudAnnotation2D,
   measure2DResults,
   polygonArea2DResults,
+  pickDimensionLabel,
   selectedAnnotation2D,
   setSelectedAnnotation2D,
   deleteSelectedAnnotation2D,
@@ -221,18 +223,26 @@ export function useAnnotation2D({
   const hitTestAnnotations = useCallback((screenX: number, screenY: number): SelectedAnnotation2D | null => {
     const { textAnnotations2D: texts, cloudAnnotations2D: clouds,
       polygonArea2DResults: polys, measure2DResults: measures } = storeRef.current;
+    const label = pickDimensionLabel?.(screenX, screenY);
+    if (label) return { type: 'measure', id: label, dimensionLabel: true };
     return hitTestAnnotationsPure({
       screenX, screenY, threshold: HIT_TEST_RADIUS_PX, drawingToScreen,
       texts, clouds, polys, measures,
     });
-  }, [drawingToScreen]); // stable — reads annotation data from storeRef
+  }, [drawingToScreen, pickDimensionLabel]); // stable — reads annotation data from storeRef
 
   // ── Get annotation origin (reads latest data from refs) ───────────────
 
   const getAnnotationOrigin = useCallback((sel: SelectedAnnotation2D): Point2D | null => {
     const s = storeRef.current;
     switch (sel.type) {
-      case 'measure': { const r = s.measure2DResults.find((m) => m.id === sel.id); return r ? r.start : null; }
+      case 'measure': {
+        const result = s.measure2DResults.find((m) => m.id === sel.id);
+        if (!result) return null;
+        return sel.dimensionLabel
+          ? result.dimension?.textOffset ?? { x: 0, y: 0 }
+          : result.dimension?.shape?.label ?? result.start;
+      }
       case 'polygon': { const r = s.polygonArea2DResults.find((p) => p.id === sel.id); return r?.points[0] ?? null; }
       case 'text': { const a = s.textAnnotations2D.find((t) => t.id === sel.id); return a ? a.position : null; }
       case 'cloud': { const c = s.cloudAnnotations2D.find((cl) => cl.id === sel.id); return c?.points[0] ?? null; }

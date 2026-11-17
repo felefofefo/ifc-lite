@@ -54,9 +54,9 @@ afterEach(() => cleanup());
 
 it('the markup tool segmented control writes annotation2DActiveTool', () => {
   const ui = render(<DrawingPanel />);
-  click(byLabel(ui, 'Distance'));
+  click(byLabel(ui, 'Dimension'));
   assert.equal(useViewerStore.getState().annotation2DActiveTool, 'measure');
-  assert.equal(byLabel(ui, 'Distance').getAttribute('aria-checked'), 'true');
+  assert.equal(byLabel(ui, 'Dimension').getAttribute('aria-checked'), 'true');
   click(byLabel(ui, 'Cloud'));
   assert.equal(useViewerStore.getState().annotation2DActiveTool, 'cloud');
   click(byLabel(ui, 'Select'));
@@ -151,7 +151,7 @@ it("the status line shows the active tool's hint, and idle Select keeps its pan 
 it('the status line counts the markup', () => {
   const ui = render(<DrawingPanel />);
   assert.equal(statusText(ui), '', 'idle Select with no markup draws no status line');
-  click(byLabel(ui, 'Distance'));
+  click(byLabel(ui, 'Dimension'));
   assert.match(statusText(ui), /No markup/, 'a markup tool says there is none yet');
   act(() => {
     const s = useViewerStore.getState();

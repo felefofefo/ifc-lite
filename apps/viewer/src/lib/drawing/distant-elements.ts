@@ -1,9 +1,9 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-import type { Drawing2D, DrawingLine, Point2D } from '@ifc-lite/drawing-2d';
+import type { Drawing2D, DrawingLine, LineWeightPreset, Point2D } from '@ifc-lite/drawing-2d';
 
-export interface DistantElements { offset: number; fade: number; color?: string; weight?: number }
+export interface DistantElements { offset: number; fade: number; color?: string; weight?: LineWeightPreset }
 export const DEFAULT_DISTANT: DistantElements = { offset: 3, fade: 0.6 };
 const mixPoint = (a: Point2D, b: Point2D, t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 

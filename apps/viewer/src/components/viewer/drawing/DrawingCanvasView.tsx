@@ -15,6 +15,7 @@ import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
 import { ViewMarkers } from './ViewMarkers';
+import { DrawingElementTags } from './DrawingElementTags';
 import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
@@ -24,7 +25,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
 }) {
   const fillPreview = usePublicationFillPreview();
   const { t } = useTranslation();
-  const { drawing, status, drawnPlane, viewTransform, displayOptions } = vm;
+  const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
   const editingAnnotation = vm.textAnnotation2DEditing
     ? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
@@ -74,9 +75,14 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           printPreview={displayOptions.showPrintPreview}
           useIfcMaterials={(vm.activePresetId === null || vm.activePresetId === 'preset-3d-colors' || vm.activePresetId?.startsWith('drawing-template:') === true)}
           measureMode={vm.measure2DMode}
-          measureStart={vm.measure2DStart}
-          measureCurrent={vm.measure2DCurrent}
-          measureResults={vm.measure2DResults}
+          dimensionStyle={vm.dimensionSettings.styles.get(vm.dimensionSettings.library.defaultId)}
+          dimensionStyles={vm.dimensionSettings.styles}
+          dimensionLabelHits={vm.dimensionEditing.dimensionLabelHits}
+          publicationScale={vm.publicationScale}
+          markupTransform={markupTransform}
+          dimensionPreview={vm.dimensionPreview}
+          dimensionPoints={vm.dimensionDraft.points}
+          measureResults={displayOptions.showAnnotations ? vm.measure2DResults : []}
           measureSnapPoint={vm.measure2DSnapPoint}
           sheetEnabled={vm.sheetEnabled}
           activeSheet={vm.activeSheet}
@@ -86,11 +92,11 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           annotation2DActiveTool={vm.annotation2DActiveTool}
           annotation2DCursorPos={vm.annotation2DCursorPos}
           polygonAreaPoints={vm.polygonArea2DPoints}
-          polygonAreaResults={vm.polygonArea2DResults}
-          textAnnotations={vm.textAnnotations2D}
+          polygonAreaResults={displayOptions.showAnnotations ? vm.polygonArea2DResults : []}
+          textAnnotations={displayOptions.showAnnotations ? vm.textAnnotations2D : []}
           textAnnotationEditing={vm.textAnnotation2DEditing}
           cloudAnnotationPoints={vm.cloudAnnotation2DPoints}
-          cloudAnnotations={vm.cloudAnnotations2D}
+          cloudAnnotations={displayOptions.showAnnotations ? vm.cloudAnnotations2D : []}
           selectedAnnotation={vm.selectedAnnotation2D}
           ifcAnnotationLines={layers.ifcAnnotationData.lines}
           ifcAnnotationTexts={layers.ifcAnnotationData.texts}
@@ -104,17 +110,18 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         />
       )}
 
-      {status === 'ready' && !placement && <ViewMarkers vm={vm} />}
+      {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} />}
+      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags tags={vm.tags} />}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
 
-      {editingAnnotation && (() => {
-        const scaleX = drawnPlane.axis === 'side' ? -viewTransform.scale : viewTransform.scale;
-        const scaleY = drawnPlane.axis === 'down' ? viewTransform.scale : -viewTransform.scale;
+      {displayOptions.showAnnotations && editingAnnotation && (() => {
+        const scaleX = drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale;
+        const scaleY = drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale;
         return (
           <TextAnnotationEditor
             annotation={editingAnnotation}
-            screenX={editingAnnotation.position.x * scaleX + viewTransform.x}
-            screenY={editingAnnotation.position.y * scaleY + viewTransform.y}
+            screenX={editingAnnotation.position.x * scaleX + markupTransform.x}
+            screenY={editingAnnotation.position.y * scaleY + markupTransform.y}
             onConfirm={vm.handleTextConfirm}
             onCancel={vm.handleTextCancel}
           />

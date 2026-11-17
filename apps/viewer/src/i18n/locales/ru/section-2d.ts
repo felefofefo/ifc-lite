@@ -23,7 +23,7 @@ export const section2dRu = {
   "section2d.construction.showTitle": "Показать проекцию конструкции (линии сверху и видимые опорные линии)",
   "section2d.tools.group": "Инструменты разметки",
   "section2d.tools.select": "Выбрать",
-  "section2d.tools.distance": "Расстояние",
+  "section2d.tools.distance": "Размер",
   "section2d.tools.area": "Площадь",
   "section2d.tools.text": "Текст",
   "section2d.tools.cloud": "Облако изменений",

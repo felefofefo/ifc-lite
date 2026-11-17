@@ -14,16 +14,11 @@ const EMPTY_UNITS = ProjectUnits.empty();
 
 /** Auto-scaled metric string (mm / cm / m / km), the fallback used when no
  *  LENGTHUNIT override is set. */
-function formatAutoScaledMetric(meters: number): string {
-  if (meters < 0.01) {
-    return `${(meters * 1000).toFixed(1)} mm`;
-  } else if (meters < 1) {
-    return `${(meters * 100).toFixed(1)} cm`;
-  } else if (meters < 1000) {
-    return `${meters.toFixed(3)} m`;
-  } else {
-    return `${(meters / 1000).toFixed(2)} km`;
-  }
+function formatAutoScaledMetric(meters: number, precision: number | null, showUnit: boolean): string {
+  if (meters < 0.01) return `${(meters * 1000).toFixed(precision ?? 1)}${showUnit ? ' mm' : ''}`;
+  if (meters < 1) return `${(meters * 100).toFixed(precision ?? 1)}${showUnit ? ' cm' : ''}`;
+  if (meters < 1000) return `${meters.toFixed(precision ?? 3)}${showUnit ? ' m' : ''}`;
+  return `${(meters / 1000).toFixed(precision ?? 2)}${showUnit ? ' km' : ''}`;
 }
 
 /**
@@ -48,11 +43,13 @@ function formatAutoScaledMetric(meters: number): string {
  * handing it a file's declared millimetres would scale an already-metre
  * value a second time.
  */
-export function formatDistance(meters: number, overrides: Record<string, string> = {}): string {
+export function formatDistance(
+  meters: number, overrides: Record<string, string> = {}, precision: number | null = null, showUnit = true,
+): string {
   const disp = resolveQuantityDisplay(meters, QuantityType.Length, EMPTY_UNITS, overrides);
-  if (disp.converted === null) return formatAutoScaledMetric(meters);
-  const formatted = formatConverted(disp.converted);
-  return disp.unit ? `${formatted} ${disp.unit}` : formatted;
+  if (disp.converted === null) return formatAutoScaledMetric(meters, precision, showUnit);
+  const formatted = precision === null ? formatConverted(disp.converted) : disp.converted.toFixed(precision);
+  return showUnit && disp.unit ? `${formatted} ${disp.unit}` : formatted;
 }
 
 /**

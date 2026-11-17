@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { isCurvedDimension, type DimensionType } from '@/lib/drawing/dimension-line';
 import { Spinner } from '@/components/ui/spinner';
 
 /**
@@ -21,8 +22,9 @@ import { cn } from '@/lib/utils';
 
 export interface DrawingStatusLineProps {
   activeTool: Annotation2DTool;
-  measureStarted: boolean;
-  shiftLocked: boolean;
+  dimensionType?: DimensionType;
+  dimensionPointCount: number;
+  placingDimension: boolean;
   snapped: boolean;
   polygonPointCount: number;
   cloudPointCount: number;
@@ -39,7 +41,19 @@ export function DrawingStatusLine(p: DrawingStatusLineProps) {
   let hint: string;
   switch (p.activeTool) {
     case 'measure':
-      hint = p.measureStarted ? t('section2d.tip.measureSecond') : t('section2d.tip.measureFirst');
+      if (p.dimensionType && isCurvedDimension(p.dimensionType)) {
+        hint = p.placingDimension ? t(p.dimensionType === 'angular'
+          ? 'section2d.tip.dimensionAngularOffset' : 'section2d.tip.dimensionCurvePlacement')
+          : p.dimensionType === 'angular' ? t(p.dimensionPointCount === 3
+            ? 'section2d.tip.dimensionAngularSide'
+            : p.dimensionPointCount ? 'section2d.tip.dimensionRay' : 'section2d.tip.dimensionVertex')
+          : t('section2d.tip.dimensionCurve', { count: p.dimensionPointCount });
+        break;
+      }
+      hint = p.placingDimension ? t('section2d.tip.dimensionOffset')
+        : p.dimensionPointCount >= 2 ? t('section2d.tip.dimensionContinue')
+        : p.dimensionPointCount === 1 ? t('section2d.tip.measureSecond')
+        : t('section2d.tip.measureFirst');
       break;
     case 'polygon-area':
       hint = p.polygonPointCount === 0 ? t('section2d.tip.polygonFirst')
@@ -72,9 +86,6 @@ export function DrawingStatusLine(p: DrawingStatusLineProps) {
   return (
     <output className="flex h-6 shrink-0 items-center gap-3 border-t px-3 text-2xs text-muted-foreground tabular-nums">
       <span className="min-w-0 flex-1 truncate">{hint}</span>
-      {p.activeTool === 'measure' && p.measureStarted && (
-        <span className={cn('shrink-0', p.shiftLocked && 'text-primary')}>{t('section2d.tip.shift')}</span>
-      )}
       {p.snapped && <span className="shrink-0">{t('section2d.status.snapped')}</span>}
       {p.updating && (
         <span className="inline-flex shrink-0 items-center gap-1">

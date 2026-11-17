@@ -19,13 +19,15 @@ import { DEFAULT_SCAN_SECTION_THICKNESS } from '@/hooks/scanSectionMath';
 import { DEFAULT_SCAN_OUTLINE_MAX_GAP } from '@/lib/scan-outline/scan-outline';
 import { isDegenerateMeasurement, isDegenerateArea, isDegenerateCloud } from './drawing2DDegenerateGuards';
 
+import { repositionCurvedDimension, type DimensionShape } from '@/lib/drawing/dimension-line';
+
 export type Drawing2DStatus = 'idle' | 'generating' | 'ready' | 'error';
 
 /** The semantic cut a drawing was generated at (see `drawnSectionPlane`). */
-export type DrawnSectionPlane = Pick<SectionPlane, 'axis' | 'position' | 'flipped' | 'custom'>;
+export type DrawnSectionPlane = Pick<SectionPlane, 'axis' | 'position' | 'flipped' | 'custom'> & Partial<Pick<SectionPlane, 'id'>>;
 
 /** Active 2D annotation tool */
-export type Annotation2DTool = 'none' | 'measure' | 'polygon-area' | 'text' | 'cloud';
+export type Annotation2DTool = 'none' | 'measure' | 'polygon-area' | 'text' | 'cloud' | 'tag';
 
 /** Point in 2D drawing coordinates */
 export interface Point2D {
@@ -38,7 +40,9 @@ export interface Measure2DResult {
   id: string;
   start: Point2D;
   end: Point2D;
-  distance: number; // in drawing units (typically meters)
+  distance: number; // degrees for angular dimensions, drawing units otherwise
+  /** Geometry picked in the drawing, before projecting onto the placed dimension line. */
+  dimension?: { shape?: DimensionShape; anchors: [Point2D, Point2D]; chainId: string; viewKey?: string; styleId?: string; textOffset?: Point2D; textAngle?: number };
 }
 
 /** Polygon area measurement result */
@@ -72,6 +76,7 @@ export interface CloudAnnotation2D {
 export interface SelectedAnnotation2D {
   type: 'measure' | 'polygon' | 'text' | 'cloud';
   id: string;
+  dimensionLabel?: boolean;
 }
 
 /** An imported DXF reference underlay with its viewer state (issue #1782) */
@@ -349,7 +354,7 @@ export interface Drawing2DSlice extends Drawing2DState {
 
   // Bulk Actions
   /** Clear all annotations (measurements, polygons, text, clouds) */
-  clearAllAnnotations2D: () => void;
+  clearAllAnnotations2D: (dimensionViewKey?: string | null) => void;
 
   // DXF Underlay Actions (issue #1782)
   /**
@@ -764,9 +769,18 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     if (!sel) return;
 
     switch (sel.type) {
-      case 'measure':
-        set({ measure2DResults: state.measure2DResults.filter((r) => r.id !== sel.id), selectedAnnotation2D: null });
+      case 'measure': {
+        if (sel.dimensionLabel) {
+          set({ selectedAnnotation2D: null });
+          break;
+        }
+        const chainId = state.measure2DResults.find((r) => r.id === sel.id)?.dimension?.chainId;
+        set({
+          measure2DResults: state.measure2DResults.filter((r) => r.id !== sel.id && (!chainId || r.dimension?.chainId !== chainId)),
+          selectedAnnotation2D: null,
+        });
         break;
+      }
       case 'polygon':
         set({ polygonArea2DResults: state.polygonArea2DResults.filter((r) => r.id !== sel.id), selectedAnnotation2D: null });
         break;
@@ -789,11 +803,38 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
       case 'measure': {
         const result = state.measure2DResults.find((r) => r.id === sel.id);
         if (!result) return;
-        const dx = newOrigin.x - result.start.x;
-        const dy = newOrigin.y - result.start.y;
-        set({ measure2DResults: state.measure2DResults.map((r) =>
-          r.id === sel.id ? { ...r, start: { x: r.start.x + dx, y: r.start.y + dy }, end: { x: r.end.x + dx, y: r.end.y + dy } } : r
-        ) });
+        if (sel.dimensionLabel && result.dimension) {
+          const dimension = { ...result.dimension, textOffset: newOrigin };
+          set({ measure2DResults: state.measure2DResults.map(r => r.id === sel.id ? { ...r, dimension } : r) });
+          return;
+        }
+        const data = result.dimension;
+        if (data?.shape) {
+          const segment = repositionCurvedDimension({ ...result, anchors: data.anchors, shape: data.shape }, newOrigin);
+          if (!segment) return;
+          const { start, end, anchors, shape } = segment;
+          const updated = { ...result, start, end, dimension: { ...data, anchors, shape } };
+          set({ measure2DResults: state.measure2DResults.map(r => r.id === sel.id ? updated : r) });
+          return;
+        }
+        let dx = newOrigin.x - result.start.x;
+        let dy = newOrigin.y - result.start.y;
+        const chainId = result.dimension?.chainId;
+        if (chainId) {
+          const axisX = result.end.x - result.start.x;
+          const axisY = result.end.y - result.start.y;
+          const length = Math.hypot(axisX, axisY);
+          if (!length) return;
+          const normalX = -axisY / length;
+          const normalY = axisX / length;
+          const offset = dx * normalX + dy * normalY;
+          dx = offset * normalX;
+          dy = offset * normalY;
+        }
+        set({ measure2DResults: state.measure2DResults.map((r) => {
+          if (r.id !== sel.id && (!chainId || r.dimension?.chainId !== chainId)) return r;
+          return { ...r, start: { x: r.start.x + dx, y: r.start.y + dy }, end: { x: r.end.x + dx, y: r.end.y + dy } };
+        }) });
         break;
       }
       case 'polygon': {
@@ -828,8 +869,10 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
   ...createDxfUnderlayActions(set),
 
   // Bulk Actions
-  clearAllAnnotations2D: () => set({
-    measure2DResults: [],
+  clearAllAnnotations2D: (dimensionViewKey) => set((state) => ({
+    measure2DResults: dimensionViewKey === undefined ? [] : state.measure2DResults.filter(
+      (result) => result.dimension && result.dimension.viewKey !== dimensionViewKey,
+    ),
     measure2DStart: null,
     measure2DCurrent: null,
     measure2DShiftLocked: false,
@@ -843,5 +886,5 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     cloudAnnotations2D: [],
     annotation2DCursorPos: null,
     selectedAnnotation2D: null,
-  }),
+  })),
 });

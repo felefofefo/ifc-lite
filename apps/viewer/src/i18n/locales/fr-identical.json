@@ -1863,10 +1863,6 @@
     "value": "Projection",
     "reason": "French uses the same spelling « Projection » for this contextual label; reviewed against its feature meaning."
   },
-  "section2d.tools.distance": {
-    "value": "Distance",
-    "reason": "French uses the same spelling « Distance » for this contextual label; reviewed against its feature meaning."
-  },
   "sectionCap.angleLabel": {
     "value": "Angle (°)",
     "reason": "Reviewed shared technical symbol, unit, format, proper name, schema example or French label; exact displayed value is pinned."

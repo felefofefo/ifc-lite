@@ -24,13 +24,15 @@ import {
   fitRasterPixels,
   type RasterFit, type Drawing2D, type DrawingSheet, type TitleBlockExtras, type PdfScaleLayout,
 } from '@ifc-lite/drawing-2d';
-import { computePdfSectionLayout, makeSectionMapPoint } from '@/hooks/pdfSectionLayout';
+import { axisFlipForSection, computePdfSectionLayout, makeSectionMapPoint } from '@/hooks/pdfSectionLayout';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import type { CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
+import { dimensionArc, mapDimensionShape } from '@/lib/drawing/dimension-line';
+import { DEFAULT_DIMENSION_STYLE, DIMENSION_FONTS, formatDimensionLabel, resolveDimensionStyle, styledDimension, type DimensionStyle } from '@/lib/drawing/dimension-style';
 import { formatDistance } from '@/components/viewer/tools/formatDistance';
 import { formatArea, computePolygonCentroid } from '@/components/viewer/tools/computePolygonArea';
 import { generateCloudSVGPath } from '@/components/viewer/tools/cloudPathGenerator';
-import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
+import type { Measure2DResult, PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
 import type { DxfUnderlayRenderData } from '@/hooks/useDxfUnderlay';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import type { IfcDataStore } from '@ifc-lite/parser';
@@ -243,8 +245,11 @@ interface UseDrawingExportParams {
   lineweights?: LineweightRow;
   lineweightTable?: LineweightTable;
   materialHatches?: MaterialHatches;
-  measure2DResults: Array<{ id: string; start: { x: number; y: number }; end: { x: number; y: number }; distance: number }>;
+  dimensionStyle?: DimensionStyle;
+  dimensionStyles?: ReadonlyMap<string, DimensionStyle>;
+  measure2DResults: Measure2DResult[];
   polygonArea2DResults: PolygonArea2DResult[];
+  elementTags?: readonly ResolvedDrawingTag[];
   textAnnotations2D: TextAnnotation2D[];
   cloudAnnotations2D: CloudAnnotation2D[];
   sheetEnabled: boolean;
@@ -282,6 +287,9 @@ interface UseDrawingExportResult {
   handlePrint: () => void;
 }
 
+import { addDrawingTagsDxf, drawDrawingTagsPdf, drawingTagsSvg, tagExportBounds,
+  type ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
+
 function useDrawingExport({
   drawing,
   displayOptions,
@@ -291,8 +299,11 @@ function useDrawingExport({
   overridesEnabled,
   overrideEngine,
   lineweights, lineweightTable, materialHatches,
+  dimensionStyle = DEFAULT_DIMENSION_STYLE,
+  dimensionStyles,
   measure2DResults,
   polygonArea2DResults,
+  elementTags = [],
   textAnnotations2D,
   cloudAnnotations2D,
   sheetEnabled,
@@ -306,7 +317,8 @@ function useDrawingExport({
 }: UseDrawingExportParams): UseDrawingExportResult {
   const { t } = useTranslation();
   const { patterns } = useDrawingPatterns();
-  const markers = useDrawingViewMarkers(drawing, coordinateInfo?.shiftedBounds, sectionPlane.axis, !!sectionPlane.custom);
+  const viewMarkers = useDrawingViewMarkers(drawing, coordinateInfo?.shiftedBounds, sectionPlane.axis, !!sectionPlane.custom);
+  const markers = displayOptions.showAnnotations ? viewMarkers : [];
   // Georef inputs for the DXF export (PR #1871 review, P1): placement edits
   // applied in CesiumPlacementEditor live in `georefMutations` (per model
   // id), not in `ifcDataStore`, and in a federation the georef frame is the
@@ -338,11 +350,73 @@ function useDrawingExport({
   }, [activePresetId, entityColorMap, overridesEnabled, overrideEngine, storeModels, ifcDataStore,
     lineweights, lineweightTable, materialHatches, displayOptions.scale, displayOptions.showHatching, patterns, displayOptions.distantElements]);
 
+  const dimensionItems = useCallback(() => {
+    const units = useViewerStore.getState().unitDisplayOverrides;
+    return measure2DResults.map(result => {
+      const style = resolveDimensionStyle(dimensionStyles, result.dimension?.styleId, dimensionStyle);
+      const label = formatDimensionLabel(result.distance, style, (value, precision, showUnit) =>
+        formatDistance(value, units, precision, showUnit), result.dimension?.shape?.kind);
+      return { ...result, style, label };
+    });
+  }, [dimensionStyle, dimensionStyles, measure2DResults]);
+
+  const dimensionGraphics = useCallback((map: (x: number, y: number) => { x: number; y: number }, paperUnit: number, scale: number) => {
+    const row = lineweightsAtScale(lineweightTable ?? {}, scale);
+    const point = (p: { x: number; y: number }) => map(p.x, p.y);
+    const origin = map(0, 0);
+    return dimensionItems().flatMap(({ start, end, label, style, dimension: placed }) => {
+      const anchors = placed?.anchors;
+      const graphic = styledDimension(point(start), point(end), anchors && [point(anchors[0]), point(anchors[1])],
+        style, paperUnit, mapDimensionShape(placed?.shape, point), row);
+      if (!graphic) return [];
+      const offset = placed?.textOffset ? point(placed.textOffset) : origin;
+      const position = { x: graphic.label.x + offset.x - origin.x, y: graphic.label.y + offset.y - origin.y };
+      const font = 'fontFamily' in style && typeof style.fontFamily === 'string' ? style.fontFamily : 'Arial, sans-serif';
+      return [{ graphic, position, label, style, font, angle: placed?.textAngle ?? 0 }];
+    });
+  }, [dimensionItems, lineweightTable]);
+
+  const dimensionsSvg = useCallback((map: Parameters<typeof dimensionGraphics>[0], unit: number, scale: number,
+    escape: (text: string) => string) => {
+    const items = dimensionGraphics(map, unit, scale);
+    if (!items.length) return '';
+    const markup = items.map(({ graphic, position: { x, y }, label, style, font, angle }) => {
+      const ink = style.lineColor ?? '#000';
+      const textInk = style.textColor ?? '#000';
+      const strokes = graphic.strokes.map(([a, b]) => `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`);
+      const triangles = graphic.triangles.map(points => `<polygon points="${points.map(p => `${p.x},${p.y}`).join(' ')}" stroke="none" fill="${ink}"/>`);
+      const circles = graphic.circles.map(({ center, radius, filled }) => `<circle cx="${center.x}" cy="${center.y}" r="${radius}" fill="${filled ? ink : 'none'}"/>`);
+      return `<g stroke="${ink}" stroke-width="${graphic.lineWidth}" fill="none">${[...strokes, ...triangles, ...circles].join('')}</g>` +
+        `<text x="${x}" y="${y}" transform="rotate(${angle} ${x} ${y})" text-anchor="middle" dominant-baseline="middle" font-family="${escape(font)}" font-size="${graphic.textSize}" fill="${textInk}">${escape(label)}</text>`;
+    });
+    return `<g id="measurements">${markup.join('')}</g>`;
+  }, [dimensionGraphics]);
+
+  const expandDimensionBounds = useCallback((bounds: Drawing2D['bounds'], scale: number) => {
+    const result = { min: { ...bounds.min }, max: { ...bounds.max } };
+    for (const { start, end, label, style, dimension: placed } of dimensionItems()) {
+      const { textMm, tickMm, labelGapMm, extensionMm } = style;
+      const margin = svgExportMmToWorld(Math.max(tickMm, extensionMm, labelGapMm) + textMm * (label.length / 2 + 1), scale);
+      const marginX = margin + Math.abs(placed?.textOffset?.x ?? 0);
+      const marginY = margin + Math.abs(placed?.textOffset?.y ?? 0);
+      const shape = placed?.shape;
+      const points = shape?.kind === 'angular' ? dimensionArc(start, end, shape.center, shape.label)
+        : shape ? [start, end, shape.label] : [start, end];
+      for (const { x, y } of [...points, ...(placed?.anchors ?? [])]) {
+        result.min.x = Math.min(result.min.x, x - marginX);
+        result.min.y = Math.min(result.min.y, y - marginY);
+        result.max.x = Math.max(result.max.x, x + marginX);
+        result.max.y = Math.max(result.max.y, y + marginY);
+      }
+    }
+    return result;
+  }, [dimensionItems]);
+
   // Generate SVG that matches the canvas rendering exactly
   const generateExportSVG = useCallback((): string | null => {
     if (!drawing) return null;
 
-    const bounds = viewMarkerExportBounds(drawing.bounds, markers, displayOptions.scale);
+    const bounds = expandDimensionBounds(tagExportBounds(viewMarkerExportBounds(drawing.bounds, markers, displayOptions.scale), elementTags, displayOptions.scale), displayOptions.scale || 100);
 
     // World-metres -> paper-mm arithmetic for the direct SVG export,
     // extracted to svgExportViewport.ts (see that file's docstring for why
@@ -433,7 +507,7 @@ function useDrawingExport({
     const lineMinY = lineBounds.min.y - lineMargin;
     const lineMaxY = lineBounds.max.y + lineMargin;
 
-    svg += '  <g id="drawing-lines">\n';
+    svg += '  <g id="drawing-lines" stroke-linejoin="round" stroke-linecap="round">\n';
     for (const line of drawing.lines) {
       if (isPolygonCutLine(line)) continue;
 
@@ -504,42 +578,7 @@ function useDrawingExport({
     }
     svg += '  </g>\n';
 
-    // 4. DRAW COMPLETED MEASUREMENTS
-    if (measure2DResults.length > 0) {
-      svg += '  <g id="measurements">\n';
-      for (const result of measure2DResults) {
-        const { start, end, distance } = result;
-        // Transform measurement points with axis-specific flipping
-        const startT = { x: flipX ? -start.x : start.x, y: flipY ? -start.y : start.y };
-        const endT = { x: flipX ? -end.x : end.x, y: flipY ? -end.y : end.y };
-        const midX = (startT.x + endT.x) / 2;
-        const midY = (startT.y + endT.y) / 2;
-        const labelText = formatDistance(distance);
-
-        // Measurement styling (all in mm on paper, converted to model units)
-        const measureColor = '#2196F3';
-        const measureLineWidth = mmToModel(0.4);  // 0.4mm line on paper
-        const endpointRadius = mmToModel(1.5);    // 1.5mm radius on paper
-
-        // Draw line
-        svg += `    <line x1="${startT.x.toFixed(4)}" y1="${startT.y.toFixed(4)}" x2="${endT.x.toFixed(4)}" y2="${endT.y.toFixed(4)}" stroke="${measureColor}" stroke-width="${measureLineWidth.toFixed(4)}"/>\n`;
-
-        // Draw endpoints
-        svg += `    <circle cx="${startT.x.toFixed(4)}" cy="${startT.y.toFixed(4)}" r="${endpointRadius.toFixed(4)}" fill="${measureColor}"/>\n`;
-        svg += `    <circle cx="${endT.x.toFixed(4)}" cy="${endT.y.toFixed(4)}" r="${endpointRadius.toFixed(4)}" fill="${measureColor}"/>\n`;
-
-        // Draw label background and text
-        // Use 3mm text height on paper for readable labels
-        const fontSize = mmToModel(3);
-        const labelWidth = labelText.length * fontSize * 0.6;  // Approximate text width
-        const labelHeight = fontSize * 1.4;
-        const labelStroke = mmToModel(0.2);
-
-        svg += `    <rect x="${(midX - labelWidth / 2).toFixed(4)}" y="${(midY - labelHeight / 2).toFixed(4)}" width="${labelWidth.toFixed(4)}" height="${labelHeight.toFixed(4)}" fill="rgba(255,255,255,0.95)" stroke="${measureColor}" stroke-width="${labelStroke.toFixed(4)}"/>\n`;
-        svg += `    <text x="${midX.toFixed(4)}" y="${midY.toFixed(4)}" font-family="Arial, sans-serif" font-size="${fontSize.toFixed(4)}" fill="#000000" text-anchor="middle" dominant-baseline="middle" font-weight="500">${escapeXml(labelText)}</text>\n`;
-      }
-      svg += '  </g>\n';
-    }
+    svg += dimensionsSvg(mapUnderlay, mmToModel(1), effectiveScale, escapeXml);
 
     // 5. DRAW POLYGON AREA MEASUREMENTS
     if (polygonArea2DResults.length > 0) {
@@ -626,10 +665,11 @@ function useDrawingExport({
       );
     }
 
+    svg += drawingTagsSvg(elementTags, mapUnderlay, mmToModel(1), escapeXml);
     svg += viewMarkersSvg(markers, mapUnderlay, mmToModel(1), mmToModel(1), escapeXml);
     svg += '</svg>';
     return svg;
-  }, [drawing, displayOptions, cutPolygonStyleContext, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, sectionPlane.axis, dxfUnderlays, scanSection, markers]);
+  }, [drawing, displayOptions, cutPolygonStyleContext, expandDimensionBounds, dimensionsSvg, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, sectionPlane.axis, dxfUnderlays, scanSection, markers, elementTags]);
 
   // Generate SVG with drawing sheet (frame, title block, scale bar)
   // This generates coordinates directly in paper mm space (like the canvas rendering)
@@ -754,7 +794,7 @@ function useDrawingExport({
     const lineMinY = lineBounds.min.y - lineMargin;
     const lineMaxY = lineBounds.max.y + lineMargin;
 
-    svg += '    <g id="drawing-lines">\n';
+    svg += '    <g id="drawing-lines" stroke-linejoin="round" stroke-linecap="round">\n';
     for (const line of drawing.lines) {
       if (isPolygonCutLine(line)) continue;
       if (!displayOptions.showHiddenLines && isOccludedDrawingLine(line)) continue;
@@ -808,6 +848,8 @@ function useDrawingExport({
       );
     }
 
+    svg += dimensionsSvg(modelToPaper, 1, activeSheet.scale.factor, escapeXml);
+    svg += drawingTagsSvg(elementTags, modelToPaper, 1, escapeXml);
     svg += viewMarkersSvg(markers, modelToPaper, 1 / Math.abs(scaleFactor), 1, escapeXml);
     svg += '  </g>\n\n';
 
@@ -844,7 +886,7 @@ function useDrawingExport({
     // identity when the axis changes, and the canvas rewrote the cache on
     // every fresh draw — neither of which this callback controls.
     // `cachedSheetTransformRef` is a ref: stable identity, read at call time.
-  }, [drawing, activeSheet, displayOptions, cutPolygonStyleContext, dxfUnderlays, scanSection, sectionPlane.axis, isPinned, markers]);
+  }, [drawing, activeSheet, displayOptions, cutPolygonStyleContext, dxfUnderlays, scanSection, sectionPlane.axis, isPinned, markers, dimensionsSvg, elementTags]);
   const buildSVG = useCallback(() => sheetEnabled && activeSheet ? generateSheetSVG(false) : generateExportSVG(),
     [generateExportSVG, generateSheetSVG, sheetEnabled, activeSheet]);
   const handleExportSVG = useCallback(() => {
@@ -897,7 +939,12 @@ function useDrawingExport({
     const scale = sheetEnabled && activeSheet ? activeSheet.scale.factor : displayOptions.scale;
     const styleContext = cutPolygonStyleContext(scale);
     const stroke = styleContext.stroke;
-    const dxf = exportToDXF(drawing, {
+    const overlays = viewMarkersDxf(markers, scale, displayOptions.showScanSection ? scanOutlineDxfLayers(scanSection.outline) : []);
+    const { flipX, flipY } = axisFlipForSection(sectionPlane.axis);
+    const paperPoint = (x: number, y: number) => ({ x: flipX ? -x : x, y: flipY ? -y : y });
+    const fromPaper = (point: { x: number; y: number }) => paperPoint(point.x, point.y);
+    const annotations = dimensionGraphics(paperPoint, scale / 1000, scale);
+    const dxf = exportToDXF(drawing, addDrawingTagsDxf({
       objectStyles: !!stroke,
       strokeStyle: stroke ? (element, role, line) => {
         const pen = stroke(element, role, line);
@@ -916,15 +963,34 @@ function useDrawingExport({
       underlays: mappedDxfUnderlayOptions(dxfUnderlays, sectionPlane.axis),
       // The traced scan outline (#6871) on its own layer, through the same
       // georeference transform as the cut.
-      ...viewMarkersDxf(markers, scale, displayOptions.showScanSection ? scanOutlineDxfLayers(scanSection.outline) : []),
-    });
+      polylineLayers: [...(overlays.polylineLayers ?? []), ...annotations.map(({ graphic, style }) => ({
+        name: 'IFC-DIMENSIONS', color: style.lineColor ?? '#000000', closed: false,
+        lineWeight: graphic.lineWidth * 1000 / scale,
+        polylines: [...graphic.strokes, ...graphic.triangles.map(points => [...points, points[0]]),
+          ...graphic.circles.map(({ center, radius }) => Array.from({ length: 25 }, (_, i) => ({
+            x: center.x + radius * Math.cos(i * Math.PI / 12), y: center.y + radius * Math.sin(i * Math.PI / 12),
+          })))].map(points => points.map(fromPaper)),
+      }))],
+      labels: [...(overlays.labels ?? []), ...annotations.map(({ position, label, style, graphic, angle }) => {
+        const origin = coordinateTransform(fromPaper(position));
+        const radians = angle * Math.PI / 180;
+        const next = coordinateTransform(fromPaper({
+          x: position.x + Math.cos(radians), y: position.y + Math.sin(radians),
+        }));
+        return {
+          layer: 'IFC-DIMENSIONS', color: style.textColor ?? '#000000', text: label,
+          position: fromPaper(position), height: graphic.textSize,
+          rotationDeg: Math.atan2(next.y - origin.y, next.x - origin.x) * 180 / Math.PI,
+        };
+      })],
+    }, elementTags, scale));
     const suffix = lineweights ? `-1-${formatScaleFactorLabel(scale)}` : '';
     const stem = `section-${sectionPlane.axis}-${sectionPlane.position}${suffix}`;
     return { dxf, stem, isGeoreferenced };
   }, [
     drawing, dxfUnderlays, displayOptions.showHiddenLines, displayOptions.showHatching, displayOptions.showScanSection, scanSection.outline,
     sectionPlane, ifcDataStore, coordinateInfo, storeModels, anchorModelIdOverride, georefMutations, mutationVersion,
-    lineweights, cutPolygonStyleContext, sheetEnabled, activeSheet, displayOptions.scale, markers,
+    lineweights, cutPolygonStyleContext, sheetEnabled, activeSheet, displayOptions.scale, markers, dimensionGraphics, elementTags,
   ]);
   const handleExportDXF = useCallback(() => {
     const file = buildDXF();
@@ -1006,13 +1072,14 @@ function useDrawingExport({
     const currentAxis = sectionPlane.axis;
     let layout: PdfScaleLayout;
     try {
-      layout = computePdfSectionLayout(viewMarkerExportBounds(drawing.bounds, markers, effectiveScale), currentAxis, effectiveScale, 10);
+      layout = computePdfSectionLayout(expandDimensionBounds(tagExportBounds(viewMarkerExportBounds(drawing.bounds, markers, effectiveScale), elementTags, effectiveScale), effectiveScale), currentAxis, effectiveScale, 10);
     } catch (err) {
       if (destination) throw err;
       toast.error(err instanceof Error ? t('section2d.export.invalidScaleDetail', { error: err.message }) : t('section2d.export.invalidScale'));
       return;
     }
     const mapPoint = makeSectionMapPoint(currentAxis, layout);
+    const annotations = dimensionGraphics(mapPoint, 1, effectiveScale);
 
     // Prepared before the reference snapshot is taken, so a throw here cannot
     // strand it.
@@ -1043,6 +1110,7 @@ function useDrawingExport({
         drawDxfUnderlaysPdf(doc, vectorSnapshot, mapPoint, 1000 / effectiveScale);
 
         doc.setLineCap('round');
+        doc.setLineJoin('round');
 
         drawCutPolygonsPdf(doc, cutPolygons, effectiveScale);
         doc.setDrawColor(0, 0, 0);
@@ -1089,6 +1157,20 @@ function useDrawingExport({
           doc.line(p0.x, p0.y, p1.x, p1.y);
         }
         drawViewMarkersPdf(doc, markers, mapPoint, effectiveScale);
+        drawDrawingTagsPdf(doc, elementTags, mapPoint);
+        doc.setLineDashPattern([], 0);
+        for (const { graphic, position, label, style, font, angle } of annotations) {
+          const ink = style.lineColor ?? '#000000';
+          doc.setDrawColor(ink).setFillColor(ink).setLineWidth(graphic.lineWidth);
+          for (const [a, b] of graphic.strokes) doc.line(a.x, a.y, b.x, b.y);
+          for (const [a, b, c] of graphic.triangles) doc.triangle(a.x, a.y, b.x, b.y, c.x, c.y, 'F');
+          for (const { center, radius, filled } of graphic.circles) doc.circle(center.x, center.y, radius, filled ? 'F' : 'S');
+          const family = font.toLowerCase();
+          doc.setFont(family.includes('georgia') ? 'times' : family.includes('courier') ? 'courier' : 'helvetica');
+          doc.setFontSize(graphic.textSize * 72 / 25.4);
+          doc.setTextColor(style.textColor ?? '#000000');
+          doc.text(label, position.x, position.y, { align: 'center', baseline: 'middle', angle: -angle });
+        }
         doc.setLineDashPattern([], 0);
         // v1 has no title block, so this filename is the SOLE record of the
         // sheet's scale — round-tripping through Math.round() here would
@@ -1110,7 +1192,7 @@ function useDrawingExport({
       if (destination) throw err;
       toast.error(err instanceof Error ? t('section2d.export.pdfFailed', { error: err.message }) : t('section2d.export.pdfFailedGeneric'));
     });
-  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers]);
+  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers, expandDimensionBounds, dimensionGraphics, elementTags]);
 
   // Print handler
   const handlePrint = useCallback(() => {

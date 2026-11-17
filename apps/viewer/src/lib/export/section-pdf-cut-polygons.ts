@@ -137,6 +137,7 @@ export function drawCutPolygonsPdf(doc: jsPDF, polygons: readonly PdfCutPolygon[
 
 function drawCutPolygons(doc: jsPDF, polygons: readonly PdfCutPolygon[], scale: number): void {
   doc.setLineCap('round');
+  doc.setLineJoin('round');
   doc.setLineDashPattern([], 0);
   const colors: ColorCache = new Map();
   const tracePath = (rings: Point[][]) => {

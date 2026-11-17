@@ -30,6 +30,7 @@
  * function returns.
  */
 
+import { dimensionArc } from '@/lib/drawing/dimension-line';
 import type {
   Point2D, TextAnnotation2D, SelectedAnnotation2D,
   Measure2DResult, PolygonArea2DResult, CloudAnnotation2D,
@@ -173,7 +174,13 @@ export function hitTestAnnotations({
     const result = measures[i];
     const sa = drawingToScreen(result.start);
     const sb = drawingToScreen(result.end);
-    const { dist } = nearestPointOnScreenSegment({ x: screenX, y: screenY }, sa, sb);
+    const { shape, anchors } = result.dimension ?? {};
+    const points = shape?.kind === 'angular'
+      ? dimensionArc(sa, sb, drawingToScreen(shape.center), drawingToScreen(shape.label))
+      : [sa, sb];
+    const strokes = points.slice(1).map((point, index) => [points[index], point] as const);
+    if (shape?.kind === 'angular' && anchors) strokes.push([sa, drawingToScreen(anchors[0])], [sb, drawingToScreen(anchors[1])]);
+    const dist = Math.min(...strokes.map(([a, b]) => nearestPointOnScreenSegment({ x: screenX, y: screenY }, a, b).dist));
     if (dist < threshold && (!best || dist < best.dist)) {
       best = { dist, selection: { type: 'measure', id: result.id } };
     }

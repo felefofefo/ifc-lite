@@ -140,21 +140,24 @@ function isPoint2D(v: unknown): v is Point2D {
   const p = v as Record<string, unknown>;
   return isFiniteNumber(p.x) && isFiniteNumber(p.y);
 }
-
 function isPoint2DArray(v: unknown): v is Point2D[] {
   return Array.isArray(v) && v.every(isPoint2D);
 }
-
 function isMeasure2DResult(v: unknown): v is Measure2DResult {
   if (!v || typeof v !== 'object') return false;
-  const r = v as Record<string, unknown>;
-  return (
-    typeof r.id === 'string' && r.id.length > 0 &&
-    isPoint2D(r.start) && isPoint2D(r.end) &&
-    isFiniteNumber(r.distance)
+  const { id, start, end, distance, dimension } = v as Partial<Measure2DResult>;
+  if (typeof id !== 'string' || !id || !isPoint2D(start) || !isPoint2D(end) || !isFiniteNumber(distance)) return false;
+  return dimension === undefined || (
+    !!dimension && typeof dimension.chainId === 'string' && dimension.chainId.length > 0 &&
+    (dimension.styleId === undefined || typeof dimension.styleId === 'string') &&
+    (dimension.textOffset === undefined || isPoint2D(dimension.textOffset)) &&
+    (dimension.textAngle === undefined || isFiniteNumber(dimension.textAngle)) &&
+    (dimension.shape === undefined || (!!dimension.shape &&
+      ['angular', 'radius', 'diameter'].includes(dimension.shape.kind) &&
+      isPoint2D(dimension.shape.center) && isPoint2D(dimension.shape.label))) &&
+    (dimension.viewKey === undefined || typeof dimension.viewKey === 'string') && Array.isArray(dimension.anchors) && dimension.anchors.length === 2 && dimension.anchors.every(isPoint2D)
   );
 }
-
 function isPolygonArea2DResult(v: unknown): v is PolygonArea2DResult {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;

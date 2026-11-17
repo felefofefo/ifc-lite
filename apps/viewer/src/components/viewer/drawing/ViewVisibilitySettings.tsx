@@ -11,12 +11,12 @@ import { captureViewVisibility } from '@/lib/drawing/view-visibility';
 import { DEFAULT_VIEW_MARKERS } from '@/lib/drawing/view-markers';
 import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import { loadSavedFilters } from '@/lib/search/saved-filters';
-import { savedViewKind, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { savedViewKind, setDrawingProjectionDisplay, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 
 export function ViewVisibilitySettings({ annotations = false }: { annotations?: boolean }) {
   const { t } = useTranslation();
   const cut = useSavedSectionCuts(s => s.cuts.find(c => c.id === s.activeCutId));
-  const ifcAnnotations = useViewerStore(s => s.drawing2DDisplayOptions.showIfcAnnotations);
+  const showAnnotations = useViewerStore(s => s.drawing2DDisplayOptions.showAnnotations);
   const [failed, setFailed] = useState(false);
   const runtime = useDrawingRuntime();
   const presets = annotations ? [] : loadSavedFilters();
@@ -25,12 +25,22 @@ export function ViewVisibilitySettings({ annotations = false }: { annotations?: 
     if (!cut) return;
     try { updateViewSettings(cut.id, patch); setFailed(false); } catch { setFailed(true); }
   }
-  return <div className="h-full space-y-3 overflow-y-auto p-3 text-xs">
+  return <div className={annotations ? "space-y-3 p-3 text-xs" : "h-full space-y-3 overflow-y-auto p-3 text-xs"}>
     {annotations && (
-      <DrawingSettingSwitch label={t('section2d.display.ifcAnnotations')} checked={ifcAnnotations}
-        onCheckedChange={showIfcAnnotations => {
-          if (cut?.display) save({ display: { ...cut.display, showIfcAnnotations } });
-          useViewerStore.getState().updateDrawing2DDisplayOptions({ showIfcAnnotations });
+      <DrawingSettingSwitch label={t('section2d.display.ifcAnnotations')} checked={showAnnotations}
+        onCheckedChange={showAnnotations => {
+          try {
+            setDrawingProjectionDisplay({ showAnnotations });
+            if (!showAnnotations) {
+              const state = useViewerStore.getState();
+              state.setAnnotation2DActiveTool('none');
+              state.setSelectedAnnotation2D(null);
+              state.setTextAnnotation2DEditing(null);
+            }
+            setFailed(false);
+          } catch {
+            setFailed(true);
+          }
         }} />
     )}
     {!cut && <p className="text-muted-foreground">{t('section2d.viewSettings.selectSaved')}</p>}

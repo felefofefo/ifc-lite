@@ -16,6 +16,9 @@ import { useViewerStore } from '@/store';
 import { selectActiveSavedView, setDrawingProjectionDisplay, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
+import { useViewDimensions } from './useViewDimensions';
+import type { DimensionType } from '@/lib/drawing/dimension-line';
+import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useMeasure2D } from '@/hooks/useMeasure2D';
 import { useAnnotation2D } from '@/hooks/useAnnotation2D';
 import { useDrawingWithReferences } from '@/hooks/useReferenceImagesForDrawing';
@@ -27,6 +30,7 @@ import type { CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveDrawingPaperTheme } from './paper-theme';
 import { overheadProjectionEnabled, toggledConstructionProjection } from '@/lib/drawing/construction-projection';
 import { useDrawingLineweights } from './DrawingLineweights';
+import { useDrawingDimensionStyle } from '@/hooks/useDrawingDimensionStyle';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
 import { useDrawingCutJointMaterial } from '@/hooks/useDrawingCutJoints';
 import { applyDistantZone } from '@/lib/drawing/distant-elements';
@@ -37,6 +41,8 @@ import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
  *  share one slot. Re-exported for the drawing/ subtree's existing imports. */
 export type DrawingDrawer = DrawingInspectorTab;
 
+import { useDrawingTags } from './DrawingElementTags';
+
 export function useDrawingViewModel() {
   const runtime = useDrawingRuntime();
   const { geometryResult } = runtime;
@@ -44,6 +50,7 @@ export function useDrawingViewModel() {
   const sourceDrawing = useViewerStore((s) => s.drawing2D);
   const models = useViewerStore((s) => s.models);
   const lineweightSettings = useDrawingLineweights();
+  const dimensionSettings = useDrawingDimensionStyle(lineweightSettings.projectId);
   const materialSettings = useDrawingMaterials(lineweightSettings.projectId);
   const cutJointMaterial = useDrawingCutJointMaterial();
   const joinedDrawing = useMemo(() => {
@@ -98,16 +105,7 @@ export function useDrawingViewModel() {
   const setTitleBlockEditorVisible = useViewerStore((s) => s.setTitleBlockEditorVisible);
 
   const measure2DMode = useViewerStore((s) => s.measure2DMode);
-  const measure2DStart = useViewerStore((s) => s.measure2DStart);
-  const measure2DCurrent = useViewerStore((s) => s.measure2DCurrent);
-  const setMeasure2DStart = useViewerStore((s) => s.setMeasure2DStart);
-  const setMeasure2DCurrent = useViewerStore((s) => s.setMeasure2DCurrent);
-  const setMeasure2DShiftLocked = useViewerStore((s) => s.setMeasure2DShiftLocked);
-  const measure2DShiftLocked = useViewerStore((s) => s.measure2DShiftLocked);
-  const measure2DLockedAxis = useViewerStore((s) => s.measure2DLockedAxis);
-  const measure2DResults = useViewerStore((s) => s.measure2DResults);
-  const completeMeasure2D = useViewerStore((s) => s.completeMeasure2D);
-  const cancelMeasure2D = useViewerStore((s) => s.cancelMeasure2D);
+  const [dimensionType, setDimensionType] = useState<DimensionType>('aligned');
   const measure2DSnapPoint = useViewerStore((s) => s.measure2DSnapPoint);
   const setMeasure2DSnapPoint = useViewerStore((s) => s.setMeasure2DSnapPoint);
 
@@ -131,15 +129,15 @@ export function useDrawingViewModel() {
   const addCloudAnnotation2DPoint = useViewerStore((s) => s.addCloudAnnotation2DPoint);
   const completeCloudAnnotation2D = useViewerStore((s) => s.completeCloudAnnotation2D);
   const cancelCloudAnnotation2D = useViewerStore((s) => s.cancelCloudAnnotation2D);
-  const selectedAnnotation2D = useViewerStore((s) => s.selectedAnnotation2D);
   const setSelectedAnnotation2D = useViewerStore((s) => s.setSelectedAnnotation2D);
   const deleteSelectedAnnotation2D = useViewerStore((s) => s.deleteSelectedAnnotation2D);
   const moveAnnotation2D = useViewerStore((s) => s.moveAnnotation2D);
-  const clearAllAnnotations2D = useViewerStore((s) => s.clearAllAnnotations2D);
 
   const sectionPlane = useViewerStore((s) => s.sectionPlane);
   // Everything drawn with or exported from the drawing follows the cut it was generated at.
   const drawnPlane = useViewerStore(drawnSectionPlane);
+  const dimensions = useViewDimensions(drawnPlane, sectionPlane.id, saved3D ? undefined : savedView?.id, drawingPlaneId, dimensionSettings.library.defaultId);
+  const { viewKey, measure2DResults, selectedAnnotation2D } = dimensions;
   const dxfUnderlayData = useDxfUnderlaysForDrawing({enabled:status==='ready', plane:sourceDrawing?.config.plane,
     sectionAxis:drawnPlane.axis,isCustomPlane:drawnPlane.custom!==undefined,flipped:drawnPlane.flipped,coordinateInfo:geometryResult?.coordinateInfo});
   const drawing = useMemo(() => {
@@ -190,30 +188,54 @@ export function useDrawingViewModel() {
     isPinned, cachedSheetTransformRef, referenceBounds,
   });
 
+  let markupTransform = viewTransform;
+  if (sheetEnabled && activeSheet && drawing) {
+    const { min, max } = drawing.bounds;
+    const { transform } = resolveSheetTransform({
+      sheet: activeSheet, axis: drawnPlane.axis, isPinned, cached: cachedSheetTransformRef.current,
+      drawingBounds: { minX: min.x, minY: min.y, maxX: max.x, maxY: max.y },
+    });
+    markupTransform = {
+      x: viewTransform.x + transform.translateX * viewTransform.scale,
+      y: viewTransform.y + transform.translateY * viewTransform.scale,
+      scale: viewTransform.scale * transform.scaleFactor,
+    };
+  }
+
+  const finishDimension = useCallback(() => setAnnotation2DActiveTool('none'), [setAnnotation2DActiveTool]);
   const measureHandlers = useMeasure2D({
-    drawing, viewTransform, setViewTransform, sectionAxis: drawnPlane.axis, containerRef,
-    measure2DMode, measure2DStart, measure2DCurrent,
-    measure2DShiftLocked, measure2DLockedAxis,
-    setMeasure2DStart, setMeasure2DCurrent, setMeasure2DShiftLocked,
-    setMeasure2DSnapPoint, cancelMeasure2D, completeMeasure2D,
+    drawing: status === 'ready' && viewKey ? drawing : null,
+    drawingKey: viewKey ?? undefined,
+    viewTransform: markupTransform, setViewTransform, sectionAxis: drawnPlane.axis, containerRef,
+    measure2DMode: measure2DMode && !saved3D, dimensionType,
+    showHiddenLines: displayOptions.showHiddenLines, setMeasure2DSnapPoint,
+    onCancel: finishDimension, onPlace: dimensions.placeDimension,
+  });
+
+  const tags = useDrawingTags({
+    view: savedView && !saved3D && viewKey === 'view:' + savedView.id ? savedView : undefined,
+    drawing: status === 'ready' ? drawing : null,
+    transform: markupTransform, axis: drawnPlane.axis, container: containerRef,
+    tool: annotation2DActiveTool, setTool: setAnnotation2DActiveTool,
+    showHidden: displayOptions.showHiddenLines, scale: publicationScale,
   });
 
   const annotationHandlers = useAnnotation2D({
-    drawing, viewTransform, sectionAxis: drawnPlane.axis, containerRef,
+    drawing, viewTransform: markupTransform, sectionAxis: drawnPlane.axis, containerRef,
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
     polygonArea2DPoints, addPolygonArea2DPoint, completePolygonArea2D, cancelPolygonArea2D,
-    textAnnotations2D, addTextAnnotation2D, setTextAnnotation2DEditing,
-    cloudAnnotation2DPoints, cloudAnnotations2D, addCloudAnnotation2DPoint, completeCloudAnnotation2D, cancelCloudAnnotation2D,
-    measure2DResults, polygonArea2DResults,
+    textAnnotations2D: displayOptions.showAnnotations ? textAnnotations2D : [], addTextAnnotation2D, setTextAnnotation2DEditing,
+    cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint, completeCloudAnnotation2D, cancelCloudAnnotation2D,
+    measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? polygonArea2DResults : [],
+    pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
     selectedAnnotation2D, setSelectedAnnotation2D, deleteSelectedAnnotation2D, moveAnnotation2D,
     setAnnotation2DCursorPos, setMeasure2DSnapPoint,
   });
 
   // Unified mouse handlers that dispatch to the right tool
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (annotation2DActiveTool === 'measure') {
-      measureHandlers.handleMouseDown(e);
-    } else if (annotation2DActiveTool === 'none') {
+    if (annotation2DActiveTool === 'measure') return;
+    if (annotation2DActiveTool === 'none') {
       // Try annotation selection/drag first; if it consumed the click, don't pan
       const consumed = annotationHandlers.handleMouseDown(e);
       if (!consumed) measureHandlers.handleMouseDown(e);
@@ -244,10 +266,10 @@ export function useDrawingViewModel() {
     onMouseDown: handleMouseDown,
     onMouseMove: handleMouseMove,
     onMouseUp: handleMouseUp,
-    onMouseEnter: measureHandlers.handleMouseEnter,
+    onClick: measureHandlers.handleClick,
     onMouseLeave: measureHandlers.handleMouseLeave,
-    onDoubleClick: annotationHandlers.handleDoubleClick,
-  }), [handleMouseDown, handleMouseMove, handleMouseUp, measureHandlers, annotationHandlers]);
+    onDoubleClick: annotation2DActiveTool === 'measure' ? undefined : annotationHandlers.handleDoubleClick,
+  }), [annotation2DActiveTool, handleMouseDown, handleMouseMove, handleMouseUp, measureHandlers, annotationHandlers]);
 
   // Display toggles. Symbolic and construction projection change which geometry
   // the generator emits, so they clear the drawing to force a regenerate.
@@ -303,7 +325,19 @@ export function useDrawingViewModel() {
 
   const togglePinned = useCallback(() => setIsPinned((prev) => !prev), []);
 
-  const selectTool = useCallback((tool: Annotation2DTool) => setAnnotation2DActiveTool(tool), [setAnnotation2DActiveTool]);
+  const resetDimension = measureHandlers.reset;
+  const selectTool = useCallback((tool: Annotation2DTool) => {
+    if (tool !== 'none' && !displayOptions.showAnnotations) {
+      setDrawingProjectionDisplay({ showAnnotations: true });
+    }
+    if (tool === 'measure') resetDimension();
+    setAnnotation2DActiveTool(tool);
+  }, [displayOptions.showAnnotations, resetDimension, setAnnotation2DActiveTool]);
+
+  const selectDimensionType = useCallback((type: DimensionType) => {
+    setDimensionType(type);
+    selectTool('measure');
+  }, [selectTool]);
 
   // Text editor handlers
   const handleTextConfirm = useCallback((id: string, text: string) => {
@@ -346,7 +380,7 @@ export function useDrawingViewModel() {
     drawing, sourceDrawing, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
     displayOptions, unitDisplayOverrides, typeVisibility,
     activePresetId, overridesEnabled, overrideEngine, entityColorMap,
-    lineweights, lineweightSettings, materialSettings, publicationScale, saved3D, savedView, drawingPlaneId,
+    lineweights, lineweightSettings, materialSettings, dimensionSettings, dimensionEditing: dimensions, publicationScale, saved3D, savedView, drawingPlaneId,
     dxfUnderlays, pointCloudClassMask,
     activeSheet, sheetEnabled, titleBlockEditorVisible, setTitleBlockEditorVisible,
     sectionPlane, drawnPlane,
@@ -355,14 +389,21 @@ export function useDrawingViewModel() {
     exportableDrawing: status === 'ready' ? drawing : null,
     isPinned, togglePinned, containerRef, cachedSheetTransformRef,
     openDrawer, toggleDrawer, closeDrawer,
-    viewTransform, zoomIn, zoomOut, fitToView,
-    canvasMouseHandlers, cursorClass,
-    measure2DMode, measure2DStart, measure2DCurrent, measure2DResults, measure2DSnapPoint, measure2DShiftLocked,
+    viewTransform, markupTransform, zoomIn, zoomOut, fitToView,
+    tags, canvasMouseHandlers: {
+      ...canvasMouseHandlers,
+      onMouseDown: (e: React.MouseEvent) => { if (!tags.active) canvasMouseHandlers.onMouseDown(e); },
+      onMouseMove: (e: React.MouseEvent) => { if (!tags.move(e)) canvasMouseHandlers.onMouseMove(e); },
+      onClick: (e: React.MouseEvent) => { if (!tags.click(e)) canvasMouseHandlers.onClick(e); },
+    }, cursorClass: tags.active ? 'cursor-crosshair' : cursorClass,
+    measure2DMode, measure2DResults, measure2DSnapPoint, dimensionType, selectDimensionType,
+    dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,
     polygonArea2DPoints, polygonArea2DResults,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,
-    selectedAnnotation2D, clearAllAnnotations2D, markupCounts, hasMarkup,
+    selectedAnnotation2D, clearAllAnnotations2D: () => { if (tags.clear()) dimensions.clearAllAnnotations2D(); },
+    markupCounts, hasMarkup: hasMarkup || tags.items.length > 0,
     toggleIfcAnnotations, toggleConstructionProjection, toggleOverheadProjection, toggle3DOverlay, toggleSymbolicRepresentations,
     togglePrintPreview, paperTheme,
   };

@@ -15,6 +15,7 @@ import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { constructionProjectionEnabled, overheadProjectionEnabled } from '@/lib/drawing/construction-projection';
 import { supportsDrawingProjection } from '@/lib/drawing/view-placement';
 import { setViewSurfacePatterns } from '@/store/savedSectionCutsStore';
+import { DrawingDimensionStyles } from './DrawingDimensionStyles';
 import { ViewVisibilitySettings } from './ViewVisibilitySettings';
 import { DrawingSettingsPanel } from '../DrawingSettingsPanel';
 import { DrawingUnderlaysPanel } from './DrawingUnderlaysPanel';
@@ -148,7 +149,20 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
           />
         </TabsContent>
         <TabsContent value="visibility" className="m-0 h-full"><ViewVisibilitySettings /></TabsContent>
-        <TabsContent value="annotations" className="m-0 h-full"><ViewVisibilitySettings annotations /></TabsContent>
+        <TabsContent value="annotations" className="m-0 h-full overflow-auto">
+          <ViewVisibilitySettings annotations />
+          <DrawingDimensionStyles settings={vm.dimensionSettings} unitOverrides={vm.unitDisplayOverrides} lineweights={vm.lineweights}
+            selection={vm.dimensionEditing.selectedDimension ? {
+              typeId: vm.dimensionEditing.selectedDimension.dimension?.styleId, assign: vm.dimensionEditing.assignType,
+            } : undefined}
+            labelEdit={vm.selectedAnnotation2D?.dimensionLabel && vm.dimensionEditing.selectedDimension ? {
+              id: vm.dimensionEditing.selectedDimension.id,
+              angle: vm.dimensionEditing.selectedDimension.dimension?.textAngle ?? 0,
+              hasOffset: Boolean(vm.dimensionEditing.selectedDimension.dimension?.textOffset),
+              rotate: angle => vm.dimensionEditing.updateLabel({ textAngle: angle }),
+              resetPosition: () => vm.dimensionEditing.updateLabel({ textOffset: undefined }),
+            } : undefined} />
+        </TabsContent>
         <TabsContent value="patterns" className="m-0 h-full overflow-auto p-3 text-xs"><DrawingPatterns /></TabsContent>
         <TabsContent value="scan" className="m-0 h-full">
           <ScanSectionPanel

@@ -23,7 +23,7 @@ export const section2dDe = {
   "section2d.construction.showTitle": "Konstruktionsprojektion anzeigen (Überkopf- und sichtbare Referenzlinien)",
   "section2d.tools.group": "Markierungswerkzeuge",
   "section2d.tools.select": "Auswählen",
-  "section2d.tools.distance": "Abstand",
+  "section2d.tools.distance": "Bemaßung",
   "section2d.tools.area": "Fläche",
   "section2d.tools.text": "Text",
   "section2d.tools.cloud": "Revisionswolke",

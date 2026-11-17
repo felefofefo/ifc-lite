@@ -99,6 +99,16 @@ describe('drawing2DSlice persistence', () => {
   });
 
   describe('round-trip', () => {
+    it('restores dimension extension points alongside legacy measurements', () => {
+      const old = sampleMeasure();
+      const segment: Measure2DResult = {
+        id: 'dimension-1', start: { x: 0, y: 3 }, end: { x: 2, y: 3 }, distance: 2,
+        dimension: { anchors: [{ x: 0, y: 0 }, { x: 2, y: 1 }], chainId: 'dimension', viewKey: 'view:plan', styleId: 'detail', textOffset: { x: 0.5, y: 1 }, textAngle: 30 },
+      };
+      saveDrawing2DEntry('hash-dimensions', sampleEntry({ measure2DResults: [old, segment] }));
+      assert.deepEqual(loadDrawing2DEntry('hash-dimensions', DEFAULT_DISPLAY_OPTIONS)?.measure2DResults, [old, segment]);
+    });
+
     it('writes state under a model hash and reads it back after a fresh load', () => {
       saveDrawing2DEntry('hash-a', sampleEntry());
 

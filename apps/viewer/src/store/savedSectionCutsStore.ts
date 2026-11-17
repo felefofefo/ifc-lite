@@ -13,6 +13,7 @@ import { getDefaultSectionPlane } from './slices/sectionSlice.js';
 import { clippingSectionPlanes } from '@/store/section-active';
 import { orderedSectionPlanes, sectionPlaneCount } from '@/lib/section/section-plane-set';
 import { zoomToSectionTarget } from '@/lib/section/section-zoom';
+import { assignDimensionView, savedDimensionViewKey, temporaryDimensionViewKey } from '@/lib/drawing/dimension-view';
 import { planCutPosition, verticalViewPlane } from '@/lib/drawing/view-placement';
 import { getDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import { DEFAULT_VIEW_MARKERS, isViewCodeAvailable, nextViewCode, type MarkerTrace } from '@/lib/drawing/view-markers';
@@ -41,9 +42,13 @@ export const SAVED_VIEW_KINDS = ['plan', 'section', 'elevation', '3d'] as const;
 export type SavedViewKind = typeof SAVED_VIEW_KINDS[number];
 type ViewDisplay = Pick<ViewerState['drawing2DDisplayOptions'],
   'showConstructionProjection' | 'showOverheadProjection' | 'constructionProjectionDepth' | 'showHiddenLines' | 'showHatching' |
-  'useSymbolicRepresentations' | 'showIfcAnnotations' | 'showSurfacePatterns3D' | 'distantElements'>;
+  'useSymbolicRepresentations' | 'showIfcAnnotations' | 'showSurfacePatterns3D' | 'distantElements'>
+  & Partial<Pick<ViewerState['drawing2DDisplayOptions'], 'showAnnotations'>>;
+
+import type { DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 
 export interface SavedSectionCut {
+  elementTags?: DrawingElementTag[];
   id: string;
   name: string;
   code?: string;
@@ -152,15 +157,32 @@ function commitCuts(patch: Partial<SavedSectionCutsState>): void {
   useSavedSectionCuts.setState(patch);
 }
 
+type ViewPlane = Pick<SavedSectionCutPlane, 'axis' | 'custom'>;
+
+function isPlanPlane(plane: ViewPlane): boolean {
+  return plane.custom
+    ? Math.hypot(plane.custom.normal[0], plane.custom.normal[2]) < 1e-8
+    : plane.axis === 'down';
+}
+
+function isVerticalPlane(plane: ViewPlane): boolean {
+  return plane.custom ? Math.abs(plane.custom.normal[1]) < 1e-8 : plane.axis !== 'down';
+}
+
 export function savedViewKind(cut: Pick<SavedSectionCut, 'kind' | 'planes' | 'activeIndex'>): SavedViewKind {
-  return cut.kind && SAVED_VIEW_KINDS.includes(cut.kind) ? cut.kind
-    : cut.planes[cut.activeIndex]?.axis === 'down' ? 'plan' : 'section';
+  if (cut.kind === '3d') return '3d';
+  const plane = cut.planes[cut.activeIndex];
+  if (plane && isPlanPlane(plane)) return 'plan';
+  if (plane && cut.kind === 'elevation' && isVerticalPlane(plane)) return 'elevation';
+  return 'section';
 }
 
 /** Older 2D views may contain auxiliary clips. Keep the plane that generated the drawing. */
 function withSingleDrawingPlane(cut: SavedSectionCut): SavedSectionCut {
-  if (savedViewKind(cut) === '3d' || cut.planes.length <= 1) return cut;
-  return { ...cut, planes: [cut.planes[cut.activeIndex]], activeIndex: 0 };
+  const kind = savedViewKind(cut);
+  if (kind === '3d') return cut;
+  if (cut.planes.length <= 1) return cut.kind === kind ? cut : { ...cut, kind };
+  return { ...cut, kind, planes: [cut.planes[cut.activeIndex]], activeIndex: 0 };
 }
 
 function drawingPlaneToSave(state: Pick<ViewerState, 'sectionPlane' | 'inactiveSectionPlanes'>): SectionPlane {
@@ -174,8 +196,22 @@ export function canSaveSectionCut(state: Pick<ReturnType<typeof useViewerStore.g
   return sectionPlaneCount(state.sectionPlane, state.inactiveSectionPlanes) > 0;
 }
 
+export function currentDrawingViewKind(state: ViewerState): Exclude<SavedViewKind, '3d'> | undefined {
+  if (!canSaveSectionCut(state)) return undefined;
+  const plane = drawingPlaneToSave(state);
+  const onScreen = state.drawing2DStatus === 'ready' ? state.drawing2DPlane : null;
+  if (onScreen && (onScreen.id !== plane.id || isPlanPlane(onScreen) !== isPlanPlane(plane))) {
+    return undefined;
+  }
+  if (isPlanPlane(plane)) return 'plan';
+  const { cuts, activeCutId, drawingPlaneId } = useSavedSectionCuts.getState();
+  const active = cuts.find(cut => cut.id === activeCutId);
+  return active && plane.id === drawingPlaneId && savedViewKind(active) === 'elevation' && isVerticalPlane(plane)
+    ? 'elevation' : 'section';
+}
+
 export function canSaveDrawingView(state: ViewerState, kind: SavedViewKind): boolean {
-  return kind === '3d' ? !!state.cameraCallbacks.getViewpoint : canSaveSectionCut(state);
+  return kind === '3d' ? !!state.cameraCallbacks.getViewpoint : currentDrawingViewKind(state) === kind;
 }
 
 /**
@@ -185,9 +221,16 @@ export function canSaveDrawingView(state: ViewerState, kind: SavedViewKind): boo
 export function saveCurrentSectionCut(name: string, kind?: SavedViewKind, scale?: number, code?: string): string {
   const cut = captureSectionCut(name, kind, undefined, scale);
   cut.code = validateViewCode(savedViewKind(cut), code);
-  commitCuts({ cuts: [...useSavedSectionCuts.getState().cuts, cut], activeCutId: cut.id,
-    drawingPlaneId: savedViewKind(cut) === '3d' ? undefined : drawingPlaneToSave(useViewerStore.getState()).id });
-  useViewerStore.setState({ activePresetId: null });
+  const previous = useSavedSectionCuts.getState();
+  const state = useViewerStore.getState();
+  const plane = savedViewKind(cut) === '3d' ? undefined : drawingPlaneToSave(state);
+  commitCuts({ cuts: [...previous.cuts, cut], activeCutId: cut.id, drawingPlaneId: plane?.id });
+  useViewerStore.setState({
+    activePresetId: null,
+    ...(plane && plane.id !== previous.drawingPlaneId ? {
+      measure2DResults: assignDimensionView(state.measure2DResults, savedDimensionViewKey(cut.id), temporaryDimensionViewKey(plane)),
+    } : {}),
+  });
   return cut.id;
 }
 
@@ -213,6 +256,13 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
   if (scale !== undefined && (!Number.isFinite(scale) || scale <= 0)) throw new Error('Invalid publication scale.');
   if (kind === '3d' && !viewpoint) throw new Error('The 3D camera is not ready.');
   const drawingPlane = newPlane ?? drawingPlaneToSave(state);
+  const drawingKind = newPlane
+    ? isPlanPlane(drawingPlane) ? 'plan' : kind === 'elevation' && isVerticalPlane(drawingPlane) ? 'elevation' : 'section'
+    : currentDrawingViewKind(state);
+  if (kind !== '3d' && (!drawingKind || (kind !== undefined && kind !== drawingKind))) {
+    throw new Error('The selected view type does not match the drawing.');
+  }
+  const requestedKind = kind ?? drawingKind;
   const visible = kind === '3d' ? new Set(clippingSectionPlanes(state)) : undefined;
   const planes = visible
     ? orderedSectionPlanes(state.sectionPlane, state.inactiveSectionPlanes).filter(plane => visible.has(plane))
@@ -225,10 +275,11 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     name,
     code: existing?.code,
     markers: existing?.markers,
+    elementTags: existing?.elementTags,
     markerTrace: existing?.markerTrace,
     visibility: captureViewVisibility(state),
     filter: existing?.filter,
-    kind: kind ?? (drawingPlane.axis === 'down' ? 'plan' : 'section'),
+    kind: requestedKind,
     planes: structuredClone(planes.map(planeSnapshot)),
     activeIndex: Math.max(0, planes.findIndex((p) => p.id === state.sectionPlane.id)),
     zoom: newPlane ? null : state.sectionZoom,
@@ -245,6 +296,7 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
       distantElements: newPlane ? undefined : display.distantElements,
       showHiddenLines: display.showHiddenLines, showHatching: display.showHatching,
       useSymbolicRepresentations: display.useSymbolicRepresentations, showIfcAnnotations: display.showIfcAnnotations,
+      showAnnotations: display.showAnnotations,
     },
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -317,9 +369,9 @@ export function applySavedSectionCut(id: string, restoreCamera = true): void {
     customOverrideRules: structuredClone(cut.graphics?.rules ?? []),
   });
   if (cut.display) state.updateDrawing2DDisplayOptions({
-    ...cut.display, showOverheadProjection: cut.display.showOverheadProjection, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
+    ...cut.display, showAnnotations: cut.display.showAnnotations ?? true, showOverheadProjection: cut.display.showOverheadProjection, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
   });
-  else state.updateDrawing2DDisplayOptions({ distantElements: undefined, showOverheadProjection: undefined });
+  else state.updateDrawing2DDisplayOptions({ distantElements: undefined, showOverheadProjection: undefined, showAnnotations: true });
   useSavedSectionCuts.setState({ activeCutId: id,
     drawingPlaneId: savedViewKind(cut) === '3d' ? undefined : useViewerStore.getState().sectionPlane.id });
   if (cut.publicationScale) {
@@ -358,7 +410,7 @@ export function renameSavedSectionCut(id: string, name: string, code?: string): 
   updateViewSettings(id, { name: trimmed, code: validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
 }
 
-export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale'>>): void {
+export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags'>>): void {
   const { cuts } = useSavedSectionCuts.getState();
   commitCuts({ cuts: cuts.map(cut => cut.id === id ? { ...cut, ...settings, updatedAt: Date.now() } : cut) });
 }
@@ -441,7 +493,7 @@ export function clearDeletedDrawingViewTemplate(id: string): void {
 }
 
 export function setDrawingProjectionDisplay(patch: Partial<Pick<ViewDisplay, 'showHiddenLines' | 'distantElements' | 'constructionProjectionDepth'
-  | 'showConstructionProjection' | 'showOverheadProjection'>>): void {
+  | 'showConstructionProjection' | 'showOverheadProjection' | 'showAnnotations'>>): void {
   const state = useViewerStore.getState();
   const { activeCutId, cuts } = useSavedSectionCuts.getState();
   const active = cuts.find(view => view.id === activeCutId);

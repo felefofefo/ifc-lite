@@ -4,6 +4,8 @@
 import { useTranslation } from '@/i18n';
 import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LINEWEIGHT_PRESETS } from '@/lib/drawing/lineweight-table';
 import { DEFAULT_DISTANT, type DistantElements } from '@/lib/drawing/distant-elements';
 
 export function DistantElementsSettings({ value, onChange }: {
@@ -23,10 +25,19 @@ export function DistantElementsSettings({ value, onChange }: {
           onChange={e => onChange({ ...value, fade: e.target.valueAsNumber })} />
         <output>{Math.round(value.fade * 100)}%</output>
       </label>
-      <label className="flex items-center justify-between gap-2">{t('section2d.distant.weight')}
-        <Input className="h-7 w-20" type="number" min="0.05" max="2.11" step="any" value={value.weight ?? ''}
-          onChange={e => { if (e.target.validity.valid) onChange({ ...value, weight: e.target.value ? e.target.valueAsNumber : undefined }); }} />
-      </label>
+      <div className="flex items-center justify-between gap-2">
+        <span>{t('section2d.distant.weight')}</span>
+        <Select value={value.weight && LINEWEIGHT_PRESETS.includes(value.weight) ? value.weight : 'inherit'}
+          onValueChange={weight => onChange({ ...value, weight: LINEWEIGHT_PRESETS.find(preset => preset === weight) })}>
+          <SelectTrigger className="h-7 w-32" aria-label={t('section2d.distant.weight')}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="inherit">{t('section2d.distant.inheritWeight')}</SelectItem>
+            {LINEWEIGHT_PRESETS.map(preset => (
+              <SelectItem key={preset} value={preset}>{t(`drawingUnderlay.lineweights.preset.${preset}`)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <DrawingSettingSwitch label={t('section2d.distant.color')} checked={!!value.color}

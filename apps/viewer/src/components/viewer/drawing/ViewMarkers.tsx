@@ -23,7 +23,8 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   if (!drawing || !bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return null;
   const flags = views.find(v => v.id === active)?.markers ?? DEFAULT_VIEW_MARKERS;
   const markers = collectViewMarkers(views, bounds, drawnPlane.flipped, flags);
-  const editing = markers.find(marker => marker.id === editId);
+  const placingDimension = vm.annotation2DActiveTool === 'measure';
+  const editing = placingDimension ? undefined : markers.find(marker => marker.id === editId);
   if (editing) {
     const dx = editing.end.x - editing.start.x, dy = editing.end.y - editing.start.y;
     const reverse = -dy * editing.direction.x + dx * editing.direction.y < 0;
@@ -37,7 +38,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const scale = viewTransform.scale * (sheet?.scaleFactor ?? 1);
   const tx = viewTransform.x + (sheet?.translateX ?? 0) * viewTransform.scale;
   const ty = viewTransform.y + (sheet?.translateY ?? 0) * viewTransform.scale;
-  const selected = markers.find(mark => mark.id === selectedId);
+  const selected = placingDimension ? undefined : markers.find(mark => mark.id === selectedId);
   return <>
   <svg className="pointer-events-none absolute inset-0 h-full w-full text-primary">
     {markers.map(mark => {
@@ -50,7 +51,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
       const dx = mark.direction.x * (distant?.offset ?? 0) * scale;
       const dy = mark.direction.y * (distant?.offset ?? 0) * scale;
       const open = () => applySavedSectionCut(mark.id);
-      return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={selectedId === mark.id}
+      return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={placingDimension ? -1 : 0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={selectedId === mark.id}
         className="cursor-pointer outline-none focus-visible:opacity-60"
         onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); setSelectedId(mark.id); }} onDoubleClick={e => { e.stopPropagation(); open(); }}
@@ -63,10 +64,10 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
         }}>
         <title>{mark.name}</title>
         {distant && <line x1={x1 + dx} y1={y1 + dy} x2={x2 + dx} y2={y2 + dy} stroke="currentColor" strokeDasharray="5 5" opacity="0.55" />}
-        <line className="pointer-events-auto" x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="20" />
+        <line className={placingDimension ? undefined : "pointer-events-auto"} x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="20" />
         <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="currentColor" strokeWidth={selectedId === mark.id ? 2.5 : 1.5} strokeDasharray={kind === 'elevation' ? '4 4' : '12 4'} />
         <path transform={`translate(${mx} ${my}) rotate(${angle})`} d="M0 0H19m-6-4 6 4-6 4" stroke="currentColor" strokeWidth="1.5" fill="none" />
-        <text className="pointer-events-auto fill-current stroke-background [paint-order:stroke] [stroke-width:3px] text-xs font-semibold"
+        <text className={`fill-current stroke-background [paint-order:stroke] [stroke-width:3px] text-xs font-semibold ${placingDimension ? '' : 'pointer-events-auto'}`}
           x={mx + mark.direction.x * 25} y={my + mark.direction.y * 25} textAnchor="middle" dominantBaseline="central">{mark.code}</text>
       </g></ContextMenuTrigger>
         <ContextMenuContent>

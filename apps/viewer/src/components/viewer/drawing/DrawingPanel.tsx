@@ -242,6 +242,7 @@ export function DrawingPanel(): React.ReactElement {
         view3D={!!selected3D}
         tier={tier}
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
+        dimensionType={vm.dimensionType} onSelectDimensionType={vm.selectDimensionType}
         selectHint={t(navigationPreset === 'trackpad' ? 'section2d.tip.trackpad' : 'section2d.tip.pan')}
         hasMarkup={vm.hasMarkup} onClearMarkup={vm.clearAllAnnotations2D}
         settingsOpen={vm.openDrawer !== null}
@@ -269,8 +270,9 @@ export function DrawingPanel(): React.ReactElement {
 
       {!selected3D && <DrawingStatusLine
         activeTool={vm.annotation2DActiveTool}
-        measureStarted={vm.measure2DStart !== null}
-        shiftLocked={vm.measure2DShiftLocked}
+        dimensionType={vm.dimensionType}
+        dimensionPointCount={vm.dimensionDraft.points.length}
+        placingDimension={vm.dimensionDraft.placing}
         snapped={vm.measure2DSnapPoint !== null}
         polygonPointCount={vm.polygonArea2DPoints.length}
         cloudPointCount={vm.cloudAnnotation2DPoints.length}

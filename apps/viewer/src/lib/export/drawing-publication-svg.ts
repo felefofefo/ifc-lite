@@ -76,5 +76,5 @@ export function publicationCutSvg(
     }).join('') : geometry;
     if (weight > 0 && outline) outlines += `<path d="${outline}" fill="none" stroke="${escape(style.strokeColor)}" stroke-width="${weight.toFixed(4)}"${svgDash(style.dash, mmToTarget)} data-entity-id="${polygon.entityId}"/>\n`;
   }
-  return `<defs>${[...patterns.values()].map(({ markup }) => markup).join('')}</defs>\n<g id="polygon-fills">\n${fills}</g>\n<g id="polygon-outlines">\n${outlines}</g>\n`;
+  return `<defs>${[...patterns.values()].map(({ markup }) => markup).join('')}</defs>\n<g id="polygon-fills">\n${fills}</g>\n<g id="polygon-outlines" stroke-linejoin="round" stroke-linecap="round">\n${outlines}</g>\n`;
 }
