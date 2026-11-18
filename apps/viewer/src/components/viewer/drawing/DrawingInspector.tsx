@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import React, { useCallback, useRef } from 'react';
+import React from 'react';
 import { FileText, Layers, Palette, ScanLine, Settings2, SwatchBook, Tag, ChevronRight, PanelRightOpen, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -63,25 +63,16 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
   const locked = !editing && templates.some(template => template.id === vm.savedView?.graphics?.presetId);
   const width = useViewerStore((s) => s.drawingInspectorWidth);
   const setWidth = useViewerStore((s) => s.setDrawingInspectorWidth);
-  const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  const handleResizeStart = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    dragState.current = { startX: e.clientX, startWidth: width };
-    const move = (ev: PointerEvent) => {
-      const drag = dragState.current;
-      if (!drag) return;
-      // The handle sits on the column's LEFT edge: dragging left (negative dx) widens it.
-      setWidth(drag.startWidth - (ev.clientX - drag.startX));
-    };
-    const up = () => {
-      dragState.current = null;
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }, [width, setWidth]);
+  function handleResizeStart(event: React.PointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const button = event.currentTarget;
+    button.setPointerCapture(event.pointerId);
+    const start = event.clientX;
+    const move = (pointer: PointerEvent) => setWidth(width - (pointer.clientX - start));
+    button.addEventListener('pointermove', move);
+    button.addEventListener('lostpointercapture', () => button.removeEventListener('pointermove', move), { once: true });
+  }
 
   const { sectionPlane, displayOptions } = vm;
   const symbolicAvailable = sectionPlane.axis === 'down' && !sectionPlane.custom;
@@ -213,8 +204,13 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
       <button
         type="button"
         aria-label={t('section2d.inspector.resizeLabel')}
-        className="absolute -left-1 top-0 z-10 h-full w-2 cursor-ew-resize touch-none"
+        className="absolute -left-1 top-0 z-10 h-full w-2 cursor-ew-resize touch-none hover:bg-primary/20 focus-visible:bg-primary/20"
         onPointerDown={handleResizeStart}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          setWidth(width + (event.key === 'ArrowLeft' ? 16 : -16));
+        }}
       />
       <div className="min-w-0 flex-1">{body}</div>
     </div>

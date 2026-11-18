@@ -57,10 +57,10 @@ export function DrawingAnnotationStyles() {
       const defaultId = library.defaultAnnotationStyles?.[group] ?? 'original';
       return <section key={group} className="space-y-2 border-t p-3 text-xs">
         <h3 className="font-medium">{t(`section2d.annotationKind.${group}`)}</h3>
-        <label htmlFor={`annotation-default-${group}`}>{t('section2d.annotationStyles.defaultNew')}</label>
+        <label className="block" htmlFor={`annotation-default-${group}`}>{t('section2d.annotationStyles.defaultNew')}</label>
         <Select value={defaultId} disabled={!projectId} onValueChange={id => save({ ...library,
           defaultAnnotationStyles: { ...library.defaultAnnotationStyles, [group]: id === 'original' ? undefined : id } })}>
-          <SelectTrigger id={`annotation-default-${group}`}><SelectValue /></SelectTrigger>
+          <SelectTrigger id={`annotation-default-${group}`} className="h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="original">{t('section2d.annotationStyles.fromSymbol')}</SelectItem>
             {choices.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
@@ -98,7 +98,7 @@ export function DrawingAnnotationStyles() {
             if (!name || styles.some(item => item.kind === kind && item.id !== draft.id && item.name.toLowerCase() === name.toLowerCase())) {
               setFailed(true); return;
             }
-            const next = { ...draft, name };
+            const next = { ...draft, name, style: kind === 'cloud' ? { color: style.color, weight: style.weight ?? 'medium' } : style };
             const latest = useSavedSectionCuts.getState().tagLibrary;
             const items = latest.annotationStyles ?? [];
             if (save({ ...latest, annotationStyles: items.some(item => item.id === draft.id)
@@ -107,7 +107,7 @@ export function DrawingAnnotationStyles() {
             <label className="grid gap-1 text-sm sm:col-span-2">{t('section2d.annotationStyles.name')}
               <Input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
             </label>
-            <div className="grid gap-1 text-sm">
+            {kind !== 'cloud' && <><div className="grid gap-1 text-sm">
               <label htmlFor="annotation-type-font">{t('section2d.annotationStyles.font')}</label>
               <Select value={style.font ?? 'inherit'} onValueChange={font => change({ font: ANNOTATION_FONTS.find(item => item === font) })}>
                 <SelectTrigger id="annotation-type-font"><SelectValue /></SelectTrigger>
@@ -122,6 +122,7 @@ export function DrawingAnnotationStyles() {
                 placeholder={t('section2d.annotationStyles.fromSymbol')}
                 onChange={event => change({ textHeight: event.target.value ? event.target.valueAsNumber : undefined })} />
             </label>
+            </>}
             {hasUnits && <>
               <div className="grid gap-1 text-sm">
                 <label htmlFor="annotation-type-unit">{t('section2d.annotationStyles.unit')}</label>
@@ -148,12 +149,14 @@ export function DrawingAnnotationStyles() {
                   </SelectContent>
                 </Select>
               </div>)}
+            </>}
+            {(kind === 'grid' || kind === 'cloud') && <>
               <div className="grid gap-1 text-sm">
                 <label htmlFor="annotation-grid-weight">{t('section2d.annotationStyles.weight')}</label>
-                <Select value={style.weight ?? 'default'} onValueChange={weight => change({ weight: LINEWEIGHT_PRESETS.find(value => weight === value) })}>
+                <Select value={style.weight ?? (kind === 'cloud' ? 'medium' : 'default')} onValueChange={weight => change({ weight: LINEWEIGHT_PRESETS.find(value => weight === value) })}>
                   <SelectTrigger id="annotation-grid-weight"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>
+                    {kind !== 'cloud' && <SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>}
                     {LINEWEIGHT_PRESETS.map(weight => <SelectItem key={weight} value={weight}>{t(`section2d.annotationStyles.weight.${weight}`)}</SelectItem>)}
                   </SelectContent>
                 </Select>

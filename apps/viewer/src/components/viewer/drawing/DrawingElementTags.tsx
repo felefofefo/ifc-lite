@@ -4,20 +4,17 @@
 
 import { useCallback, useEffect, useMemo, useState, type MouseEvent, type RefObject } from 'react';
 import type { Drawing2D, Point2D } from '@ifc-lite/drawing-2d';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { isPlacedSymbol, symbolFitsView, symbolUse } from '@/lib/drawing/drawing-tag-library';
+import { createDrawingModelIndex } from '@/lib/drawing/drawing-model-pick';
+import { gridFromPlan, projectGrid } from '@/lib/drawing/project-grids';
 import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind } from '@/lib/drawing/annotation-types';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
-import { useTranslation } from '@/i18n';
 import { useViewerStore } from '@/store';
-import { drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
+import { saveProjectGrid, promoteProjectGrid, drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { collectTagTargets, drawingHeight, findTagTarget, measureDrawingSymbol, measurementLabel, pickTagTarget, readDrawingTags, resolveDrawingTag, resolveFreeSymbol, tagFields,
-  type DrawingElementTag, type ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
+  type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 
 type Transform = { x: number; y: number; scale: number };
 type Draft = { viewId: string; tag: DrawingElementTag; mode: 'new' | 'edit' | 'move' };
@@ -62,6 +59,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const [firstPoint, setFirstPoint] = useState<Point2D | null>(null);
   const [selection, setSelection] = useState<{ projectId?: string; id: string }>();
   const projectId = useSavedSectionCuts(s => s.projectId);
+  const grids = useSavedSectionCuts(s => s.grids);
   const { templates, annotationStyles, defaultAnnotationStyles } = useSavedSectionCuts(s => s.tagLibrary);
   const template = selection?.projectId === projectId ? templates.find(item => item.id === selection?.id) : undefined;
   const models = useViewerStore(s => s.models);
@@ -112,9 +110,23 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     return resolveSymbol(tag);
   }, [freeTemplate, cursorPoint, plane, symbolValue, firstPoint, label, defaultAnnotationStyles, resolveSymbol]);
   const { resolve: resolveDirection } = useDrawingDirection((placing && (draft.tag.leader || draft.tag.gridStart) ? draft : null) ?? (use === 'grid' ? firstPoint : null), angularSnap);
-  const stored = useMemo(() => readDrawingTags(view?.elementTags), [view?.elementTags]);
+  const stored = useMemo(() => [
+    ...readDrawingTags(view?.elementTags).filter(tag => !grids.some(grid => grid.id === tag.id)),
+    ...(drawing ? grids.flatMap(grid => { const tag = projectGrid(grid, drawing); return tag ? [tag] : []; }) : []),
+  ], [view?.elementTags, grids, drawing]);
+  useEffect(() => {
+    if (!view || !plane || plane.axis !== 'y' || plane.customPlane) return;
+    for (const tag of readDrawingTags(view.elementTags)) {
+      const grid = gridFromPlan(tag, plane);
+      if (grid) {
+        try { promoteProjectGrid(grid, view.id); }
+        catch (error) { console.warn('Could not promote grid', error); setFailed(true); }
+      }
+    }
+  }, [view?.id, view?.elementTags, plane]);
   const targets = useMemo(() => drawing && view && (active || stored.length)
     ? collectTagTargets(drawing, showHidden) : [], [drawing, view?.id, active, stored.length, showHidden, models, mutationVersion]);
+  const pickIndex = useMemo(() => drawing ? createDrawingModelIndex(drawing, showHidden) : undefined, [drawing, showHidden]);
   const items = useMemo(() => stored.flatMap(tag => {
     if (tag.free) {
       const measurement = tag.measurement;
@@ -209,6 +221,19 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       next.gridStart = { x: draft.tag.gridStart.x + position.x - draft.tag.position.x,
         y: draft.tag.gridStart.y + position.y - draft.tag.position.y };
     }
+    if (next.gridStart && plane) {
+      try {
+        const existing = grids.find(grid => grid.id === next.id);
+        let grid = gridFromPlan(next, plane);
+        if (!grid && existing) {
+          const delta = next.position.x - draft.tag.position.x;
+          const tangent = plane.customPlane?.tangent ?? (plane.axis === 'x' ? { x: 0, y: 0, z: plane.flipped ? -1 : 1 } : { x: plane.flipped ? -1 : 1, y: 0, z: 0 });
+          const move = (point: typeof existing.start) => ({ ...point, x: point.x + tangent.x * delta, z: point.z + tangent.z * delta });
+          grid = { ...existing, name: next.field, appearanceId: next.appearanceId, start: move(existing.start), end: move(existing.end) };
+        }
+        if (grid) { saveProjectGrid(grid); close(); return; }
+      } catch (error) { console.warn('Could not save grid', error); setFailed(true); return; }
+    }
     if (save(tags => tags.some(tag => tag.id === next.id)
       ? tags.map(tag => tag.id === next.id ? next : tag) : [...tags, next])) close();
   }
@@ -243,11 +268,20 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
         tag.field = symbolValue.trim();
         tag.gridStart = firstPoint;
       }
-      if (save(tags => [...tags, tag])) close();
+      if (kind === 'grid') {
+        const grid = gridFromPlan(tag, drawing.config.plane);
+        if (grid) {
+          try { saveProjectGrid(grid); close(); }
+          catch (error) { console.warn('Could not create grid', error); setFailed(true); }
+        }
+      } else if (save(tags => [...tags, tag])) close();
       return true;
     }
     if (symbolUse(template) !== 'ifc') return true;
-    const hit = pickTagTarget(targets.filter(item => template.classes.includes(item.ifcClass)), p, 9 / transform.scale);
+    const eligible = targets.filter(item => template.classes.includes(item.ifcClass));
+    const ids = pickIndex?.pick(p, 9 / transform.scale) ?? [];
+    const hit = ids.map(id => eligible.find(item => item.id === id)).find(item => !!item)
+      ?? pickTagTarget(eligible, p, 9 / transform.scale);
     const field = hit && tagFields(hit)[0];
     if (!hit || !field) { setMiss(true); return true; }
     setMiss(false);
@@ -266,11 +300,14 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     setSession({ viewId: view.id, tag, mode });
   }
 
-  function change(patch: Partial<Pick<DrawingElementTag, 'field' | 'leader'>>) {
+  function change(patch: Partial<Pick<DrawingElementTag, 'field' | 'leader' | 'appearanceId'>>) {
     if (draft) setSession({ ...draft, tag: { ...draft.tag, ...patch } });
   }
 
   return {
+    gridStyles: annotationStyles?.filter(style => style.kind === 'grid') ?? [],
+    gridStyleLocked: !!viewTypeIds?.grid,
+    gridStyleId: viewTypeIds?.grid,
     template, draftUse, placingFree: !!freeTemplate, use, firstPoint, symbolValue, mode, overrideText, modelLabel,
     setOverride(value: string) { setOverride(value); setMiss(false); },
     setSymbolValue(value: string) { setSymbolValue(value); setMiss(false); },
@@ -291,6 +328,12 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       const id = (styleKind && viewTypeIds?.[styleKind]) ?? tag.appearanceId ?? tag.templateId;
       return drawingAnnotationVisible(view, `symbol:${kind}`, id);
     }), preview, tool, choose, screen, draft, placing, fields, change, failed, miss, close,
+    removeGrid(tag: DrawingElementTag) {
+      const grid = grids.find(item => item.id === tag.id);
+      if (!grid) return;
+      try { saveProjectGrid(grid, true); close(); }
+      catch (error) { console.warn('Could not delete grid', error); setFailed(true); }
+    },
     canPlace: !!view && !!drawing,
     snapReference: placing || freeTemplate ? cursor?.reference : null,
     fontSize: Math.max(11, 2.5 * transform.scale * (scale || 100) / 1000),
@@ -306,123 +349,16 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       setSession({ ...draft, mode: 'move' });
     },
     apply() { if (draft) commit(draft.tag.position); },
-    remove() { if (draft && save(tags => tags.filter(tag => tag.id !== draft.tag.id))) close(); },
-    clear() { return !stored.length || save(() => []); },
+    remove() {
+      if (!draft) return;
+      const grid = grids.find(item => item.id === draft.tag.id);
+      if (grid) {
+        try { saveProjectGrid(grid, true); close(); }
+        catch (error) { console.warn('Could not delete grid', error); setFailed(true); }
+      } else if (save(tags => tags.filter(tag => tag.id !== draft.tag.id))) close();
+    },
+    clear() { return !view?.elementTags?.length || save(() => []); },
   };
 }
 
-export function DrawingElementTags({ tags }: { tags: ReturnType<typeof useDrawingTags> }) {
-  const { t } = useTranslation();
-  const draft = tags.draft;
-  const snap = tags.snapReference && tags.screen(tags.snapReference);
-  const shown = tags.items.filter(item => item.tag.id !== draft?.tag.id);
-  const kind = tags.draftUse ?? tags.use;
-  const hint = !tags.canPlace ? t('section2d.tags.saveView')
-    : tags.mode && tags.miss
-      ? t(tags.overrideText.trim() ? 'section2d.symbols.enterValue' : 'section2d.symbols.measurementMissing')
-    : tags.placingFree && tags.miss ? t('section2d.symbols.enterValue')
-    : tags.placingFree && tags.use === 'grid'
-      ? t(tags.firstPoint ? 'section2d.symbols.secondPoint' : 'section2d.symbols.firstPoint')
-    : tags.placingFree || draft?.tag.free ? t(tags.placing || !draft ? 'section2d.symbols.place' : 'section2d.symbols.edit')
-    : tags.placing ? t((draft?.tag.svg || draft?.tag.templateId) ? 'section2d.tags.placeSvg' : 'section2d.tags.place')
-    : draft ? t('section2d.tags.edit')
-    : tags.miss ? t('section2d.tagLibrary.targetMiss') : t('section2d.tags.pick');
-
-  function paint(item: ResolvedDrawingTag, preview: boolean) {
-    const { tag, text, anchor, graphic, startGraphic, hideEnd, style, lineWidth } = item;
-    const p = tags.screen(tag.position), a = tags.screen(anchor);
-    const interactive = !preview && tags.tool === 'none';
-    const graphicElement = <g key={tag.id} className={preview ? 'text-primary' : 'text-foreground'}>
-      {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={preview ? "currentColor" : style?.color ?? "currentColor"}
-        strokeWidth={lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
-      <g role={interactive ? 'button' : undefined}
-        tabIndex={interactive ? 0 : undefined}
-        aria-label={interactive ? t('section2d.tags.editNamed', { name: text }) : undefined}
-        className={interactive ? 'pointer-events-auto cursor-pointer hover:fill-primary focus-visible:fill-primary' : undefined}
-        onMouseDown={interactive ? e => e.stopPropagation() : undefined}
-        onClick={interactive ? e => { e.stopPropagation(); tags.choose(tag); } : undefined}
-        onKeyDown={interactive ? e => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); tags.choose(tag); }
-        } : undefined}>
-        {interactive && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
-          stroke="transparent" strokeWidth={12} pointerEvents="stroke" />}
-        {startGraphic && <image href={startGraphic.href}
-          x={a.x - startGraphic.anchor.x * tags.paperUnit} y={a.y - startGraphic.anchor.y * tags.paperUnit}
-          width={startGraphic.width * tags.paperUnit} height={startGraphic.height * tags.paperUnit} />}
-        {!hideEnd && (graphic ? (
-          <image href={graphic.href} x={p.x - graphic.anchor.x * tags.paperUnit}
-            y={p.y - graphic.anchor.y * tags.paperUnit}
-            width={graphic.width * tags.paperUnit} height={graphic.height * tags.paperUnit} />
-        ) : (
-          <text x={p.x} y={p.y} fill="currentColor" stroke="var(--paper, #fff)" strokeWidth={3}
-            paintOrder="stroke" fontFamily={style?.font ?? "Arial, sans-serif"} fontSize={style?.textHeight ? style.textHeight * tags.paperUnit : tags.fontSize}
-            textAnchor="middle" dominantBaseline="middle">{text}</text>
-        ))}
-      </g>
-    </g>;
-    if (!interactive || !tag.gridStart) return graphicElement;
-    return <ContextMenu key={tag.id}>
-      <ContextMenuTrigger asChild>{graphicElement}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={() => tags.choose(tag)}>{t('section2d.grid.edit')}</ContextMenuItem>
-        <ContextMenuItem onSelect={() => tags.choose(tag, 'move')}>{t('section2d.tags.move')}</ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>;
-  }
-
-  return <>
-    {!!(shown.length || tags.preview) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
-      {shown.map(item => paint(item, false))}
-      {tags.preview && paint(tags.preview, true)}
-      {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`} fill="none" stroke="#4CAF50" strokeWidth={1.5}>
-        <path d="M -12 0 H 12 M 0 -12 V 12" />
-        <circle r={6} />
-      </g>}
-    </svg>}
-    {tags.active && <div className="absolute left-3 top-3 z-10 grid w-72 max-w-[calc(100%-1.5rem)] gap-2 rounded-md border bg-background p-3 text-xs shadow-sm"
-      onMouseDown={e => e.stopPropagation()} onMouseMove={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      <div className="flex items-center justify-between gap-2">
-        <strong>{kind && kind !== 'section' && kind !== 'elevation' ? t(`section2d.annotationKind.${kind}`) : t('section2d.tools.tag')}</strong>
-        <Button variant="ghost" size="sm" className="h-6 px-2" onClick={tags.close}>{t('section2d.tags.close')}</Button>
-      </div>
-      <p className="text-muted-foreground" role="status">{hint}</p>
-      {kind === 'grid' && <label className="grid gap-1">
-        {t('section2d.symbols.gridName')}
-        <Input className="h-8 text-xs" value={draft?.tag.field ?? tags.symbolValue} maxLength={32}
-          onChange={event => draft ? tags.change({ field: event.currentTarget.value }) : tags.setSymbolValue(event.currentTarget.value)} />
-      </label>}
-      {tags.mode && <label className="grid gap-1">
-        {t(tags.mode === 'slope' ? 'section2d.symbols.manualSlope' : 'section2d.symbols.manualElevation')}
-        <Input className="h-8 text-xs" value={tags.overrideText} maxLength={32} inputMode="decimal"
-          placeholder={tags.modelLabel ?? t('section2d.symbols.automaticValue')}
-          onChange={event => tags.setOverride(event.currentTarget.value)} />
-      </label>}
-      {!draft && tags.template && <p className="truncate font-medium">{tags.template.name}</p>}
-      {draft && <>
-        {!draft.tag.svg && !draft.tag.templateId && <div className="grid gap-1">
-          <label htmlFor="drawing-tag-field">{t('section2d.tags.field')}</label>
-          <Select value={draft.tag.field} onValueChange={field => tags.change({ field })}>
-            <SelectTrigger id="drawing-tag-field" className="h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent className="max-w-[min(28rem,calc(100vw-2rem))]">
-              {!tags.fields.some(field => field.key === draft.tag.field) &&
-                <SelectItem value={draft.tag.field}>{t('section2d.tags.fieldMissing')}</SelectItem>}
-              {tags.fields.map(field => (
-                <SelectItem key={field.key} value={field.key} title={field.label}>{field.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>}
-        {!draft.tag.free && <label className="flex items-center gap-2">
-          <input type="checkbox" checked={draft.tag.leader} onChange={e => tags.change({ leader: e.currentTarget.checked })} />
-          {t('section2d.tags.leader')}
-        </label>}
-        {draft.mode === 'edit' && <div className="flex flex-wrap gap-1">
-          <Button size="sm" disabled={kind === 'grid' && !draft.tag.field.trim()} onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
-          <Button size="sm" variant="outline" onClick={tags.moveTag}>{t('section2d.tags.move')}</Button>
-          <Button size="sm" variant="ghost" className="text-destructive" onClick={tags.remove}>{t('section2d.tags.remove')}</Button>
-        </div>}
-      </>}
-      {tags.failed && <p role="alert" className="text-destructive">{t('section2d.tags.writeFailed')}</p>}
-    </div>}
-  </>;
-}
+export { DrawingElementTags } from './DrawingElementTagsOverlay';

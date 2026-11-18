@@ -436,6 +436,7 @@ export const section2dEn = {
   'section2d.annotationKind.grid': 'Grids',
   'section2d.annotationKind.slope': 'Slope symbols',
   'section2d.annotationKind.spotElevation': 'Spot elevations',
+  'section2d.grid.deleteEverywhere': 'Delete this grid from the project and all its views?',
   'section2d.grid.edit': 'Edit grid',
   'section2d.views.search': 'Search views',
   'section2d.views.scale': 'Publication scale 1:',

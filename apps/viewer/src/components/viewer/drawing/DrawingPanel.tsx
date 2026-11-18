@@ -115,7 +115,18 @@ export function DrawingPanel(): React.ReactElement {
   const selected3D = vm.saved3D;
   const layers = useDrawingLayers(vm);
   const [viewsOpen, setViewsOpen] = useState(false);
-  const [viewsWidth, setViewsWidth] = useState(280);
+  const [viewsWidth, updateViewsWidth] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem('ifc-lite:drawing-views-width'));
+      return stored >= 260 && stored <= 560 ? stored : 280;
+    } catch (error) { console.warn('Could not read views panel width', error); return 280; }
+  });
+  function setViewsWidth(value: number) {
+    const width = Math.max(260, Math.min(560, value));
+    updateViewsWidth(width);
+    try { localStorage.setItem('ifc-lite:drawing-views-width', String(width)); }
+    catch (error) { console.warn('Could not save views panel width', error); }
+  }
   const [snapsOpen, setSnapsOpen] = useState(false);
   const [tagLibraryOpen, setTagLibraryOpen] = useState(false);
   const tagProject = useSavedSectionCuts(s => s.projectId);

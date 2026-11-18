@@ -46,7 +46,7 @@ export function DrawingDimensionStyles({ settings, unitOverrides, lineweights, s
     <section className="space-y-3 border-t p-3">
       <h3 className="text-xs font-medium">{t('section2d.dimensionStyle.title')}</h3>
       <div className="space-y-1">
-        <Label htmlFor="dimension-current-type">
+        <Label htmlFor="dimension-current-type" className="text-xs">
           {t(selection ? 'section2d.dimensionStyle.selectedType' : 'section2d.dimensionStyle.defaultType')}
         </Label>
         <Select value={selection ? selectedId : settings.library.defaultId} onValueChange={id => {
@@ -61,7 +61,7 @@ export function DrawingDimensionStyles({ settings, unitOverrides, lineweights, s
             }
           }
         }}>
-          <SelectTrigger id="dimension-current-type"><SelectValue /></SelectTrigger>
+          <SelectTrigger id="dimension-current-type" className="h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
           <DimensionTypeOptions types={types} />
         </Select>
       </div>

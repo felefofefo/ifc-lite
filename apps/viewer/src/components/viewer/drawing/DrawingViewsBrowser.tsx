@@ -201,7 +201,7 @@ export function DrawingViewsBrowser({ overlay, panelWidth, width, setWidth, clos
       style={{ width: displayedWidth }}
       className={`flex min-w-0 flex-col border-r bg-background ${overlay ? 'absolute inset-y-0 left-0 z-30 max-w-full shadow-lg' : 'relative shrink-0'}`}>
       {!overlay && <button type="button" aria-label={t('section2d.views.resize')}
-        className="absolute -right-1 top-0 z-10 h-full w-2 cursor-ew-resize touch-none hover:bg-primary/20"
+        className="absolute -right-1 top-0 z-10 h-full w-2 cursor-ew-resize touch-none hover:bg-primary/20 focus-visible:bg-primary/20"
         onPointerDown={resize} onKeyDown={event => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();

@@ -18,7 +18,7 @@ import type { GeometryResult } from '@ifc-lite/geometry';
 import { activeSectionPlane } from './section-active.js';
 import {
   applySavedSectionCut, createDrawingView, duplicateSavedSectionCut, setSavedViewsProject, updateSavedSectionCut,
-  removeSavedSectionCut,
+  removeSavedSectionCut, saveProjectGrid,
   renameSavedSectionCut,
   saveCurrentSectionCut,
   setDrawingPublicationScale,
@@ -323,5 +323,31 @@ it('reopens a new plan at the same elevation after the workspace bounds change',
     publishDrawingRuntime(null);
     setSavedViewsProject(undefined);
     localStorage.removeItem('ifc-lite:saved-drawing-views:v1:new-plan-height-test');
+  }
+});
+
+it('persists project grids across view and project switches and validates unique names', () => {
+  const project = 'project-grid-persistence-test';
+  setSavedViewsProject(undefined);
+  localStorage.removeItem(`ifc-lite:saved-drawing-views:v1:${project}`);
+  try {
+    setSavedViewsProject(project);
+    const grid = { id: 'grid-1', name: 'A', templateId: 'grid-symbol',
+      start: { x: 1, y: 0, z: -2 }, end: { x: 1, y: 0, z: 2 } };
+    saveProjectGrid(grid);
+    assert.throws(() => saveProjectGrid({ ...grid, id: 'grid-2', name: ' a ' }), /already in use/);
+    assert.equal(useSavedSectionCuts.getState().grids.length, 1);
+    saveProjectGrid({ ...grid, name: 'B' });
+    setSavedViewsProject('unrelated-grid-project');
+    assert.equal(useSavedSectionCuts.getState().grids.length, 0);
+    setSavedViewsProject(project);
+    assert.equal(useSavedSectionCuts.getState().grids[0].name, 'B');
+    saveProjectGrid(grid, true);
+    setSavedViewsProject(undefined);
+    setSavedViewsProject(project);
+    assert.equal(useSavedSectionCuts.getState().grids.length, 0);
+  } finally {
+    setSavedViewsProject(undefined);
+    localStorage.removeItem(`ifc-lite:saved-drawing-views:v1:${project}`);
   }
 });

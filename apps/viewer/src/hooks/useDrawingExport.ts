@@ -640,15 +640,15 @@ function useDrawingExport({
         const transformX = (x: number) => flipX ? -x : x;
         const transformY = (y: number) => flipY ? -y : y;
         const pathData = generateCloudSVGPath(cloud.points[0], cloud.points[1], arcRadius, transformX, transformY);
-        const lineWidth = mmToModel(0.4);
+        const lineWidth = mmToModel(cloud.appearance?.weight ? (lineweightsAtScale(lineweightTable ?? {}, effectiveScale))[cloud.appearance.weight] : 0.4);
 
         svg += `    <path d="${pathData}" fill="${color}" fill-opacity="0.05" stroke="${color}" stroke-width="${lineWidth.toFixed(4)}"/>\n`;
 
         if (cloud.label) {
           const cx = transformX((cloud.points[0].x + cloud.points[1].x) / 2);
           const cy = transformY((cloud.points[0].y + cloud.points[1].y) / 2);
-          const fontSize = mmToModel(cloud.appearance?.textHeight ?? 3);
-          svg += `    <text x="${cx.toFixed(4)}" y="${cy.toFixed(4)}" font-family="${cloud.appearance?.font ?? 'Arial, sans-serif'}" font-size="${fontSize.toFixed(4)}" fill="${color}" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(cloud.label)}</text>\n`;
+          const fontSize = mmToModel(3);
+          svg += `    <text x="${cx.toFixed(4)}" y="${cy.toFixed(4)}" font-family="Arial, sans-serif" font-size="${fontSize.toFixed(4)}" fill="${color}" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(cloud.label)}</text>\n`;
         }
       }
       svg += '  </g>\n';

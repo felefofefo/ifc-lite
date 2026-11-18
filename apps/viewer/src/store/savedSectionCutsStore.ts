@@ -4,6 +4,7 @@
 
 /** Named drawing views and their project-scoped publication settings. */
 
+import { readProjectGrids, type ProjectGrid } from '@/lib/drawing/project-grids';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { create } from 'zustand';
 import { COMMON_SCALES, formatScaleFactorLabel, type DrawingScale, type GraphicOverrideRule } from '@ifc-lite/drawing-2d';
@@ -104,6 +105,7 @@ interface SavedSectionCutsState {
   tagLibrary: TagLibrary;
   cuts: SavedSectionCut[];
   folders: SavedViewFolder[];
+  grids: ProjectGrid[];
   projectId?: string;
   /** The saved view currently selected. */
   activeCutId: string | null;
@@ -144,6 +146,7 @@ function planeSnapshot(plane: SectionPlane): SavedSectionCutPlane {
 export const useSavedSectionCuts = create<SavedSectionCutsState>()(() => ({
   cuts: [],
   folders: [],
+  grids: [],
   tagLibrary: EMPTY_TAG_LIBRARY,
   activeCutId: null,
 }));
@@ -179,6 +182,7 @@ export function setSavedViewsProject(projectId: string | undefined): void {
   cancelDrawingTemplateEdit();
   let cuts: SavedSectionCut[] = [];
   let folders: SavedViewFolder[] = [];
+  let grids: ProjectGrid[] = [];
   if (projectId) {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(savedViewsKey(projectId)) ?? '[]');
@@ -188,6 +192,7 @@ export function setSavedViewsProject(projectId: string | undefined): void {
           && typeof folder.id === 'string' && SAVED_VIEW_KINDS.includes(folder.kind)
           && typeof folder.name === 'string' && typeof folder.prefix === 'string');
       }
+      if (stored && 'grids' in stored) grids = readProjectGrids(stored.grids);
       const entries = stored ? stored.cuts : value;
       if (Array.isArray(entries)) {
         const loaded = entries.filter(isSavedSectionCut).map(withSingleDrawingPlane).map(cut =>
@@ -214,18 +219,36 @@ export function setSavedViewsProject(projectId: string | undefined): void {
       console.warn('Could not load drawing tag library', error);
     }
   }
-  useSavedSectionCuts.setState({ projectId, cuts, folders, tagLibrary, activeCutId: null, drawingPlaneId: undefined });
+  useSavedSectionCuts.setState({ projectId, cuts, folders, grids, tagLibrary, activeCutId: null, drawingPlaneId: undefined });
 }
 
 function commitCuts(patch: Partial<SavedSectionCutsState>): void {
   const state = useSavedSectionCuts.getState();
-  if (patch.cuts || patch.folders) {
+  if (patch.cuts || patch.folders || patch.grids) {
     const folders = patch.folders ?? state.folders;
     const cuts = numberFolderViews(patch.cuts ?? state.cuts, folders);
-    if (state.projectId) localStorage.setItem(savedViewsKey(state.projectId), JSON.stringify({ cuts, folders }));
+    if (state.projectId) localStorage.setItem(savedViewsKey(state.projectId), JSON.stringify({ cuts, folders, grids: patch.grids ?? state.grids }));
     patch = { ...patch, cuts };
   }
   useSavedSectionCuts.setState(patch);
+}
+
+export function saveProjectGrid(grid: ProjectGrid, remove = false): void {
+  const state = useSavedSectionCuts.getState();
+  if (!state.projectId) throw new Error('No drawing project');
+  if (!remove && readProjectGrids([grid]).length !== 1) throw new Error('Invalid grid');
+  if (!remove && !grid.name.trim()) throw new Error('Grid name is required');
+  if (!remove && state.grids.some(item => item.id !== grid.id && item.name.trim().toLocaleLowerCase() === grid.name.trim().toLocaleLowerCase()))
+    throw new Error('Grid name is already in use');
+  commitCuts({ grids: remove ? state.grids.filter(item => item.id !== grid.id)
+    : [...state.grids.filter(item => item.id !== grid.id), { ...grid, name: grid.name.trim() }] });
+}
+
+export function promoteProjectGrid(grid: ProjectGrid, viewId: string): void {
+  const state = useSavedSectionCuts.getState();
+  if (state.grids.some(item => item.id === grid.id)) return;
+  commitCuts({ grids: [...state.grids, grid], cuts: state.cuts.map(view => view.id === viewId
+    ? { ...view, elementTags: view.elementTags?.filter(tag => tag.id !== grid.id) } : view) });
 }
 
 function numberFolderViews(cuts: SavedSectionCut[], folders: SavedViewFolder[]): SavedSectionCut[] {

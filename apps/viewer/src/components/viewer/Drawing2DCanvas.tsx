@@ -1543,7 +1543,7 @@ export function Drawing2DCanvas({
 
       // Draw cloud stroke
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = cloud.appearance?.weight ? (lineweights?.[cloud.appearance.weight] ?? 0.25) * paperUnit : 2;
       drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
       ctx.stroke();
 
@@ -1552,8 +1552,8 @@ export function Drawing2DCanvas({
         const labelX = drawingToScreenX((p1.x + p2.x) / 2);
         const labelY = drawingToScreenY((p1.y + p2.y) / 2);
 
-        const size = cloud.appearance?.textHeight ? cloud.appearance.textHeight * paperUnit : 12;
-        ctx.font = `bold ${size}px ${cloud.appearance?.font ?? 'system-ui, sans-serif'}`;
+        const size = 12;
+        ctx.font = 'bold 12px system-ui, sans-serif';
         const labelMetrics = ctx.measureText(cloud.label);
         const lW = labelMetrics.width + 10;
         const lH = Math.max(20, size + 8);

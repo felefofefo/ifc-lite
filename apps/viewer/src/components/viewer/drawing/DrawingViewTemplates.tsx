@@ -454,6 +454,7 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
   const { t } = useTranslation();
   const view = useSavedSectionCuts(selectActiveSavedView);
   const cuts = useSavedSectionCuts(state => state.cuts);
+  const grids = useSavedSectionCuts(state => state.grids);
   const library = useSavedSectionCuts(state => state.tagLibrary);
   const [failed, setFailed] = useState(false);
   if (!view) return null;
@@ -526,10 +527,12 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
         styles.filter(style => cuts.some(cut => cut.markerTrace && cut.markerStyleId === style.id)));
     })}
     {SYMBOL_USES.filter(kind => kind !== 'section' && kind !== 'elevation').map(kind => {
-      const original = usedTemplates.filter(template => symbolUse(template) === kind);
+      const original = kind === 'grid' ? library.templates.filter(template => symbolUse(template) === kind && grids.some(grid => grid.templateId === template.id))
+        : usedTemplates.filter(template => symbolUse(template) === kind);
       if (kind === 'ifc' || kind === 'free') return group(`symbol:${kind}`, t(`section2d.annotationKind.${kind}`), original);
       const styles = library.annotationStyles?.filter(style => style.kind === kind) ?? [];
-      const used = styles.filter(style => view.elementTags?.some(tag => tag.appearanceId === style.id));
+      const used = styles.filter(style => kind === 'grid' ? grids.some(grid => grid.appearanceId === style.id)
+        : view.elementTags?.some(tag => tag.appearanceId === style.id));
       return group(`symbol:${kind}`, t(`section2d.annotationKind.${kind}`), styles, kind, [...used, ...original]);
     })}
     {([['area', vm.polygonArea2DResults], ['text', vm.textAnnotations2D], ['cloud', vm.cloudAnnotations2D]] as const).map(([kind, items]) => {

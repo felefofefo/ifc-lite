@@ -108,7 +108,7 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   const surfaceOverrides = graphicRules.some(({ style }) => hasHatchPaint(style.surfaceHatch));
   const needsPlanMeasurement = sectionPlane.axis === 'down' && !sectionPlane.custom
     && ((placingTag && hasMeasurementSymbol) || activeSavedView?.elementTags?.some(tag => !!tag.measurement));
-  const includeProjectionPolygons = panelVisible && (needsPlanMeasurement
+  const includeProjectionPolygons = panelVisible && (placingTag || activeSavedView?.elementTags?.some(tag => !tag.free) || needsPlanMeasurement
     || (displayOptions.showHatching && (surfaceOverrides || Object.values(hatches).some(style => hasHatchPaint(style?.surface)))));
   const { showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth } = displayOptions;
   const generationOptions = useMemo(() => ({
