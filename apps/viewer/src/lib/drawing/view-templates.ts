@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import type { GraphicOverrideRule, GraphicStyle } from '@ifc-lite/drawing-2d';
+import { validAnnotationStyles } from './annotation-types';
 import type { SavedSectionCut } from '@/store/savedSectionCutsStore';
 import { decodeSavedFilter, encodeSavedFilter, type SavedFilterPreset } from '../search/saved-filters.js';
 
@@ -13,7 +14,7 @@ export function readDrawingViewTemplates(): ViewTemplate[] {
   return raw ? decodeViewTemplates(raw).templates : [];
 }
 export interface TemplateRow { ifcClass: string; typeName?: string; style: GraphicStyle }
-export const VIEW_TEMPLATE_GROUPS = ['projection', 'filters', 'graphics'] as const;
+export const VIEW_TEMPLATE_GROUPS = ['projection', 'filters', 'graphics', 'annotations'] as const;
 export type ViewTemplateGroup = typeof VIEW_TEMPLATE_GROUPS[number];
 export const TEMPLATE_DISPLAY_KEYS = [
   'showConstructionProjection', 'showOverheadProjection', 'constructionProjectionDepth', 'showHiddenLines',
@@ -23,6 +24,7 @@ type ProjectionSettings = Pick<NonNullable<SavedSectionCut['display']>, typeof T
 export interface ViewTemplate {
   id: string; name: string; revision?: string; rows: TemplateRow[]; rules?: GraphicOverrideRule[];
   groups?: ViewTemplateGroup[];
+  annotations?: SavedSectionCut['annotationOptions'];
   projection?: { scale: number; display: ProjectionSettings };
   filters?: { visibility: NonNullable<SavedSectionCut['visibility']>; filter?: SavedSectionCut['filter'] };
 }
@@ -134,6 +136,15 @@ export function decodeViewTemplates(text: string): { templates: ViewTemplate[]; 
     const groups = viewTemplateGroups(template);
     if ((groups.includes('projection') || template.projection !== undefined) && (!template.projection || !validateProjection(template.projection))) throw new Error('Invalid projection group.');
     if ((groups.includes('filters') || template.filters !== undefined) && (!template.filters || !validateVisibility(template.filters.visibility))) throw new Error('Invalid filters group.');
+    if (template.annotations !== undefined || groups.includes('annotations')) {
+      const visibility = template.annotations?.visibility;
+      const styleIds = template.annotations?.styleIds;
+      if (styleIds !== undefined && (!styleIds || typeof styleIds !== 'object' || Array.isArray(styleIds)
+        || !Object.values(styleIds).every(id => typeof id === 'string' && id.length <= 200))) throw new Error('Invalid annotation types.');
+      if (!visibility || typeof visibility !== 'object' || Array.isArray(visibility)
+        || !Object.values(visibility).every(value => typeof value === 'boolean')
+        || (template.annotations?.styles !== undefined && !validAnnotationStyles(template.annotations.styles))) throw new Error('Invalid annotations group.');
+    }
     const filter = template.filters?.filter;
     const preset = filter && decodeSavedFilter(filter.preset);
     if (filter && (!preset || (filter.mode !== 'show' && filter.mode !== 'hide'))) throw new Error('Invalid template filter.');

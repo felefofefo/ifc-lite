@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { useMemo } from 'react';
-import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { selectActiveSavedView, drawingAnnotationVisible, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { AxisBounds } from '@/lib/section/section-distance';
 import type { jsPDF } from 'jspdf';
 import type { Drawing2D, DXFExportOptions, DXFPolylineLayer } from '@ifc-lite/drawing-2d';
@@ -138,17 +138,23 @@ export function useDrawingViewMarkers(
   drawing: Drawing2D | null, bounds: AxisBounds | undefined, sectionAxis: string, isCustomPlane: boolean,
 ): Markers {
   const savedViews = useSavedSectionCuts(s => s.cuts);
-  const activeView = useSavedSectionCuts(s => s.activeCutId);
+  const annotationView = useSavedSectionCuts(selectActiveSavedView);
   const { templates, markerStyles } = useSavedSectionCuts(s => s.tagLibrary);
   return useMemo(() => {
     if (!drawing || !bounds || sectionAxis !== 'down' || isCustomPlane) return [];
-    const flags = savedViews.find(view => view.id === activeView)?.markers ?? DEFAULT_VIEW_MARKERS;
+    const flags = annotationView?.annotationOptions ? DEFAULT_VIEW_MARKERS : annotationView?.markers ?? DEFAULT_VIEW_MARKERS;
     return collectViewMarkers(savedViews, bounds, drawing.config.plane.flipped, flags)
+      .map(marker => {
+        const override = annotationView?.annotationOptions?.styleIds?.[marker.kind];
+        return override && markerStyles?.some(style => style.id === override && style.kind === marker.kind)
+          ? { ...marker, styleId: override } : marker;
+      })
+      .filter(marker => drawingAnnotationVisible(annotationView, marker.kind, marker.styleId))
       .map(marker => {
         const heads = resolveMarkerHeads(templates, marker, markerStyles);
         const line = marker.kind === 'section' ? markerStyles?.find(style => style.id === marker.styleId && style.kind === marker.kind)?.line : undefined;
         return heads.length ? { ...marker, line, heads, headsAtAngle: (angle: number) =>
           resolveMarkerHeads(templates, marker, markerStyles, angle) } : { ...marker, line };
       });
-  }, [drawing, bounds, sectionAxis, isCustomPlane, savedViews, activeView, templates, markerStyles]);
+  }, [drawing, bounds, sectionAxis, isCustomPlane, savedViews, annotationView, templates, markerStyles]);
 }

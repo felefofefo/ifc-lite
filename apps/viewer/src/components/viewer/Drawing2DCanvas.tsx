@@ -1356,7 +1356,7 @@ export function Drawing2DCanvas({
 
       // Draw filled polygon
       ctx.globalAlpha = 0.1;
-      ctx.fillStyle = '#2196F3';
+      ctx.fillStyle = result.appearance?.color ?? '#2196F3';
       ctx.beginPath();
       const first = result.points[0];
       ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
@@ -1368,7 +1368,7 @@ export function Drawing2DCanvas({
       ctx.globalAlpha = 1;
 
       // Draw outline
-      ctx.strokeStyle = '#2196F3';
+      ctx.strokeStyle = result.appearance?.color ?? '#2196F3';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 3]);
       ctx.beginPath();
@@ -1381,7 +1381,7 @@ export function Drawing2DCanvas({
       ctx.setLineDash([]);
 
       // Draw vertex dots
-      ctx.fillStyle = '#2196F3';
+      ctx.fillStyle = result.appearance?.color ?? '#2196F3';
       for (const pt of result.points) {
         ctx.beginPath();
         ctx.arc(drawingToScreenX(pt.x), drawingToScreenY(pt.y), 3, 0, Math.PI * 2);
@@ -1392,30 +1392,32 @@ export function Drawing2DCanvas({
       const centroid = computePolygonCentroid(result.points);
       const cx = drawingToScreenX(centroid.x);
       const cy = drawingToScreenY(centroid.y);
+      const labelFont = result.appearance?.font ?? 'system-ui, sans-serif';
+      const labelSize = result.appearance?.textHeight ? result.appearance.textHeight * paperUnit : 12;
       const areaText = formatArea(result.area);
       const perimText = `P: ${formatDistance(result.perimeter, unitDisplayOverrides)}`;
 
-      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.font = `bold ${labelSize}px ${labelFont}`;
       const areaMetrics = ctx.measureText(areaText);
-      ctx.font = '10px system-ui, sans-serif';
+      ctx.font = `${labelSize * 5 / 6}px ${labelFont}`;
       const perimMetrics = ctx.measureText(perimText);
       const labelW = Math.max(areaMetrics.width, perimMetrics.width) + 12;
-      const labelH = 32;
+      const labelH = Math.max(32, labelSize * 2 + 8);
 
       ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
       ctx.fillRect(cx - labelW / 2, cy - labelH / 2, labelW, labelH);
-      ctx.strokeStyle = '#2196F3';
+      ctx.strokeStyle = result.appearance?.color ?? '#2196F3';
       ctx.lineWidth = 1;
       ctx.strokeRect(cx - labelW / 2, cy - labelH / 2, labelW, labelH);
 
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = 'bold 12px system-ui, sans-serif';
-      ctx.fillText(areaText, cx, cy - 6);
-      ctx.font = '10px system-ui, sans-serif';
+      ctx.font = `bold ${labelSize}px ${labelFont}`;
+      ctx.fillText(areaText, cx, cy - labelSize / 2);
+      ctx.font = `${labelSize * 5 / 6}px ${labelFont}`;
       ctx.fillStyle = '#666666';
-      ctx.fillText(perimText, cx, cy + 8);
+      ctx.fillText(perimText, cx, cy + labelSize * 2 / 3);
     }
 
     // Draw in-progress polygon
@@ -1482,9 +1484,10 @@ export function Drawing2DCanvas({
       const sx = drawingToScreenX(textAnnotation.position.x);
       const sy = drawingToScreenY(textAnnotation.position.y);
 
-      ctx.font = `${textAnnotation.fontSize}px system-ui, sans-serif`;
+      const textSize = textAnnotation.appearance?.textHeight ? textAnnotation.appearance.textHeight * paperUnit : textAnnotation.fontSize;
+      ctx.font = `${textSize}px ${textAnnotation.appearance?.font ?? 'system-ui, sans-serif'}`;
       const lines = textAnnotation.text.split('\n');
-      const lineHeight = textAnnotation.fontSize * 1.3;
+      const lineHeight = textSize * 1.3;
       let maxWidth = 0;
       for (const line of lines) {
         const m = ctx.measureText(line);
@@ -1505,7 +1508,7 @@ export function Drawing2DCanvas({
       ctx.strokeRect(sx, sy, bgW, bgH);
 
       // Text
-      ctx.fillStyle = textAnnotation.color;
+      ctx.fillStyle = textAnnotation.appearance?.color ?? textAnnotation.color;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
       for (let i = 0; i < lines.length; i++) {
@@ -1529,15 +1532,17 @@ export function Drawing2DCanvas({
       const rectH = Math.abs(p2.y - p1.y);
       const arcRadius = Math.min(rectW, rectH) * 0.15 || 0.2;
 
+      const color = cloud.appearance?.color ?? cloud.color;
+
       // Draw cloud fill
       ctx.globalAlpha = 0.05;
-      ctx.fillStyle = cloud.color;
+      ctx.fillStyle = color;
       drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
       ctx.fill();
       ctx.globalAlpha = 1;
 
       // Draw cloud stroke
-      ctx.strokeStyle = cloud.color;
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
       ctx.stroke();
@@ -1547,18 +1552,19 @@ export function Drawing2DCanvas({
         const labelX = drawingToScreenX((p1.x + p2.x) / 2);
         const labelY = drawingToScreenY((p1.y + p2.y) / 2);
 
-        ctx.font = 'bold 12px system-ui, sans-serif';
+        const size = cloud.appearance?.textHeight ? cloud.appearance.textHeight * paperUnit : 12;
+        ctx.font = `bold ${size}px ${cloud.appearance?.font ?? 'system-ui, sans-serif'}`;
         const labelMetrics = ctx.measureText(cloud.label);
         const lW = labelMetrics.width + 10;
-        const lH = 20;
+        const lH = Math.max(20, size + 8);
 
         ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
         ctx.fillRect(labelX - lW / 2, labelY - lH / 2, lW, lH);
-        ctx.strokeStyle = cloud.color;
+        ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.strokeRect(labelX - lW / 2, labelY - lH / 2, lW, lH);
 
-        ctx.fillStyle = cloud.color;
+        ctx.fillStyle = color;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(cloud.label, labelX, labelY);

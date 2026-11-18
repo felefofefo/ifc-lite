@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { useMemo, useState } from 'react';
-import { Layers, Trash2 } from 'lucide-react';
+import { ChevronRight, Layers, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -21,15 +21,16 @@ import { DrawingFillControl } from './DrawingHatchSelect';
 
 type MaterialSettings = ReturnType<typeof useDrawingMaterials>;
 
-export function DrawingMaterials({ settings, compact }: { settings: MaterialSettings; compact?: boolean }) {
+export function DrawingMaterials({ settings, compact, sidebar }: { settings: MaterialSettings; compact?: boolean; sidebar?: boolean }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="ghost" size={compact ? 'icon-xs' : 'sm'}
-          className={compact ? undefined : 'h-7 px-2 text-xs'} aria-label={t('drawingUnderlay.materials.button')}>
+          className={sidebar ? 'w-full justify-between rounded-none border-b px-3 text-xs font-medium' : compact ? undefined : 'h-7 px-2 text-xs'} aria-label={t('drawingUnderlay.materials.button')}>
           {compact ? <Layers className="h-3.5 w-3.5" /> : t('drawingUnderlay.materials.button')}
+          {sidebar && <ChevronRight aria-hidden="true" className="size-4 shrink-0" />}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-xl">

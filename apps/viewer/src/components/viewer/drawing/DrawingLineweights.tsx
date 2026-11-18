@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, SlidersHorizontal } from 'lucide-react';
+import { ChevronRight, Plus, SlidersHorizontal } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import type { DrawingScale } from '@ifc-lite/drawing-2d';
 import { Button } from '@/components/ui/button';
@@ -53,11 +53,12 @@ export function useDrawingLineweights() {
 interface Props {
   scale: number;
   compact?: boolean;
+  sidebar?: boolean;
   onScaleChange: (scale: DrawingScale) => void;
   settings: ReturnType<typeof useDrawingLineweights>;
 }
 
-export function DrawingLineweights({ scale, compact, onScaleChange, settings }: Props) {
+export function DrawingLineweights({ scale, compact, sidebar, onScaleChange, settings }: Props) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -98,8 +99,9 @@ export function DrawingLineweights({ scale, compact, onScaleChange, settings }: 
     }}>
       <DialogTrigger asChild>
         <Button variant="ghost" size={compact ? 'icon-xs' : 'sm'}
-          className={compact ? undefined : 'h-7 px-2 text-xs'} aria-label={t('drawingUnderlay.lineweights.button')}>
+          className={sidebar ? 'w-full justify-between rounded-none border-b px-3 text-xs font-medium' : compact ? undefined : 'h-7 px-2 text-xs'} aria-label={t('drawingUnderlay.lineweights.button')}>
           {compact ? <SlidersHorizontal className="h-3.5 w-3.5" /> : t('drawingUnderlay.lineweights.button')}
+          {sidebar && <ChevronRight aria-hidden="true" className="size-4 shrink-0" />}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-xl">

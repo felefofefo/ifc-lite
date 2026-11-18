@@ -8,7 +8,9 @@ import type { jsPDF } from 'jspdf';
 import { resolveEntityRef, useViewerStore } from '@/store';
 import { resolveEntityRefGlobalId } from '@/store/resolveEntityRef';
 import { MAX_TAG_SVG_SIZE, renderTagSvg } from './drawing-tag-svg';
-import { drawingTagClass, isPlacedSymbol, symbolUse, type TagClass, type TagTemplate } from './drawing-tag-library';
+import { drawingTagClass, isPlacedSymbol, symbolUse, type SymbolUse, type TagClass, type TagTemplate } from './drawing-tag-library';
+import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle } from './annotation-types';
+import type { LineweightRow } from './lineweight-table';
 import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 
 export interface DrawingElementTag {
@@ -21,6 +23,7 @@ export interface DrawingElementTag {
   templateId?: string;
   free?: true;
   gridStart?: Point2D;
+  appearanceId?: string;
   measurement?: { kind: 'spotElevation' | 'slope'; tolerance: number };
   position: Point2D;
   anchorOffset: Point2D;
@@ -43,10 +46,29 @@ export interface TagTarget {
   polygons: Polygon[];
 }
 
+function formattedSymbolValue(input: string, kind: SymbolUse, style?: AnnotationSymbolStyle): string {
+  if (!style || (kind !== 'level' && kind !== 'spotElevation' && kind !== 'slope')) return input;
+  const value = parseFloat(input);
+  if (!Number.isFinite(value)) return input;
+  if (kind === 'slope') {
+    if (input.endsWith('°')) return input;
+    const unit = style.unit ?? '%';
+    const number = unit === '°' ? Math.atan(value / 100) * 180 / Math.PI : value;
+    return number.toFixed(style.precision ?? 1) + unit;
+  }
+  const unit = style.unit ?? 'm';
+  const number = value * (unit === 'mm' ? 1000 : unit === 'cm' ? 100 : 1);
+  return number.toFixed(style.precision ?? 3) + ' ' + unit;
+}
+
 export interface ResolvedDrawingTag {
   tag: DrawingElementTag;
   text: string;
   anchor: Point2D;
+  style?: AnnotationSymbolStyle;
+  lineWidth?: number;
+  startGraphic?: ReturnType<typeof renderTagSvg>;
+  hideEnd?: boolean;
   graphic?: ReturnType<typeof renderTagSvg>;
 }
 
@@ -70,6 +92,7 @@ export function readDrawingTags(value: unknown): DrawingElementTag[] {
     && (row.measurement === undefined || (row.free === true &&
       (row.measurement?.kind === 'spotElevation' || row.measurement?.kind === 'slope') &&
       Number.isFinite(row.measurement.tolerance) && row.measurement.tolerance >= 0))
+    && (row.appearanceId === undefined || typeof row.appearanceId === 'string')
     && (row.gridStart === undefined || (row.free === true && isPoint(row.gridStart)))
     && isPoint(row.position) && isPoint(row.anchorOffset));
 }
@@ -264,15 +287,27 @@ export function measureDrawingSymbol(
   return slope === undefined ? undefined : measurementLabel(kind, slope);
 }
 
-export function resolveFreeSymbol(tag: DrawingElementTag, templates: readonly TagTemplate[]): ResolvedDrawingTag | null {
+export function resolveFreeSymbol(tag: DrawingElementTag, templates: readonly TagTemplate[], options?: Partial<Record<AnnotationStyleKind | 'ifc', AnnotationSymbolStyle>>, weights?: LineweightRow): ResolvedDrawingTag | null {
   const template = templates.find(item => item.id === tag.templateId && isPlacedSymbol(symbolUse(item)));
   if (!template) return null;
   const use = symbolUse(template);
+  const kind = ANNOTATION_STYLE_KINDS.find(value => value === use);
+  const style = kind && options?.[kind];
+  const label = formattedSymbolValue(tag.field, use, style);
   const field = use === 'grid' ? 'Grid' : use === 'slope' ? 'Slope' : 'Elevation';
-  const values = use === 'free' ? new Map<string, string>() : new Map([[field, tag.field]]);
+  const values = use === 'free' ? new Map<string, string>() : new Map([[field, label]]);
   try {
-    return { tag, anchor: tag.gridStart ?? tag.position, graphic: renderTagSvg(template.svg, values),
-      text: tag.field || template.name };
+    const grid = use === 'grid';
+    const marker = (id: string | undefined) => templates.find(item => item.id === id && symbolUse(item) === 'grid');
+    const start = grid && tag.gridStart ? marker(style?.startSymbolId) : undefined;
+    const end = grid ? marker(style?.endSymbolId) ?? template : template;
+    const hideEnd = grid && style?.endSymbolId === '';
+    return {
+      tag, anchor: tag.gridStart ?? tag.position, hideEnd,
+      startGraphic: start && renderTagSvg(start.svg, values, undefined, style),
+      graphic: hideEnd ? undefined : renderTagSvg(end.svg, values, undefined, style),
+      style, lineWidth: style?.weight && weights?.[style.weight], text: label || template.name,
+    };
   } catch {
     return null;
   }
@@ -280,7 +315,7 @@ export function resolveFreeSymbol(tag: DrawingElementTag, templates: readonly Ta
 
 export function resolveDrawingTag(
   tag: DrawingElementTag, target: TagTarget, fields?: ReturnType<typeof tagFields>,
-  templates?: readonly TagTemplate[],
+  templates?: readonly TagTemplate[], style?: AnnotationSymbolStyle,
 ): ResolvedDrawingTag {
   let graphic: ResolvedDrawingTag['graphic'];
   const template = tag.templateId
@@ -290,10 +325,10 @@ export function resolveDrawingTag(
   if (svg) {
     const values = new Map<string, string>();
     fields = tagFields(target, values);
-    try { graphic = renderTagSvg(svg, values); } catch { /* Fall back to the original field. */ }
+    try { graphic = renderTagSvg(svg, values, undefined, style); } catch { /* Fall back to the original field. */ }
   }
   return {
-    tag, graphic, text: graphic?.text || (fields ?? tagFields(target)).find(field => field.key === tag.field)?.value || '\u2014',
+    tag, graphic, style, text: graphic?.text || (fields ?? tagFields(target)).find(field => field.key === tag.field)?.value || '\u2014',
     anchor: { x: target.center.x + tag.anchorOffset.x, y: target.center.y + tag.anchorOffset.y },
   };
 }
@@ -305,9 +340,15 @@ type Mapper = (x: number, y: number) => Point2D;
 export function tagExportBounds(bounds: Drawing2D['bounds'], tags: readonly ResolvedDrawingTag[], scale: number) {
   const result = { min: { ...bounds.min }, max: { ...bounds.max } };
   const unit = (scale || 100) / 1000;
-  for (const { tag, text, anchor, graphic } of tags) {
-    const left = (graphic?.anchor.x ?? Math.max(1, text.length / 2) * tagHeight) * unit;
-    const top = (graphic?.anchor.y ?? tagHeight) * unit;
+  for (const { tag, text, anchor, graphic, startGraphic, style } of tags) {
+    if (startGraphic) {
+      result.min.x = Math.min(result.min.x, anchor.x - Math.max(startGraphic.anchor.x, startGraphic.width - startGraphic.anchor.x) * unit);
+      result.max.x = Math.max(result.max.x, anchor.x + Math.max(startGraphic.anchor.x, startGraphic.width - startGraphic.anchor.x) * unit);
+      result.min.y = Math.min(result.min.y, anchor.y - Math.max(startGraphic.anchor.y, startGraphic.height - startGraphic.anchor.y) * unit);
+      result.max.y = Math.max(result.max.y, anchor.y + Math.max(startGraphic.anchor.y, startGraphic.height - startGraphic.anchor.y) * unit);
+    }
+    const left = (graphic?.anchor.x ?? Math.max(1, text.length / 2) * (style?.textHeight ?? tagHeight)) * unit;
+    const top = (graphic?.anchor.y ?? style?.textHeight ?? tagHeight) * unit;
     const right = graphic ? graphic.width * unit - left : left;
     const bottom = graphic ? graphic.height * unit - top : top;
     result.min.x = Math.min(result.min.x, tag.position.x - Math.max(left, right), anchor.x);
@@ -321,28 +362,34 @@ export function tagExportBounds(bounds: Drawing2D['bounds'], tags: readonly Reso
 export function drawingTagsSvg(tags: readonly ResolvedDrawingTag[], map: Mapper, unit: number, escape: (s: string) => string) {
   if (!tags.length) return '';
   return '<g id="ifc-tags" fill="' + ink + '" font-family="Arial,sans-serif" font-size="' + tagHeight * unit + '">' +
-    tags.map(({ tag, text, anchor, graphic }) => {
+    tags.map(({ tag, text, anchor, graphic, startGraphic, hideEnd, style, lineWidth }) => {
       const p = map(tag.position.x, tag.position.y), a = map(anchor.x, anchor.y);
       const leader = tag.leader || tag.gridStart ? '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + p.x + '" y2="' + p.y +
-        '" stroke="' + ink + '" stroke-width="' + 0.18 * unit + '"/>' : '';
-      if (graphic) {
-        const width = graphic.width * unit, height = graphic.height * unit;
-        return leader + '<image x="' + (p.x - graphic.anchor.x * unit) + '" y="' + (p.y - graphic.anchor.y * unit) +
-          '" width="' + width + '" height="' + height + '" href="' + escape(graphic.href) + '"/>';
+        '" stroke="' + (style?.color ?? ink) + '" stroke-width="' + (lineWidth ?? 0.18) * unit + '"/>' : '';
+      function image(image: NonNullable<ResolvedDrawingTag['graphic']>, point: Point2D) {
+        return '<image x="' + (point.x - image.anchor.x * unit) + '" y="' + (point.y - image.anchor.y * unit) +
+          '" width="' + (image.width * unit) + '" height="' + (image.height * unit) + '" href="' + escape(image.href) + '"/>';
       }
-      return leader + '<text x="' + p.x + '" y="' + p.y + '" text-anchor="middle" dominant-baseline="middle">' + escape(text) + '</text>';
+      const start = startGraphic ? image(startGraphic, a) : '';
+      if (hideEnd) return leader + start;
+      if (graphic) return leader + start + image(graphic, p);
+      return leader + '<text font-family="' + (style?.font ?? 'sans-serif') + '" font-size="' + ((style?.textHeight ?? tagHeight) * unit) + '" x="' + p.x + '" y="' + p.y + '" text-anchor="middle" dominant-baseline="middle">' + escape(text) + '</text>';
     }).join('') + '</g>\n';
 }
 
 export function addDrawingTagsDxf(options: DXFExportOptions, tags: readonly ResolvedDrawingTag[], scale: number): DXFExportOptions {
   if (!tags.length) return options;
   const layer = 'IFC-TAGS';
-  const leaders = tags.filter(({ tag }) => tag.leader || tag.gridStart).map(({ tag, anchor }) => [anchor, tag.position]);
+  const leaders = tags.filter(({ tag }) => tag.leader || tag.gridStart).map(({ tag, anchor, style }, index) =>
+    ({ name: style?.color ? `IFC-TAGS-${index + 1}` : layer,
+      color: style?.color ?? ink, polylines: [[anchor, tag.position]], closed: false }));
   return {
     ...options,
-    polylineLayers: [...(options.polylineLayers ?? []), { name: layer, color: ink, polylines: leaders, closed: false }],
-    labels: [...(options.labels ?? []), ...tags.filter(({ tag }) => !tag.free || tag.field).map(({ tag, text }) =>
-      ({ layer, color: ink, text, position: tag.position, height: tagHeight * scale / 1000 }))],
+    polylineLayers: [...(options.polylineLayers ?? []), { name: layer, color: ink, polylines: leaders.filter(item => item.name === layer).flatMap(item => item.polylines), closed: false },
+      ...leaders.filter(item => item.name !== layer)],
+    labels: [...(options.labels ?? []), ...tags.filter(({ tag }) => !tag.free || tag.field).flatMap(({ tag, text, style, hideEnd, startGraphic, anchor }) =>
+      [...(startGraphic ? [anchor] : []), ...(hideEnd ? [] : [tag.position])].map(position =>
+        ({ layer, color: ink, text, position, height: (style?.textHeight ?? tagHeight) * scale / 1000 })))],
   };
 }
 
@@ -352,14 +399,23 @@ export function drawDrawingTagsPdf(doc: jsPDF, tags: readonly ResolvedDrawingTag
   doc.setTextColor(ink);
   doc.setLineWidth(0.18);
   doc.setLineDashPattern([], 0);
-  doc.setFontSize(tagHeight * 72 / 25.4);
-  for (const { tag, text, anchor } of tags) {
+  const font = doc.getFont();
+  for (const { tag, text, anchor, style, lineWidth, startGraphic, hideEnd } of tags) {
+    doc.setFont(style?.font === 'serif' ? 'times' : style?.font === 'monospace' ? 'courier' : 'helvetica');
+    doc.setFontSize((style?.textHeight ?? tagHeight) * 72 / 25.4);
+    doc.setDrawColor(style?.color ?? ink);
+    doc.setLineWidth(lineWidth ?? 0.18);
     if (tag.free && !tag.field) continue;
     const p = map(tag.position.x, tag.position.y);
     if (tag.leader || tag.gridStart) {
       const a = map(anchor.x, anchor.y);
       doc.line(a.x, a.y, p.x, p.y);
     }
-    doc.text(text, p.x, p.y, { align: 'center', baseline: 'middle' });
+    if (startGraphic) {
+      const start = map(anchor.x, anchor.y);
+      doc.text(text, start.x, start.y, { align: 'center', baseline: 'middle' });
+    }
+    if (!hideEnd) doc.text(text, p.x, p.y, { align: 'center', baseline: 'middle' });
   }
+  doc.setFont(font.fontName, font.fontStyle);
 }

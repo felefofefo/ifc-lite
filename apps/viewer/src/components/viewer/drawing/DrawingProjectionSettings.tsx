@@ -13,7 +13,6 @@ import { isManualProjectionDepth } from '@/lib/drawing/projection-depth';
 
 export function DrawingProjectionSettings({ hiddenLinesOnly = false }: { hiddenLinesOnly?: boolean }) {
   const { t } = useTranslation();
-  const axis = useViewerStore(s => s.sectionPlane.axis);
   const distant = useViewerStore(s => s.drawing2DDisplayOptions.distantElements);
   const hidden = useViewerStore(s => s.drawing2DDisplayOptions.showHiddenLines);
   const depth = useViewerStore(s => s.drawing2DDisplayOptions.constructionProjectionDepth);
@@ -42,7 +41,7 @@ export function DrawingProjectionSettings({ hiddenLinesOnly = false }: { hiddenL
             }} />
           {invalid && <output>{t('section2d.projection.invalid')}</output>}
         </label>}
-        {axis !== 'down' && <DistantElementsSettings value={distant} onChange={distantElements => setDrawingProjectionDisplay({ distantElements })} />}
+        <DistantElementsSettings value={distant} onChange={distantElements => setDrawingProjectionDisplay({ distantElements })} />
         <p className="text-muted-foreground">{t('section2d.projection.help')}</p>
       </>}
   </section>;

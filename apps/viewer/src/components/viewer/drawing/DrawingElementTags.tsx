@@ -2,16 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { useEffect, useMemo, useState, type MouseEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type RefObject } from 'react';
 import type { Drawing2D, Point2D } from '@ifc-lite/drawing-2d';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { isPlacedSymbol, symbolFitsView, symbolUse } from '@/lib/drawing/drawing-tag-library';
+import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind } from '@/lib/drawing/annotation-types';
+import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
 import { useTranslation } from '@/i18n';
 import { useViewerStore } from '@/store';
-import { updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
+import { drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { collectTagTargets, drawingHeight, findTagTarget, measureDrawingSymbol, measurementLabel, pickTagTarget, readDrawingTags, resolveDrawingTag, resolveFreeSymbol, tagFields,
   type DrawingElementTag, type ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
@@ -35,7 +38,7 @@ function freeSymbol(id: string, templateId: string, position: Point2D): DrawingE
 }
 
 
-export function useDrawingTags({ view, drawing, transform, axis, container, tool, setTool, showHidden, scale, findSnapPoint, angularSnap }: {
+export function useDrawingTags({ view, drawing, transform, axis, container, tool, setTool, showHidden, scale, findSnapPoint, angularSnap, lineweights }: {
   view: SavedSectionCut | undefined;
   drawing: Drawing2D | null;
   transform: Transform;
@@ -46,6 +49,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   showHidden: boolean;
   scale: number;
   angularSnap: AngularSnap;
+  lineweights: LineweightRow;
   findSnapPoint: (point: Point2D) => Point2D | null;
 }) {
   const active = tool === 'tag';
@@ -58,7 +62,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const [firstPoint, setFirstPoint] = useState<Point2D | null>(null);
   const [selection, setSelection] = useState<{ projectId?: string; id: string }>();
   const projectId = useSavedSectionCuts(s => s.projectId);
-  const templates = useSavedSectionCuts(s => s.tagLibrary.templates);
+  const { templates, annotationStyles, defaultAnnotationStyles } = useSavedSectionCuts(s => s.tagLibrary);
   const template = selection?.projectId === projectId ? templates.find(item => item.id === selection?.id) : undefined;
   const models = useViewerStore(s => s.models);
   const mutationVersion = useViewerStore(s => s.mutationVersion);
@@ -72,6 +76,20 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const plane = drawing?.config.plane;
   const cursorPoint = cursor?.point;
   const measurementKind = draft ? draftUse : freeTemplate && use;
+  const styles = view?.annotationOptions?.styles;
+  const viewTypeIds = view?.annotationOptions?.styleIds;
+  const resolveSymbol = useCallback((tag: DrawingElementTag) => {
+    const template = templates.find(item => item.id === tag.templateId);
+    const kind = template && ANNOTATION_STYLE_KINDS.find(value => value === symbolUse(template));
+    if (!kind) return resolveFreeSymbol(tag, templates);
+    const id = viewTypeIds?.[kind] ?? tag.appearanceId;
+    const chosen = annotationStyles?.find(item => item.kind === kind && item.id === id);
+    const style = chosen?.style ?? styles?.[kind];
+    return resolveFreeSymbol(tag, templates, { [kind]: style }, lineweights);
+  }, [templates, viewTypeIds, annotationStyles, styles, lineweights]);
+  function defaultStyle(kind: string) {
+    return defaultAnnotationStyles?.[kind as AnnotationStyleKind];
+  }
   const mode = isMeasurement(measurementKind) ? measurementKind : undefined;
   const tolerance = draft?.tag.measurement?.tolerance ?? 9 / Math.max(transform.scale, 1e-8);
   const overrideText = override ?? (mode && draft && !draft.tag.measurement
@@ -87,12 +105,13 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (!freeTemplate || !cursorPoint || !plane) return null;
     const tag = freeSymbol('free-preview', freeTemplate.id, cursorPoint);
     const kind = symbolUse(freeTemplate);
+    tag.appearanceId = defaultAnnotationStyles?.[kind as AnnotationStyleKind];
     if (kind === 'grid') { tag.field = symbolValue.trim(); tag.gridStart = firstPoint ?? undefined; }
     if (kind === 'level') tag.field = drawingHeight(plane, cursorPoint).toFixed(3) + ' m';
     if (isMeasurement(kind)) tag.field = label ?? '—';
-    return resolveFreeSymbol(tag, templates);
-  }, [freeTemplate, cursorPoint, plane, templates, symbolValue, firstPoint, label]);
-  const { resolve: resolveDirection } = useDrawingDirection(placing && draft.tag.leader ? draft : null, angularSnap);
+    return resolveSymbol(tag);
+  }, [freeTemplate, cursorPoint, plane, symbolValue, firstPoint, label, defaultAnnotationStyles, resolveSymbol]);
+  const { resolve: resolveDirection } = useDrawingDirection((placing && (draft.tag.leader || draft.tag.gridStart) ? draft : null) ?? (use === 'grid' ? firstPoint : null), angularSnap);
   const stored = useMemo(() => readDrawingTags(view?.elementTags), [view?.elementTags]);
   const targets = useMemo(() => drawing && view && (active || stored.length)
     ? collectTagTargets(drawing, showHidden) : [], [drawing, view?.id, active, stored.length, showHidden, models, mutationVersion]);
@@ -100,28 +119,27 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (tag.free) {
       const measurement = tag.measurement;
       const value = measurement && measureDrawingSymbol(measurement.kind, drawing, tag.position, measurement.tolerance);
-      const item = resolveFreeSymbol(measurement && drawing ? { ...tag, field: value ?? '—' } : tag, templates);
+      const item = resolveSymbol(measurement && drawing ? { ...tag, field: value ?? '—' } : tag);
       return item ? [item] : [];
     }
     const target = findTagTarget(targets, tag);
     return target ? [resolveDrawingTag(tag, target, undefined, templates)] : [];
-  }), [stored, targets, templates, drawing]);
+  }), [stored, targets, templates, drawing, resolveSymbol]);
   const target = draft ? findTagTarget(targets, draft.tag) : undefined;
   const fields = useMemo(() => target ? tagFields(target) : [], [target, mutationVersion]);
   const resolvedDraft = useMemo(() => {
     if (!draft) return previewFree;
     if (draft.tag.free) {
       const tag = draft.tag;
-      if (mode) return resolveFreeSymbol({ ...tag, position: measuredPoint ?? tag.position,
-        field: label ?? '—' }, templates);
-      if (!placing || !cursorPoint) return resolveFreeSymbol(tag, templates);
+      if (mode) return resolveSymbol({ ...tag, position: measuredPoint ?? tag.position, field: label ?? '—' });
+      if (!placing || !cursorPoint) return resolveSymbol(tag);
       const gridStart = tag.gridStart && { x: tag.gridStart.x + cursorPoint.x - tag.position.x,
         y: tag.gridStart.y + cursorPoint.y - tag.position.y };
       const field = draftUse === 'level' && plane ? drawingHeight(plane, cursorPoint).toFixed(3) + ' m' : tag.field;
-      return resolveFreeSymbol({ ...tag, position: cursorPoint, gridStart, field }, templates);
+      return resolveSymbol({ ...tag, position: cursorPoint, gridStart, field });
     }
     return target ? resolveDrawingTag(draft.tag, target, fields, templates) : null;
-  }, [draft, target, fields, templates, previewFree, placing, cursorPoint, draftUse, plane, mode, measuredPoint, label, overrideText]);
+  }, [draft, target, fields, templates, previewFree, placing, cursorPoint, draftUse, plane, mode, measuredPoint, label, overrideText, resolveSymbol]);
   const preview = resolvedDraft && (placing || freeTemplate) && cursor
     ? { ...resolvedDraft, tag: { ...resolvedDraft.tag, position: cursor.point } }
     : freeTemplate ? null : resolvedDraft;
@@ -187,7 +205,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (plane && draftUse === 'level') {
       next.field = drawingHeight(plane, position).toFixed(3) + ' m';
     }
-    if (draft.tag.gridStart) {
+    if (draft.tag.gridStart && draft.mode === 'move') {
       next.gridStart = { x: draft.tag.gridStart.x + position.x - draft.tag.position.x,
         y: draft.tag.gridStart.y + position.y - draft.tag.position.y };
     }
@@ -199,8 +217,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     const p = point(e);
     if (!p) return null;
     const reference = placing || freeTemplate ? findSnapPoint(p) : null;
-    const anchor = placing && draft?.tag.leader && preview ? preview.anchor : null;
-    return { point: resolveDirection(anchor, p, reference, e.shiftKey) ?? p, reference };
+    const anchor = use === 'grid' && freeTemplate ? firstPoint
+      : placing && draft?.tag.leader && preview ? preview.anchor : null;
+    return { point: resolveDirection(anchor, p, reference, e.shiftKey) ?? reference ?? p, reference };
   }
 
   function click(e: MouseEvent): boolean {
@@ -214,6 +233,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       const id = globalThis.crypto?.randomUUID?.() ?? 'symbol-' + Date.now() + '-' + Math.random();
       const tag = freeSymbol(id, freeTemplate.id, p);
       const kind = symbolUse(freeTemplate);
+      tag.appearanceId = defaultStyle(kind);
       if (kind === 'level') tag.field = drawingHeight(drawing.config.plane, p).toFixed(3) + ' m';
       if (isMeasurement(kind) && !setMeasurement(tag, kind)) return true;
       if (kind === 'grid') {
@@ -240,10 +260,10 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     return true;
   }
 
-  function choose(tag: DrawingElementTag) {
+  function choose(tag: DrawingElementTag, mode: 'edit' | 'move' = 'edit') {
     if (!view || tool !== 'none') return;
     setTool('tag');
-    setSession({ viewId: view.id, tag, mode: 'edit' });
+    setSession({ viewId: view.id, tag, mode });
   }
 
   function change(patch: Partial<Pick<DrawingElementTag, 'field' | 'leader'>>) {
@@ -251,7 +271,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   }
 
   return {
-    template, placingFree: !!freeTemplate, use, firstPoint, symbolValue, mode, overrideText, modelLabel,
+    template, draftUse, placingFree: !!freeTemplate, use, firstPoint, symbolValue, mode, overrideText, modelLabel,
     setOverride(value: string) { setOverride(value); setMiss(false); },
     setSymbolValue(value: string) { setSymbolValue(value); setMiss(false); },
     selectTemplate(id: string) {
@@ -264,7 +284,13 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       setMiss(false);
     },
     paperUnit: transform.scale * (scale || 100) / 1000,
-    active, items, preview, tool, choose, screen, draft, placing, fields, change, failed, miss, close,
+    active, items: items.filter(({ tag }) => {
+      const source = templates.find(item => item.id === tag.templateId);
+      const kind = source ? symbolUse(source) : 'ifc';
+      const styleKind = ANNOTATION_STYLE_KINDS.find(value => value === kind);
+      const id = (styleKind && viewTypeIds?.[styleKind]) ?? tag.appearanceId ?? tag.templateId;
+      return drawingAnnotationVisible(view, `symbol:${kind}`, id);
+    }), preview, tool, choose, screen, draft, placing, fields, change, failed, miss, close,
     canPlace: !!view && !!drawing,
     snapReference: placing || freeTemplate ? cursor?.reference : null,
     fontSize: Math.max(11, 2.5 * transform.scale * (scale || 100) / 1000),
@@ -290,6 +316,7 @@ export function DrawingElementTags({ tags }: { tags: ReturnType<typeof useDrawin
   const draft = tags.draft;
   const snap = tags.snapReference && tags.screen(tags.snapReference);
   const shown = tags.items.filter(item => item.tag.id !== draft?.tag.id);
+  const kind = tags.draftUse ?? tags.use;
   const hint = !tags.canPlace ? t('section2d.tags.saveView')
     : tags.mode && tags.miss
       ? t(tags.overrideText.trim() ? 'section2d.symbols.enterValue' : 'section2d.symbols.measurementMissing')
@@ -302,11 +329,12 @@ export function DrawingElementTags({ tags }: { tags: ReturnType<typeof useDrawin
     : tags.miss ? t('section2d.tagLibrary.targetMiss') : t('section2d.tags.pick');
 
   function paint(item: ResolvedDrawingTag, preview: boolean) {
-    const { tag, text, anchor, graphic } = item;
+    const { tag, text, anchor, graphic, startGraphic, hideEnd, style, lineWidth } = item;
     const p = tags.screen(tag.position), a = tags.screen(anchor);
     const interactive = !preview && tags.tool === 'none';
-    return <g key={tag.id} className={preview ? 'text-primary' : 'text-foreground'}>
-      {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke="currentColor" strokeWidth={1} />}
+    const graphicElement = <g key={tag.id} className={preview ? 'text-primary' : 'text-foreground'}>
+      {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={preview ? "currentColor" : style?.color ?? "currentColor"}
+        strokeWidth={lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
       <g role={interactive ? 'button' : undefined}
         tabIndex={interactive ? 0 : undefined}
         aria-label={interactive ? t('section2d.tags.editNamed', { name: text }) : undefined}
@@ -314,19 +342,32 @@ export function DrawingElementTags({ tags }: { tags: ReturnType<typeof useDrawin
         onMouseDown={interactive ? e => e.stopPropagation() : undefined}
         onClick={interactive ? e => { e.stopPropagation(); tags.choose(tag); } : undefined}
         onKeyDown={interactive ? e => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tags.choose(tag); }
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); tags.choose(tag); }
         } : undefined}>
-        {graphic ? (
+        {interactive && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
+          stroke="transparent" strokeWidth={12} pointerEvents="stroke" />}
+        {startGraphic && <image href={startGraphic.href}
+          x={a.x - startGraphic.anchor.x * tags.paperUnit} y={a.y - startGraphic.anchor.y * tags.paperUnit}
+          width={startGraphic.width * tags.paperUnit} height={startGraphic.height * tags.paperUnit} />}
+        {!hideEnd && (graphic ? (
           <image href={graphic.href} x={p.x - graphic.anchor.x * tags.paperUnit}
             y={p.y - graphic.anchor.y * tags.paperUnit}
             width={graphic.width * tags.paperUnit} height={graphic.height * tags.paperUnit} />
         ) : (
           <text x={p.x} y={p.y} fill="currentColor" stroke="var(--paper, #fff)" strokeWidth={3}
-            paintOrder="stroke" fontFamily="Arial, sans-serif" fontSize={tags.fontSize}
+            paintOrder="stroke" fontFamily={style?.font ?? "Arial, sans-serif"} fontSize={style?.textHeight ? style.textHeight * tags.paperUnit : tags.fontSize}
             textAnchor="middle" dominantBaseline="middle">{text}</text>
-        )}
+        ))}
       </g>
     </g>;
+    if (!interactive || !tag.gridStart) return graphicElement;
+    return <ContextMenu key={tag.id}>
+      <ContextMenuTrigger asChild>{graphicElement}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => tags.choose(tag)}>{t('section2d.grid.edit')}</ContextMenuItem>
+        <ContextMenuItem onSelect={() => tags.choose(tag, 'move')}>{t('section2d.tags.move')}</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>;
   }
 
   return <>
@@ -341,14 +382,14 @@ export function DrawingElementTags({ tags }: { tags: ReturnType<typeof useDrawin
     {tags.active && <div className="absolute left-3 top-3 z-10 grid w-72 max-w-[calc(100%-1.5rem)] gap-2 rounded-md border bg-background p-3 text-xs shadow-sm"
       onMouseDown={e => e.stopPropagation()} onMouseMove={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between gap-2">
-        <strong>{t(tags.placingFree || draft?.tag.free ? 'section2d.symbols.free' : 'section2d.tools.tag')}</strong>
+        <strong>{kind && kind !== 'section' && kind !== 'elevation' ? t(`section2d.annotationKind.${kind}`) : t('section2d.tools.tag')}</strong>
         <Button variant="ghost" size="sm" className="h-6 px-2" onClick={tags.close}>{t('section2d.tags.close')}</Button>
       </div>
       <p className="text-muted-foreground" role="status">{hint}</p>
-      {tags.placingFree && tags.use === 'grid' && <label className="grid gap-1">
+      {kind === 'grid' && <label className="grid gap-1">
         {t('section2d.symbols.gridName')}
-        <Input className="h-8 text-xs" value={tags.symbolValue} maxLength={32}
-          onChange={event => tags.setSymbolValue(event.currentTarget.value)} />
+        <Input className="h-8 text-xs" value={draft?.tag.field ?? tags.symbolValue} maxLength={32}
+          onChange={event => draft ? tags.change({ field: event.currentTarget.value }) : tags.setSymbolValue(event.currentTarget.value)} />
       </label>}
       {tags.mode && <label className="grid gap-1">
         {t(tags.mode === 'slope' ? 'section2d.symbols.manualSlope' : 'section2d.symbols.manualElevation')}
@@ -376,7 +417,7 @@ export function DrawingElementTags({ tags }: { tags: ReturnType<typeof useDrawin
           {t('section2d.tags.leader')}
         </label>}
         {draft.mode === 'edit' && <div className="flex flex-wrap gap-1">
-          <Button size="sm" onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
+          <Button size="sm" disabled={kind === 'grid' && !draft.tag.field.trim()} onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
           <Button size="sm" variant="outline" onClick={tags.moveTag}>{t('section2d.tags.move')}</Button>
           <Button size="sm" variant="ghost" className="text-destructive" onClick={tags.remove}>{t('section2d.tags.remove')}</Button>
         </div>}

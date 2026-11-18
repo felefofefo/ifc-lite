@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { readAnnotationStyleLibrary, type NamedAnnotationStyle, type AnnotationStyleKind } from './annotation-types';
 import { LINEWEIGHT_PRESETS } from './lineweight-table';
 import { MAX_TAG_SVG_SIZE, renderTagSvg } from './drawing-tag-svg';
 
@@ -99,6 +100,8 @@ export type TagLibrary = {
   folders: TagFolder[];
   templates: TagTemplate[];
   markerStyles?: MarkerStyle[];
+  annotationStyles?: NamedAnnotationStyle[];
+  defaultAnnotationStyles?: Partial<Record<AnnotationStyleKind, string>>;
   defaultMarkerStyles?: Partial<Record<MarkerStyle['kind'], string>>;
 };
 
@@ -145,7 +148,10 @@ export function readTagLibrary(value: unknown): TagLibrary {
       ? [{ id: style.id, name: style.name, kind: style.kind, symbolId, startSymbolId, line }]
       : [];
   }) : [];
-  const library = { folders, templates, markerStyles, defaultMarkerStyles: data.defaultMarkerStyles };
+  const annotationStyles = readAnnotationStyleLibrary(data.annotationStyles);
+  const defaultAnnotationStyles = Object.fromEntries(annotationStyles
+    .filter(style => data.defaultAnnotationStyles?.[style.kind] === style.id).map(style => [style.kind, style.id]));
+  const library = { folders, templates, markerStyles, defaultMarkerStyles: data.defaultMarkerStyles, annotationStyles, defaultAnnotationStyles };
   return { ...library, defaultMarkerStyles: {
     section: defaultMarkerStyleId(library, 'section'), elevation: defaultMarkerStyleId(library, 'elevation'),
   } };

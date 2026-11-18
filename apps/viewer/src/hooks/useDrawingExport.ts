@@ -590,18 +590,18 @@ function useDrawingExport({
           return `${pt.x.toFixed(4)},${pt.y.toFixed(4)}`;
         }).join(' ');
 
-        const measureColor = '#2196F3';
+        const measureColor = result.appearance?.color ?? '#2196F3';
         const lineWidth = mmToModel(0.3);
 
-        svg += `    <polygon points="${pointsStr}" fill="rgba(33,150,243,0.1)" stroke="${measureColor}" stroke-width="${lineWidth.toFixed(4)}" stroke-dasharray="${mmToModel(1).toFixed(4)} ${mmToModel(0.5).toFixed(4)}"/>\n`;
+        svg += `    <polygon points="${pointsStr}" fill="${measureColor}" fill-opacity="0.1" stroke="${measureColor}" stroke-width="${lineWidth.toFixed(4)}" stroke-dasharray="${mmToModel(1).toFixed(4)} ${mmToModel(0.5).toFixed(4)}"/>\n`;
 
         // Label at centroid
         const centroid = computePolygonCentroid(result.points);
         const ct = { x: flipX ? -centroid.x : centroid.x, y: flipY ? -centroid.y : centroid.y };
         const areaText = formatArea(result.area);
-        const fontSize = mmToModel(3);
+        const fontSize = mmToModel(result.appearance?.textHeight ?? 3);
 
-        svg += `    <text x="${ct.x.toFixed(4)}" y="${ct.y.toFixed(4)}" font-family="Arial, sans-serif" font-size="${fontSize.toFixed(4)}" fill="#000000" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(areaText)}</text>\n`;
+        svg += `    <text x="${ct.x.toFixed(4)}" y="${ct.y.toFixed(4)}" font-family="${result.appearance?.font ?? 'Arial, sans-serif'}" font-size="${fontSize.toFixed(4)}" fill="#000000" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(areaText)}</text>\n`;
       }
       svg += '  </g>\n';
     }
@@ -612,7 +612,7 @@ function useDrawingExport({
       for (const annotation of textAnnotations2D) {
         if (!annotation.text.trim()) continue;
         const pt = { x: flipX ? -annotation.position.x : annotation.position.x, y: flipY ? -annotation.position.y : annotation.position.y };
-        const fontSize = mmToModel(2.5);
+        const fontSize = mmToModel(annotation.appearance?.textHeight ?? 2.5);
         const padding = mmToModel(1);
         const lines = annotation.text.split('\n');
         const lineHeight = fontSize * 1.3;
@@ -621,7 +621,7 @@ function useDrawingExport({
 
         svg += `    <rect x="${pt.x.toFixed(4)}" y="${pt.y.toFixed(4)}" width="${approxWidth.toFixed(4)}" height="${height.toFixed(4)}" fill="${annotation.backgroundColor}" stroke="${annotation.borderColor}" stroke-width="${mmToModel(0.15).toFixed(4)}"/>\n`;
         for (let i = 0; i < lines.length; i++) {
-          svg += `    <text x="${(pt.x + padding).toFixed(4)}" y="${(pt.y + padding + fontSize * 0.8 + i * lineHeight).toFixed(4)}" font-family="Arial, sans-serif" font-size="${fontSize.toFixed(4)}" fill="${annotation.color}">${escapeXml(lines[i])}</text>\n`;
+          svg += `    <text x="${(pt.x + padding).toFixed(4)}" y="${(pt.y + padding + fontSize * 0.8 + i * lineHeight).toFixed(4)}" font-family="${annotation.appearance?.font ?? 'Arial, sans-serif'}" font-size="${fontSize.toFixed(4)}" fill="${annotation.appearance?.color ?? annotation.color}">${escapeXml(lines[i])}</text>\n`;
         }
       }
       svg += '  </g>\n';
@@ -632,6 +632,7 @@ function useDrawingExport({
       svg += '  <g id="cloud-annotations">\n';
       for (const cloud of cloudAnnotations2D) {
         if (cloud.points.length < 2) continue;
+        const color = cloud.appearance?.color ?? cloud.color;
         const rectW = Math.abs(cloud.points[1].x - cloud.points[0].x);
         const rectH = Math.abs(cloud.points[1].y - cloud.points[0].y);
         const arcRadius = Math.min(rectW, rectH) * 0.15 || 0.2;
@@ -641,13 +642,13 @@ function useDrawingExport({
         const pathData = generateCloudSVGPath(cloud.points[0], cloud.points[1], arcRadius, transformX, transformY);
         const lineWidth = mmToModel(0.4);
 
-        svg += `    <path d="${pathData}" fill="rgba(229,57,53,0.05)" stroke="${cloud.color}" stroke-width="${lineWidth.toFixed(4)}"/>\n`;
+        svg += `    <path d="${pathData}" fill="${color}" fill-opacity="0.05" stroke="${color}" stroke-width="${lineWidth.toFixed(4)}"/>\n`;
 
         if (cloud.label) {
           const cx = transformX((cloud.points[0].x + cloud.points[1].x) / 2);
           const cy = transformY((cloud.points[0].y + cloud.points[1].y) / 2);
-          const fontSize = mmToModel(3);
-          svg += `    <text x="${cx.toFixed(4)}" y="${cy.toFixed(4)}" font-family="Arial, sans-serif" font-size="${fontSize.toFixed(4)}" fill="${cloud.color}" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(cloud.label)}</text>\n`;
+          const fontSize = mmToModel(cloud.appearance?.textHeight ?? 3);
+          svg += `    <text x="${cx.toFixed(4)}" y="${cy.toFixed(4)}" font-family="${cloud.appearance?.font ?? 'Arial, sans-serif'}" font-size="${fontSize.toFixed(4)}" fill="${color}" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(cloud.label)}</text>\n`;
         }
       }
       svg += '  </g>\n';

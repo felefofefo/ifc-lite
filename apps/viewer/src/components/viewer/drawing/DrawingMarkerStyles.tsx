@@ -16,9 +16,8 @@ import { saveDrawingTagLibrary, useSavedSectionCuts } from '@/store/savedSection
 const NEW = 'new';
 const DEFAULT = 'default';
 const NO_SYMBOL = 'none';
-const MARKER_KINDS = ['section', 'elevation'] as const;
 
-export function DrawingMarkerStyles({ lineweights }: { lineweights: LineweightRow }) {
+export function DrawingMarkerStyles({ kind, lineweights }: { kind: MarkerStyle['kind']; lineweights: LineweightRow }) {
   const { t } = useTranslation();
   const projectId = useSavedSectionCuts(s => s.projectId);
   const library = useSavedSectionCuts(s => s.tagLibrary);
@@ -40,11 +39,9 @@ export function DrawingMarkerStyles({ lineweights }: { lineweights: LineweightRo
   }
 
   return <section className="space-y-2 border-t p-3 text-xs">
-    <h3 className="font-medium">{t('section2d.markerStyles.title')}</h3>
-    <p className="font-medium">{t('section2d.markerStyles.defaultType')}</p>
-    {MARKER_KINDS.map(kind => (
-      <div key={kind} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] items-center gap-2">
-        <label htmlFor={`marker-default-${kind}`}>{t(`section2d.views.type.${kind}`)}</label>
+    <h3 className="font-medium">{t(`section2d.annotationKind.${kind}`)}</h3>
+      <div className="grid gap-1">
+        <label htmlFor={`marker-default-${kind}`}>{t('section2d.annotationStyles.defaultNew')}</label>
         <Select value={defaultMarkerStyleId(library, kind) ?? DEFAULT} disabled={!projectId}
           onValueChange={value => setDefault(kind, value)}>
           <SelectTrigger id={`marker-default-${kind}`} className="h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
@@ -56,29 +53,27 @@ export function DrawingMarkerStyles({ lineweights }: { lineweights: LineweightRo
           </SelectContent>
         </Select>
       </div>
-    ))}
     {failed && <p role="alert" className="text-destructive">{t('section2d.markerStyles.saveFailed')}</p>}
     <Button variant="outline" size="sm" disabled={!projectId} onClick={() => setOpen(true)}>
       {t('section2d.dimensionStyle.manage')}
     </Button>
-    {open && projectId && <MarkerStyleDialog key={projectId} projectId={projectId} lineweights={lineweights} close={() => setOpen(false)} />}
+    {open && projectId && <MarkerStyleDialog key={projectId} kind={kind} projectId={projectId} lineweights={lineweights} close={() => setOpen(false)} />}
   </section>;
 }
 
-function MarkerStyleDialog({ projectId, close, lineweights }: { projectId: string; lineweights: LineweightRow; close: () => void }) {
+function MarkerStyleDialog({ kind, projectId, close, lineweights }: { kind: MarkerStyle['kind']; projectId: string; lineweights: LineweightRow; close: () => void }) {
   const { t } = useTranslation();
   const { templates, markerStyles = [] } = useSavedSectionCuts(s => s.tagLibrary);
   const cuts = useSavedSectionCuts(s => s.cuts);
   const [id, setId] = useState(NEW);
   const [line, setLine] = useState(DEFAULT_MARKER_LINE);
   const [name, setName] = useState('');
-  const [kind, setKind] = useState<MarkerStyle['kind']>('section');
   const [symbolId, setSymbolId] = useState('');
   const [startSymbolId, setStartSymbolId] = useState('');
   const [reversed, setReversed] = useState(false);
   const [failed, setFailed] = useState(false);
   const symbols = templates.filter(template => symbolUse(template) === kind);
-  const inUse = cuts.some(view => view.markerStyleId === id);
+  const inUse = cuts.some(view => view.markerStyleId === id || view.annotationOptions?.styleIds?.[kind] === id);
   const duplicateName = markerStyles.some(item => item.id !== id && item.kind === kind && item.name.toLowerCase() === name.trim().toLowerCase());
   const hasSymbol = symbols.some(item => item.id === symbolId || (kind === 'section' && item.id === startSymbolId));
   const canSave = !!name.trim() && !duplicateName && (kind === 'section' || hasSymbol);
@@ -94,7 +89,6 @@ function MarkerStyleDialog({ projectId, close, lineweights }: { projectId: strin
     setId(nextId);
     setName(style?.name ?? '');
     setLine(style?.line ?? DEFAULT_MARKER_LINE);
-    setKind(style?.kind ?? 'section');
     setSymbolId(style?.symbolId ?? '');
     setStartSymbolId(style?.startSymbolId ?? '');
     setFailed(false);
@@ -102,7 +96,7 @@ function MarkerStyleDialog({ projectId, close, lineweights }: { projectId: strin
 
   function save(remove = false) {
     const current = useSavedSectionCuts.getState();
-    if (remove ? id === NEW || current.cuts.some(view => view.markerStyleId === id) : !canSave) return;
+    if (remove ? id === NEW || current.cuts.some(view => view.markerStyleId === id || view.annotationOptions?.styleIds?.[kind] === id) : !canSave) return;
     const nextId = id === NEW
       ? globalThis.crypto?.randomUUID?.() ?? 'marker-style-' + Date.now() + '-' + Math.random()
       : id;
@@ -126,7 +120,7 @@ function MarkerStyleDialog({ projectId, close, lineweights }: { projectId: strin
   return <Dialog open onOpenChange={value => { if (!value) close(); }}>
     <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
       <DialogHeader>
-        <DialogTitle>{t('section2d.markerStyles.title')}</DialogTitle>
+        <DialogTitle>{t(`section2d.annotationKind.${kind}`)}</DialogTitle>
         <DialogDescription>{t('section2d.markerStyles.description')}</DialogDescription>
       </DialogHeader>
       <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
@@ -141,8 +135,8 @@ function MarkerStyleDialog({ projectId, close, lineweights }: { projectId: strin
             <SelectTrigger aria-label={t('section2d.markerStyles.title')}><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value={NEW}>{t('section2d.markerStyles.new')}</SelectItem>
-              {markerStyles.map(style => <SelectItem key={style.id} value={style.id}>
-                {style.name} · {t(style.kind === 'section' ? 'section2d.symbols.section' : 'section2d.symbols.elevation')}
+              {markerStyles.filter(style => style.kind === kind).map(style => <SelectItem key={style.id} value={style.id}>
+                {style.name}
               </SelectItem>)}
             </SelectContent>
           </Select>
@@ -151,15 +145,6 @@ function MarkerStyleDialog({ projectId, close, lineweights }: { projectId: strin
             <Input value={name} maxLength={80} onChange={event => setName(event.currentTarget.value)} />
           </label>
           {duplicateName && <p role="alert" className="text-destructive">{t('section2d.markerStyles.duplicateName')}</p>}
-          <Select value={kind} disabled={id !== NEW} onValueChange={value => {
-            if (value === 'section' || value === 'elevation') { setKind(value); setSymbolId(''); setStartSymbolId(''); }
-          }}>
-            <SelectTrigger aria-label={t('section2d.symbols.use')}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="section">{t('section2d.symbols.section')}</SelectItem>
-              <SelectItem value="elevation">{t('section2d.symbols.elevation')}</SelectItem>
-            </SelectContent>
-          </Select>
           {(kind === 'section' ? [
             { key: 'start', label: t('section2d.markerStyles.startSymbol'), value: startSymbolId, set: setStartSymbolId },
             { key: 'end', label: t('section2d.markerStyles.endSymbol'), value: symbolId, set: setSymbolId },

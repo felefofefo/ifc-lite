@@ -17,7 +17,7 @@ export function distantColor(color: string, settings: DistantElements): string {
 }
 
 export function splitDistantLine(line: DrawingLine, offset: number): DrawingLine[] {
-  if (line.category === 'cut' || line.category === 'annotation') return [line];
+  if (line.category === 'cut' || line.category === 'annotation' || line.overhead) return [line];
   const endDepth = line.depthEnd ?? line.depth;
   const farStart = line.depth >= offset, farEnd = endDepth >= offset;
   if (farStart === farEnd) return [farStart ? { ...line, distant: true } : line];
@@ -29,9 +29,10 @@ export function splitDistantLine(line: DrawingLine, offset: number): DrawingLine
 }
 
 export function applyDistantZone(drawing: Drawing2D | null, settings?: DistantElements): Drawing2D | null {
-  if (!drawing || !settings || drawing.config.plane.axis === 'y' && !drawing.config.plane.customPlane) return drawing;
+  if (!drawing || !settings) return drawing;
   return { ...drawing, lines: drawing.lines.flatMap(line => splitDistantLine(line, settings.offset)),
     projectionPolygons: (drawing.projectionPolygons ?? []).flatMap(polygon => {
+      if (polygon.isCut) return [polygon];
       const points = polygon.polygon.outer;
       const depths = polygon.vertexDepths;
       if (!depths || depths.length !== points.length) return [polygon];
@@ -39,15 +40,20 @@ export function applyDistantZone(drawing: Drawing2D | null, settings?: DistantEl
       if (depths.every(depth => depth >= settings.offset)) return [{ ...polygon, distant: true }];
       return [false, true].flatMap(distant => {
         const outer: Point2D[] = [];
+        const vertexDepths: number[] = [];
         for (let i = 0; i < points.length; i++) {
           const next = (i + 1) % points.length;
           const start = depths[i], end = depths[next];
-          if ((start >= settings.offset) === distant) outer.push(points[i]);
+          if ((start >= settings.offset) === distant) {
+            outer.push(points[i]);
+            vertexDepths.push(start);
+          }
           if ((start >= settings.offset) !== (end >= settings.offset)) {
             outer.push(mixPoint(points[i], points[next], (settings.offset - start) / (end - start)));
+            vertexDepths.push(settings.offset);
           }
         }
-        return outer.length >= 3 ? [{ ...polygon, distant, polygon: { outer, holes: [] }, vertexDepths: undefined }] : [];
+        return outer.length >= 3 ? [{ ...polygon, distant, polygon: { outer, holes: [] }, vertexDepths }] : [];
       });
     }),
   };

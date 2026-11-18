@@ -115,6 +115,7 @@ export function DrawingPanel(): React.ReactElement {
   const selected3D = vm.saved3D;
   const layers = useDrawingLayers(vm);
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [viewsWidth, setViewsWidth] = useState(280);
   const [snapsOpen, setSnapsOpen] = useState(false);
   const [tagLibraryOpen, setTagLibraryOpen] = useState(false);
   const tagProject = useSavedSectionCuts(s => s.projectId);
@@ -282,7 +283,7 @@ export function DrawingPanel(): React.ReactElement {
       />
 
       <div className="relative flex min-h-0 flex-1">
-        {viewsOpen && <DrawingViewsBrowser overlay={tier === 'narrow'} close={() => setViewsOpen(false)}
+        {viewsOpen && <DrawingViewsBrowser panelWidth={panelWidth} width={viewsWidth} setWidth={setViewsWidth} overlay={tier === 'narrow'} close={() => setViewsOpen(false)}
           publicationScale={vm.publicationScale} lineweightTable={vm.lineweightSettings.table}
           canCreatePlan={!!vm.runtime.geometryResult} canTrace={canTrace} trace={kind => {
             setPlacement(kind);

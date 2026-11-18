@@ -7,6 +7,7 @@
  * viewing 2D architectural drawings (floor plans, sections, elevations) from the 3D model.
  */
 
+import type { AnnotationSymbolStyle } from '@/lib/drawing/annotation-types';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
 import type { StateCreator } from 'zustand';
 import type { Drawing2D, DxfPlacement, DxfUnderlay, GraphicOverrideRule, GraphicOverridePreset } from '@ifc-lite/drawing-2d';
@@ -49,6 +50,8 @@ export interface Measure2DResult {
 /** Polygon area measurement result */
 export interface PolygonArea2DResult {
   id: string;
+  appearanceId?: string;
+  appearance?: AnnotationSymbolStyle;
   viewKey?: string;
   points: Point2D[];  // Closed polygon vertices (drawing coords)
   area: number;       // Computed area in m²
@@ -58,6 +61,8 @@ export interface PolygonArea2DResult {
 /** Text box annotation */
 export interface TextAnnotation2D {
   id: string;
+  appearanceId?: string;
+  appearance?: AnnotationSymbolStyle;
   viewKey?: string;
   position: Point2D;       // Top-left corner (drawing coords)
   text: string;
@@ -70,6 +75,8 @@ export interface TextAnnotation2D {
 /** Cloud (revision cloud) annotation */
 export interface CloudAnnotation2D {
   id: string;
+  appearanceId?: string;
+  appearance?: AnnotationSymbolStyle;
   viewKey?: string;
   points: Point2D[];  // Rectangle corners (drawing coords, 2 points: topLeft, bottomRight)
   color: string;      // Cloud stroke color (default '#E53935')
@@ -329,7 +336,7 @@ export interface Drawing2DSlice extends Drawing2DState {
 
   // Polygon Area Actions
   addPolygonArea2DPoint: (point: Point2D) => void;
-  completePolygonArea2D: (area: number, perimeter: number, viewKey?: string) => void;
+  completePolygonArea2D: (area: number, perimeter: number, viewKey?: string, appearanceId?: string) => void;
   cancelPolygonArea2D: () => void;
   removePolygonArea2DResult: (id: string) => void;
   clearPolygonArea2DResults: () => void;
@@ -343,7 +350,7 @@ export interface Drawing2DSlice extends Drawing2DState {
 
   // Cloud Annotation Actions
   addCloudAnnotation2DPoint: (point: Point2D) => void;
-  completeCloudAnnotation2D: (label?: string, viewKey?: string) => void;
+  completeCloudAnnotation2D: (label?: string, viewKey?: string, appearanceId?: string) => void;
   cancelCloudAnnotation2D: () => void;
   removeCloudAnnotation2D: (id: string) => void;
   clearCloudAnnotations2D: () => void;
@@ -676,7 +683,7 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     polygonArea2DPoints: [...state.polygonArea2DPoints, point],
   })),
 
-  completePolygonArea2D: (area, perimeter, viewKey) => {
+  completePolygonArea2D: (area, perimeter, viewKey, appearanceId) => {
     const state = get();
     if (state.polygonArea2DPoints.length < 3) return;
 
@@ -684,6 +691,7 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     const result: PolygonArea2DResult = {
       id: `poly-area-${Date.now()}`,
       viewKey,
+      appearanceId,
       points: [...state.polygonArea2DPoints],
       area,
       perimeter,
@@ -735,7 +743,7 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     cloudAnnotation2DPoints: [...state.cloudAnnotation2DPoints, point],
   })),
 
-  completeCloudAnnotation2D: (label = '', viewKey) => {
+  completeCloudAnnotation2D: (label = '', viewKey, appearanceId) => {
     const state = get();
     if (state.cloudAnnotation2DPoints.length < 2) return;
 
@@ -743,6 +751,7 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     const result: CloudAnnotation2D = {
       id: `cloud-${Date.now()}`,
       viewKey,
+      appearanceId,
       points: [...state.cloudAnnotation2DPoints],
       color: '#E53935',
       label,

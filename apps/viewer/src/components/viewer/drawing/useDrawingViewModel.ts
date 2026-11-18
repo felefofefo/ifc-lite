@@ -36,6 +36,8 @@ import { useDrawingDimensionStyle } from '@/hooks/useDrawingDimensionStyle';
 import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
 import { useDrawingCutJointMaterial } from '@/hooks/useDrawingCutJoints';
 import { applyDistantZone } from '@/lib/drawing/distant-elements';
+import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
+import { annotationAppearance } from '@/lib/drawing/annotation-types';
 import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
 
@@ -98,6 +100,7 @@ export function useDrawingViewModel() {
   const activeSheet = useViewerStore((s) => s.activeSheet);
   const sheetEnabled = useViewerStore((s) => s.sheetEnabled);
   const savedView = useSavedSectionCuts(selectActiveSavedView);
+  const { annotationStyles, defaultAnnotationStyles } = useSavedSectionCuts(state => state.tagLibrary);
   const drawingPlaneId = useSavedSectionCuts(s => s.drawingPlaneId);
   const saved3D = savedView?.kind === '3d' ? savedView : undefined;
   const publicationScale = saved3D ? saved3D.publicationScale ?? displayOptions.scale
@@ -164,7 +167,7 @@ export function useDrawingViewModel() {
     sectionAxis:drawnPlane.axis,isCustomPlane:drawnPlane.custom!==undefined,flipped:drawnPlane.flipped,coordinateInfo:geometryResult?.coordinateInfo});
   const drawing = useMemo(() => {
     const result = drawingWithDxfBounds(rasterDrawing, dxfUnderlayData, hasRasterReferences);
-    return drawnPlane.axis === 'down' ? result : applyDistantZone(result, displayOptions.distantElements);
+    return applyDistantZone(result, displayOptions.distantElements);
   }, [rasterDrawing, dxfUnderlayData, hasRasterReferences, drawnPlane.axis, displayOptions.distantElements]);
   const hasReferences = hasRasterReferences || dxfUnderlayData.some(r=>r.lines.length>0 || r.fills.length>0 || r.texts.length>0);
   // The references' own extent, which Fit always frames (#8802).
@@ -241,18 +244,18 @@ export function useDrawingViewModel() {
     transform: markupTransform, axis: drawnPlane.axis, container: containerRef,
     tool: annotation2DActiveTool, setTool: setAnnotation2DActiveTool,
     showHidden: displayOptions.showHiddenLines, scale: publicationScale,
-    findSnapPoint: measureHandlers.findSnapPoint, angularSnap,
+    findSnapPoint: measureHandlers.findSnapPoint, angularSnap, lineweights,
   });
 
   const annotationHandlers = useAnnotation2D({
     drawing, viewTransform: markupTransform, sectionAxis: drawnPlane.axis, containerRef,
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
     polygonArea2DPoints, addPolygonArea2DPoint,
-    completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey); }, cancelPolygonArea2D,
+    completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, defaultAnnotationStyles?.area); }, cancelPolygonArea2D,
     textAnnotations2D: displayOptions.showAnnotations ? textAnnotations2D : [],
-    addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey }); }, setTextAnnotation2DEditing,
+    addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey, appearanceId: defaultAnnotationStyles?.text }); }, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint,
-    completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey); }, cancelCloudAnnotation2D,
+    completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey, defaultAnnotationStyles?.cloud); }, cancelCloudAnnotation2D,
     measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? polygonArea2DResults : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
     selectedAnnotation2D, setSelectedAnnotation2D, deleteSelectedAnnotation2D, moveAnnotation2D,
@@ -403,6 +406,24 @@ export function useDrawingViewModel() {
     }
   }, [annotation2DActiveTool, selectedAnnotation2D]);
 
+  const dimensionTypeOverride = savedView?.annotationOptions?.styleIds?.dimensions;
+  const displayedMeasurements = dimensionTypeOverride && dimensionSettings.styles.has(dimensionTypeOverride)
+    ? measure2DResults.map(item => item.dimension ? { ...item, dimension: { ...item.dimension, styleId: dimensionTypeOverride } } : item)
+    : measure2DResults;
+
+  function styledMarkup<T extends { appearanceId?: string }>(kind: 'area' | 'text' | 'cloud', items: T[]) {
+    const options = savedView?.annotationOptions;
+    return items.flatMap(item => {
+      const id = options?.styleIds?.[kind] ?? item.appearanceId;
+      if (!drawingAnnotationVisible(savedView, kind, id)) return [];
+      const appearance = annotationAppearance(kind, id, annotationStyles, options?.styles?.[kind]);
+      return [appearance ? { ...item, appearance } : item];
+    });
+  }
+  const styledAreas = styledMarkup('area', polygonArea2DResults);
+  const styledNotes = styledMarkup('text', textAnnotations2D);
+  const styledClouds = styledMarkup('cloud', cloudAnnotations2D);
+
   return {
     runtime, geometryResult, models,
     drawing, sourceDrawing, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
@@ -425,7 +446,7 @@ export function useDrawingViewModel() {
       onMouseLeave: () => { tags.leave(); canvasMouseHandlers.onMouseLeave(); },
       onClick: (e: React.MouseEvent) => { if (!tags.click(e)) canvasMouseHandlers.onClick(e); },
     }, cursorClass: tags.active ? 'cursor-crosshair' : cursorClass,
-    measure2DMode, measure2DResults, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
+    measure2DMode, measure2DResults, displayedMeasurements, styledAreas, styledNotes, styledClouds, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
     objectSnaps, setObjectSnaps, findSnapPoint: measureHandlers.findSnapPoint,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,

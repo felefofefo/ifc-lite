@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import React, { useCallback, useRef } from 'react';
-import { FileText, Layers, Palette, ScanLine, Settings2, List, SwatchBook, Tag, ChevronRight, PanelRightOpen, X } from 'lucide-react';
+import { FileText, Layers, Palette, ScanLine, Settings2, SwatchBook, Tag, ChevronRight, PanelRightOpen, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -14,7 +14,6 @@ import type { TranslationKey } from '@/i18n/en';
 import { DrawingMaterials } from './DrawingMaterials';
 import { DrawingLineweights } from './DrawingLineweights';
 import { ViewScaleSelect } from './ViewIdentityFields';
-import { formatScaleFactorLabel } from '@ifc-lite/drawing-2d';
 import { useViewTemplates } from '@/hooks/useDrawingTemplateRules';
 import { DrawingViewOptions, DrawingViewTemplates } from './DrawingViewTemplates';
 import { DrawingPatterns } from './DrawingPatterns';
@@ -22,8 +21,9 @@ import { DrawingProjectionSettings } from './DrawingProjectionSettings';
 import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { constructionProjectionEnabled, overheadProjectionEnabled } from '@/lib/drawing/construction-projection';
 import { supportsDrawingProjection } from '@/lib/drawing/view-placement';
-import { currentDrawingViewKind, savedViewKind, setDrawingProjectionDisplay, setDrawingPublicationScale, setViewSurfacePatterns, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { setDrawingProjectionDisplay, setDrawingPublicationScale, setViewSurfacePatterns, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { DrawingMarkerStyles } from './DrawingMarkerStyles';
+import { DrawingAnnotationStyles } from './DrawingAnnotationStyles';
 import { DrawingDimensionStyles } from './DrawingDimensionStyles';
 import { ViewVisibilitySettings } from './ViewVisibilitySettings';
 import { DrawingUnderlaysPanel } from './DrawingUnderlaysPanel';
@@ -41,7 +41,6 @@ export const DRAWING_INSPECTOR_OVERLAY_BELOW = 720;
 
 const TABS: ReadonlyArray<{ id: DrawingDrawer; icon: typeof Palette; labelKey: TranslationKey }> = [
   { id: 'display', icon: Settings2, labelKey: 'section2d.inspector.viewSettings' },
-  { id: 'properties', icon: List, labelKey: 'section2d.inspector.properties' },
   { id: 'sheet', icon: FileText, labelKey: 'section2d.drawers.sheet' },
   { id: 'underlays', icon: Layers, labelKey: 'section2d.drawers.underlays' },
   { id: 'annotations', icon: Tag, labelKey: 'section2d.drawers.annotations' },
@@ -62,7 +61,6 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
   const { templates } = useViewTemplates();
   const editing = useSavedSectionCuts(s => !!s.templateEdit);
   const locked = !editing && templates.some(template => template.id === vm.savedView?.graphics?.presetId);
-  const currentKind = useViewerStore(currentDrawingViewKind);
   const width = useViewerStore((s) => s.drawingInspectorWidth);
   const setWidth = useViewerStore((s) => s.setDrawingInspectorWidth);
   const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -90,22 +88,8 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
   const projectionAvailable = supportsDrawingProjection(sectionPlane);
   const showProjection = constructionProjectionEnabled(displayOptions.showConstructionProjection, sectionPlane);
   const showSurfacePatterns = displayOptions.showSurfacePatterns3D ?? false;
-  const tabs = TABS.filter(({ id }) => !view3D || id === 'display' || id === 'properties' || id === 'patterns');
+  const tabs = TABS.filter(({ id }) => !view3D || id === 'display' || id === 'patterns');
   const tab = tabs.find(({ id }) => id === vm.openDrawer)?.id ?? 'display';
-  const kind = vm.savedView ? savedViewKind(vm.savedView) : currentKind;
-  const yesNo = (value: boolean) => t(value ? 'section2d.inspector.on' : 'section2d.inspector.off');
-  const properties = [
-    [t('section2d.views.name'), vm.savedView?.name ?? '—'],
-    [t('section2d.views.code'), vm.savedView?.code ?? '—'],
-    [t('section2d.views.type'), kind ? t(`section2d.views.type.${kind}`) : '—'],
-    [t('drawingUnderlay.lineweights.publicationScale'), `1:${formatScaleFactorLabel(vm.publicationScale)}`],
-    [t('section2d.inspector.hiddenLines'), yesNo(displayOptions.showHiddenLines)],
-    ...(view3D ? [[t('section2d.patterns.surface3d'), yesNo(showSurfacePatterns)]] : [
-      [t('section2d.display.projection'), yesNo(projectionAvailable && showProjection)],
-      [t('section2d.display.overlay3d'), yesNo(displayOptions.show3DOverlay)],
-    ]),
-  ];
-
   const overlay = panelWidth > 0 && panelWidth < DRAWING_INSPECTOR_OVERLAY_BELOW;
 
   const body = (
@@ -156,14 +140,7 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
           <ViewSettingsSection label={t('section2d.inspector.filters')}>
             <fieldset disabled={locked}><ViewVisibilitySettings /></fieldset>
           </ViewSettingsSection>
-          <DrawingViewOptions lineweights={vm.lineweights} locked={locked} />
-        </TabsContent>
-        <TabsContent value="properties" className="m-0 h-full overflow-auto p-3">
-          <dl className="divide-y text-xs">
-            {properties.map(([label, value]) => <div key={label} className="grid grid-cols-2 items-baseline gap-3 py-2">
-              <dt className="text-muted-foreground">{label}</dt><dd className="break-words text-right">{value}</dd>
-            </div>)}
-          </dl>
+          <DrawingViewOptions vm={vm} locked={locked} />
         </TabsContent>
         <TabsContent value="sheet" className="m-0 h-full">
           <SheetSetupPanel onOpenTitleBlockEditor={() => vm.setTitleBlockEditorVisible(true)} />
@@ -177,7 +154,6 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
           />
         </TabsContent>
         <TabsContent value="annotations" className="m-0 h-full overflow-auto">
-          <ViewVisibilitySettings annotations />
           <DrawingDimensionStyles settings={vm.dimensionSettings} unitOverrides={vm.unitDisplayOverrides} lineweights={vm.lineweights}
             selection={vm.dimensionEditing.selectedDimension ? {
               typeId: vm.dimensionEditing.selectedDimension.dimension?.styleId, assign: vm.dimensionEditing.assignType,
@@ -189,15 +165,15 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
               rotate: angle => vm.dimensionEditing.updateLabel({ textAngle: angle }),
               resetPosition: () => vm.dimensionEditing.updateLabel({ textOffset: undefined }),
             } : undefined} />
-          {!view3D && <DrawingMarkerStyles lineweights={vm.lineweights} />}
+          {!view3D && <><DrawingMarkerStyles kind="section" lineweights={vm.lineweights} /><DrawingMarkerStyles kind="elevation" lineweights={vm.lineweights} /><DrawingAnnotationStyles /></>}
         </TabsContent>
-        <TabsContent value="patterns" className="m-0 h-full space-y-3 overflow-auto p-3 text-xs">
-          <div className="flex flex-wrap gap-1">
-            <DrawingMaterials settings={vm.materialSettings} />
-            <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale}
-              settings={vm.lineweightSettings} onScaleChange={scale => { if (!locked) setDrawingPublicationScale(scale); }} />
-          </div>
-          <DrawingPatterns />
+        <TabsContent value="patterns" className="m-0 h-full overflow-auto text-xs">
+          <DrawingMaterials settings={vm.materialSettings} sidebar />
+          <DrawingLineweights key={vm.lineweightSettings.projectId ?? 'session'} scale={vm.publicationScale}
+            settings={vm.lineweightSettings} sidebar onScaleChange={scale => { if (!locked) setDrawingPublicationScale(scale); }} />
+          <ViewSettingsSection label={t('section2d.patterns.title')}>
+            <div className="px-3 pb-3 pt-1"><DrawingPatterns /></div>
+          </ViewSettingsSection>
         </TabsContent>
         <TabsContent value="scan" className="m-0 h-full">
           <ScanSectionPanel

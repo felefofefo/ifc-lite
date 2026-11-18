@@ -18,6 +18,7 @@ import { ViewMarkers } from './ViewMarkers';
 import { DrawingElementTags } from './DrawingElementTags';
 import { useDrawingModelSelection } from './DrawingModelSelection';
 import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
+import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
 
@@ -85,7 +86,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           markupTransform={markupTransform}
           dimensionPreview={vm.dimensionPreview}
           dimensionPoints={vm.dimensionDraft.points}
-          measureResults={displayOptions.showAnnotations ? vm.measure2DResults : []}
+          measureResults={drawingAnnotationVisible(vm.savedView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(vm.savedView, 'dimensions', item.dimension?.styleId)) : []}
           measureSnapPoint={vm.measure2DSnapPoint}
           sheetEnabled={vm.sheetEnabled}
           activeSheet={vm.activeSheet}
@@ -95,11 +96,11 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           annotation2DActiveTool={vm.annotation2DActiveTool}
           annotation2DCursorPos={vm.annotation2DCursorPos}
           polygonAreaPoints={vm.polygonArea2DPoints}
-          polygonAreaResults={displayOptions.showAnnotations ? vm.polygonArea2DResults : []}
-          textAnnotations={displayOptions.showAnnotations ? vm.textAnnotations2D : []}
+          polygonAreaResults={vm.styledAreas}
+          textAnnotations={vm.styledNotes}
           textAnnotationEditing={vm.textAnnotation2DEditing}
           cloudAnnotationPoints={vm.cloudAnnotation2DPoints}
-          cloudAnnotations={displayOptions.showAnnotations ? vm.cloudAnnotations2D : []}
+          cloudAnnotations={vm.styledClouds}
           selectedAnnotation={vm.selectedAnnotation2D}
           ifcAnnotationLines={layers.ifcAnnotationData.lines}
           ifcAnnotationTexts={layers.ifcAnnotationData.texts}

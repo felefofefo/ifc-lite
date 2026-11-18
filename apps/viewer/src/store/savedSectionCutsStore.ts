@@ -47,9 +47,31 @@ type ViewDisplay = Pick<ViewerState['drawing2DDisplayOptions'],
   & Partial<Pick<ViewerState['drawing2DDisplayOptions'], 'showAnnotations' | 'show3DOverlay'>>;
 
 import { defaultMarkerStyleId, EMPTY_TAG_LIBRARY, readTagLibrary, type TagLibrary } from '@/lib/drawing/drawing-tag-library';
+import type { AnnotationStyleKind, AnnotationStyleSelection, AnnotationSymbolStyle } from '@/lib/drawing/annotation-types';
 import type { DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 
+export interface SavedViewFolder {
+  id: string;
+  kind: SavedViewKind;
+  name: string;
+  prefix: string;
+}
+
+export interface DrawingAnnotationOptions {
+  visibility: Record<string, boolean>;
+  styles?: Partial<Record<AnnotationStyleKind | 'ifc', AnnotationSymbolStyle>>;
+  styleIds?: Partial<Record<AnnotationStyleSelection, string>>;
+}
+
+export function drawingAnnotationVisible(view: SavedSectionCut | undefined, group: string, style?: string): boolean {
+  const visibility = view?.annotationOptions?.visibility;
+  const markerFlag = group === 'section' || group === 'elevation' ? view?.markers?.[group] : undefined;
+  return (visibility?.[group] ?? markerFlag) !== false && (!style || visibility?.[`${group}:${style}`] !== false);
+}
+
 export interface SavedSectionCut {
+  annotationOptions?: DrawingAnnotationOptions;
+  folderId?: string;
   elementTags?: DrawingElementTag[];
   markerSymbolId?: string;
   markerStyleId?: string;
@@ -81,6 +103,7 @@ export interface SavedSectionCut {
 interface SavedSectionCutsState {
   tagLibrary: TagLibrary;
   cuts: SavedSectionCut[];
+  folders: SavedViewFolder[];
   projectId?: string;
   /** The saved view currently selected. */
   activeCutId: string | null;
@@ -120,6 +143,7 @@ function planeSnapshot(plane: SectionPlane): SavedSectionCutPlane {
 
 export const useSavedSectionCuts = create<SavedSectionCutsState>()(() => ({
   cuts: [],
+  folders: [],
   tagLibrary: EMPTY_TAG_LIBRARY,
   activeCutId: null,
 }));
@@ -154,11 +178,21 @@ export function setSavedViewsProject(projectId: string | undefined): void {
   if (useSavedSectionCuts.getState().projectId === projectId) return;
   cancelDrawingTemplateEdit();
   let cuts: SavedSectionCut[] = [];
+  let folders: SavedViewFolder[] = [];
   if (projectId) {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(savedViewsKey(projectId)) ?? '[]');
-      if (Array.isArray(value)) {
-        const loaded = value.filter(isSavedSectionCut).map(withSingleDrawingPlane);
+      const stored = value && typeof value === 'object' && 'cuts' in value ? value : undefined;
+      if (stored && 'folders' in stored && Array.isArray(stored.folders)) {
+        folders = stored.folders.filter((folder): folder is SavedViewFolder => !!folder
+          && typeof folder.id === 'string' && SAVED_VIEW_KINDS.includes(folder.kind)
+          && typeof folder.name === 'string' && typeof folder.prefix === 'string');
+      }
+      const entries = stored ? stored.cuts : value;
+      if (Array.isArray(entries)) {
+        const loaded = entries.filter(isSavedSectionCut).map(withSingleDrawingPlane).map(cut =>
+          folders.some(folder => folder.id === cut.folderId && folder.kind === savedViewKind(cut))
+            ? cut : { ...cut, folderId: undefined });
         const used: SavedSectionCut[] = [];
         cuts = loaded.map(cut => {
           const code = cut.code && isViewCodeAvailable(cut.code, used)
@@ -180,13 +214,69 @@ export function setSavedViewsProject(projectId: string | undefined): void {
       console.warn('Could not load drawing tag library', error);
     }
   }
-  useSavedSectionCuts.setState({ projectId, cuts, tagLibrary, activeCutId: null, drawingPlaneId: undefined });
+  useSavedSectionCuts.setState({ projectId, cuts, folders, tagLibrary, activeCutId: null, drawingPlaneId: undefined });
 }
 
 function commitCuts(patch: Partial<SavedSectionCutsState>): void {
-  const { projectId } = useSavedSectionCuts.getState();
-  if (projectId && patch.cuts) localStorage.setItem(savedViewsKey(projectId), JSON.stringify(patch.cuts));
+  const state = useSavedSectionCuts.getState();
+  if (patch.cuts || patch.folders) {
+    const folders = patch.folders ?? state.folders;
+    const cuts = numberFolderViews(patch.cuts ?? state.cuts, folders);
+    if (state.projectId) localStorage.setItem(savedViewsKey(state.projectId), JSON.stringify({ cuts, folders }));
+    patch = { ...patch, cuts };
+  }
   useSavedSectionCuts.setState(patch);
+}
+
+function numberFolderViews(cuts: SavedSectionCut[], folders: SavedViewFolder[]): SavedSectionCut[] {
+  const numbered = new Map(folders.filter(folder => folder.prefix).map(folder => [folder.id, folder]));
+  const reserved = cuts.filter(cut => !cut.folderId || !numbered.has(cut.folderId));
+  const counters = new Map<string, number>();
+  return cuts.map(cut => {
+    const folder = cut.folderId && numbered.get(cut.folderId);
+    if (!folder) return cut;
+    let index = counters.get(folder.id) ?? 0;
+    let code: string;
+    do {
+      index += 1;
+      code = [folder.prefix, String(index).padStart(2, '0')].join('-');
+    } while (!isViewCodeAvailable(code, reserved));
+    counters.set(folder.id, index);
+    const updated = cut.code === code ? cut : { ...cut, code };
+    reserved.push(updated);
+    return updated;
+  });
+}
+
+export function saveViewFolder(kind: SavedViewKind, name: string, prefix: string, id?: string): void {
+  const { folders } = useSavedSectionCuts.getState();
+  const cleanPrefix = prefix.trim().toUpperCase();
+  if (!name.trim() || (cleanPrefix && !/^[A-Z0-9][A-Z0-9._-]{0,23}$/.test(cleanPrefix))) throw new Error('Invalid view folder');
+  if (cleanPrefix && folders.some(folder => folder.id !== id && folder.prefix === cleanPrefix)) throw new Error('Duplicate view folder prefix');
+  const folder = { id: id ?? createCutId(), kind, name: name.trim(), prefix: cleanPrefix };
+  commitCuts({ folders: id ? folders.map(item => item.id === id ? folder : item) : [...folders, folder] });
+}
+
+export function removeViewFolder(id: string): void {
+  const { folders, cuts } = useSavedSectionCuts.getState();
+  commitCuts({ folders: folders.filter(folder => folder.id !== id),
+    cuts: cuts.map(cut => cut.folderId === id ? { ...cut, folderId: undefined } : cut) });
+}
+
+export function moveSavedView(id: string, kind: SavedViewKind, folderId?: string, beforeId?: string): void {
+  const { cuts, folders } = useSavedSectionCuts.getState();
+  const view = cuts.find(cut => cut.id === id);
+  const target = beforeId && cuts.find(cut => cut.id === beforeId);
+  if (!view || id === beforeId || savedViewKind(view) !== kind
+    || (folderId && !folders.some(folder => folder.id === folderId && folder.kind === kind))
+    || (beforeId && (!target || savedViewKind(target) !== kind || target.folderId !== folderId))) return;
+  const rest = cuts.filter(cut => cut.id !== id);
+  const index = beforeId ? rest.findIndex(cut => cut.id === beforeId) : rest.length;
+  const code = view.folderId !== folderId && folders.some(folder => folder.id === view.folderId && folder.prefix)
+    && !folders.some(folder => folder.id === folderId && folder.prefix)
+    ? nextViewCode(kind, cuts) : view.code;
+  rest.splice(index, 0, { ...view, folderId, code });
+  commitCuts({ cuts: rest });
 }
 
 type ViewPlane = Pick<SavedSectionCutPlane, 'axis' | 'custom'>;
@@ -307,6 +397,8 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     id,
     name,
     code: existing?.code,
+    folderId: existing?.folderId,
+    annotationOptions: existing?.annotationOptions,
     markers: existing?.markers,
     elementTags: existing?.elementTags,
     markerSymbolId: existing?.markerSymbolId,
@@ -434,7 +526,7 @@ export function applySavedSectionCut(id: string, restoreCamera = true): void {
     customOverrideRules: structuredClone(cut.graphics?.rules ?? []),
   });
   if (cut.display) state.updateDrawing2DDisplayOptions({
-    ...cut.display, showAnnotations: cut.display.showAnnotations ?? true, showOverheadProjection: cut.display.showOverheadProjection, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
+    ...cut.display, showAnnotations: true, showOverheadProjection: cut.display.showOverheadProjection, showSurfacePatterns3D: cut.display.showSurfacePatterns3D ?? false, distantElements: cut.display.distantElements,
   });
   else state.updateDrawing2DDisplayOptions({ distantElements: undefined, showOverheadProjection: undefined, showAnnotations: true });
   useSavedSectionCuts.setState({ activeCutId: id,
@@ -468,21 +560,23 @@ function validateViewCode(kind: SavedViewKind, code?: string, except?: string): 
 
 export function renameSavedSectionCut(id: string, name: string, code?: string): void {
   const trimmed = name.trim();
-  const { cuts } = useSavedSectionCuts.getState();
+  const { cuts, folders } = useSavedSectionCuts.getState();
   const cut = cuts.find(c => c.id === id);
   if (!trimmed || !cut) return;
-  updateViewSettings(id, { name: trimmed, code: validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
+  const numbered = folders.some(folder => folder.id === cut.folderId && folder.prefix);
+  updateViewSettings(id, { name: trimmed, code: numbered ? cut.code : validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
 }
 
-export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags' | 'markerSymbolId' | 'markerStyleId'>>): void {
+export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags' | 'markerSymbolId' | 'markerStyleId' | 'annotationOptions'>>): void {
   const { cuts, templateEdit } = useSavedSectionCuts.getState();
   if (templateEdit?.draft.id === id) {
-    const { visibility, filter, display, graphics, publicationScale, ...local } = settings;
+    const { visibility, filter, display, graphics, publicationScale, annotationOptions, ...local } = settings;
     const draft = { ...templateEdit.draft };
     if ('visibility' in settings) draft.visibility = visibility;
     if ('filter' in settings) draft.filter = filter;
     if ('display' in settings) draft.display = display;
     if ('graphics' in settings) draft.graphics = graphics;
+    if ('annotationOptions' in settings) draft.annotationOptions = annotationOptions;
     if ('publicationScale' in settings) draft.publicationScale = publicationScale;
     if (Object.keys(local).length) commitCuts({ cuts: cuts.map(cut => cut.id === id ? { ...cut, ...local, updatedAt: Date.now() } : cut) });
     useSavedSectionCuts.setState({ templateEdit: { ...templateEdit, draft } });
@@ -592,7 +686,7 @@ export function beginDrawingTemplateEdit(template: ViewTemplate): void {
   } });
   try {
     applyDrawingTemplate({ ...template, groups: VIEW_TEMPLATE_GROUPS.filter(group =>
-      group === 'graphics' || (group === 'projection' ? !!template.projection : !!template.filters)) }, template);
+      group === 'graphics' || (group === 'projection' ? !!template.projection : group === 'filters' ? !!template.filters : !!template.annotations)) }, template);
   } catch (error) { cancelDrawingTemplateEdit(); throw error; }
 }
 
@@ -614,13 +708,14 @@ export function cancelDrawingTemplateEdit(): void {
   }
 }
 
-export function captureDrawingTemplate(view: SavedSectionCut): Pick<ViewTemplate, 'projection' | 'filters' | 'rules'> {
+export function captureDrawingTemplate(view: SavedSectionCut): Pick<ViewTemplate, 'projection' | 'filters' | 'rules' | 'annotations'> {
   const state = useViewerStore.getState();
   return {
     projection: { scale: view.publicationScale ?? state.drawing2DDisplayOptions.scale,
       display: structuredClone(templateProjectionDisplay(state.drawing2DDisplayOptions)) },
     filters: { visibility: captureViewVisibility(state), filter: view.filter && structuredClone(view.filter) },
     rules: structuredClone(state.customOverrideRules),
+    annotations: structuredClone(view.annotationOptions ?? { visibility: { ...DEFAULT_VIEW_MARKERS, ...view.markers } }),
   };
 }
 
@@ -629,13 +724,32 @@ function drawingTemplatePatch(view: SavedSectionCut, template: ViewTemplate): Pa
   const projection = groups.includes('projection') ? template.projection : undefined;
   const filters = groups.includes('filters') ? template.filters : undefined;
   const currentDisplay = view.display ?? useViewerStore.getState().drawing2DDisplayOptions;
+  const kind = savedViewKind(view);
+  const display = projection && templateProjectionDisplay(projection.display);
+  const viewDisplay = display && {
+    ...currentDisplay,
+    ...(display.showHiddenLines !== undefined && { showHiddenLines: display.showHiddenLines }),
+    ...(kind === '3d' ? {
+      ...(display.showSurfacePatterns3D !== undefined && { showSurfacePatterns3D: display.showSurfacePatterns3D }),
+    } : {
+      showConstructionProjection: display.showConstructionProjection,
+      constructionProjectionDepth: display.constructionProjectionDepth,
+      show3DOverlay: display.show3DOverlay ?? currentDisplay.show3DOverlay,
+      distantElements: display.distantElements,
+      ...(kind === 'plan' && {
+        useSymbolicRepresentations: display.useSymbolicRepresentations ?? currentDisplay.useSymbolicRepresentations,
+        showOverheadProjection: display.showOverheadProjection,
+      }),
+    }),
+  };
   return structuredClone({
     ...(groups.includes('graphics') && { graphics: {
       presetId: template.id, enabled: true, rows: template.rows, rules: template.rules ?? [],
     } }),
     ...(projection && { publicationScale: projection.scale,
-      display: { ...currentDisplay, ...templateProjectionDisplay(projection.display) } }),
-    ...(filters && { visibility: filters.visibility, filter: filters.filter }),
+      display: viewDisplay }),
+    ...(groups.includes('annotations') && kind !== '3d' && { annotationOptions: template.annotations }),
+    ...(filters && { visibility: filters.visibility, ...(kind !== '3d' && { filter: filters.filter }) }),
   });
 }
 
@@ -654,6 +768,12 @@ export function applyDrawingTemplate(template: ViewTemplate | undefined, previou
     templateRevision: template ? template.revision ?? template.id : undefined,
   };
   updateViewSettings(active.id, { ...patch, graphics: structuredClone(graphics) });
+  refreshDrawingTemplate(active, patch, graphics);
+}
+
+function refreshDrawingTemplate(active: SavedSectionCut, patch: ReturnType<typeof drawingTemplatePatch>,
+  graphics: NonNullable<SavedSectionCut['graphics']>): void {
+  const state = useViewerStore.getState();
   useViewerStore.setState({ activePresetId: graphics.presetId, overridesEnabled: true,
     customOverrideRules: structuredClone(graphics.rules),
     ...(patch.visibility && restoreViewVisibility(state, patch.visibility)),
@@ -665,10 +785,43 @@ export function applyDrawingTemplate(template: ViewTemplate | undefined, previou
     state.updateDrawing2DDisplayOptions({ ...patch.display, scale: factor });
     if (savedViewKind(active) !== '3d' && state.sheetEnabled && state.activeSheet) state.setDrawingScale(scale);
   }
-  if (template && savedViewKind(active) !== '3d') {
+  if ((patch.display || patch.visibility || patch.graphics) && savedViewKind(active) !== '3d') {
     state.setDrawing2D(null);
     state.setDrawing2DStatus('idle');
   }
+}
+
+export function assignDrawingTemplateViews(template: ViewTemplate, selectedIds: ReadonlySet<string>,
+  templates: readonly ViewTemplate[]): void {
+  const { cuts, activeCutId, templateEdit } = useSavedSectionCuts.getState();
+  if (templateEdit) return;
+  const state = useViewerStore.getState();
+  let live: { view: SavedSectionCut; patch: ReturnType<typeof drawingTemplatePatch>; graphics: NonNullable<SavedSectionCut['graphics']> } | undefined;
+  let changed = false;
+  const next = cuts.map(view => {
+    const linked = view.graphics?.presetId === template.id;
+    const selected = selectedIds.has(view.id);
+    if (linked === selected) return view;
+    changed = true;
+    const active = view.id === activeCutId;
+    const source = active ? { ...view, display: state.drawing2DDisplayOptions } : view;
+    const patch = selected ? drawingTemplatePatch(source, template) : {};
+    const previous = templates.find(item => item.id === view.graphics?.presetId);
+    const graphics: NonNullable<SavedSectionCut['graphics']> = structuredClone({
+      ...(patch.graphics ?? {
+        enabled: true, rows: view.graphics?.rows ?? previous?.rows ?? [],
+        rules: mergedDrawingRules(active ? state.customOverrideRules : view.graphics?.rules ?? [],
+          view.graphics?.rows === undefined ? previous?.rules : undefined),
+      }),
+      presetId: selected ? template.id : null,
+      templateRevision: selected ? template.revision ?? template.id : undefined,
+    });
+    if (active) live = { view, patch, graphics };
+    return { ...view, ...patch, graphics, updatedAt: Date.now() };
+  });
+  if (!changed) return;
+  commitCuts({ cuts: next });
+  if (live) refreshDrawingTemplate(live.view, live.patch, live.graphics);
 }
 
 export function setDrawingViewTemplate(id: string | null): void {

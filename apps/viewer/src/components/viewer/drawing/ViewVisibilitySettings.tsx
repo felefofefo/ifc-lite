@@ -2,53 +2,28 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 import { useState } from 'react';
-import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTranslation } from '@/i18n';
 import { useViewerStore } from '@/store';
 import { captureViewVisibility } from '@/lib/drawing/view-visibility';
-import { DEFAULT_VIEW_MARKERS } from '@/lib/drawing/view-markers';
 import { useDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import { loadSavedFilters } from '@/lib/search/saved-filters';
-import { savedViewKind, selectActiveSavedView, setDrawingProjectionDisplay, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { savedViewKind, selectActiveSavedView, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 
-export function ViewVisibilitySettings({ annotations = false }: { annotations?: boolean }) {
+export function ViewVisibilitySettings() {
   const { t } = useTranslation();
   const cut = useSavedSectionCuts(selectActiveSavedView);
-  const showAnnotations = useViewerStore(s => s.drawing2DDisplayOptions.showAnnotations);
   const [failed, setFailed] = useState(false);
   const runtime = useDrawingRuntime();
-  const presets = annotations ? [] : loadSavedFilters();
-  const markers = cut?.markers ?? DEFAULT_VIEW_MARKERS;
+  const presets = loadSavedFilters();
   function save(patch: Parameters<typeof updateViewSettings>[1]) {
     if (!cut) return;
     try { updateViewSettings(cut.id, patch); setFailed(false); } catch { setFailed(true); }
   }
-  return <div className={annotations ? "space-y-3 p-3 text-xs" : "h-full space-y-3 overflow-y-auto p-3 text-xs"}>
-    {annotations && (
-      <DrawingSettingSwitch label={t('section2d.display.ifcAnnotations')} checked={showAnnotations}
-        onCheckedChange={showAnnotations => {
-          try {
-            setDrawingProjectionDisplay({ showAnnotations });
-            if (!showAnnotations) {
-              const state = useViewerStore.getState();
-              state.setAnnotation2DActiveTool('none');
-              state.setSelectedAnnotation2D(null);
-              state.setTextAnnotation2DEditing(null);
-            }
-            setFailed(false);
-          } catch {
-            setFailed(true);
-          }
-        }} />
-    )}
+  return <div className="h-full space-y-3 overflow-y-auto p-3 text-xs">
     {!cut && <p className="text-muted-foreground">{t('section2d.viewSettings.selectSaved')}</p>}
-    {annotations && cut && savedViewKind(cut) === 'plan' && (['section', 'elevation'] as const).map(kind =>
-      <DrawingSettingSwitch key={kind} checked={markers[kind]}
-        label={t(kind === 'section' ? 'section2d.viewSettings.showSections' : 'section2d.viewSettings.showElevations')}
-        onCheckedChange={checked => save({ markers: { ...markers, [kind]: checked } })} />)}
-    {!annotations && cut && <>
+    {cut && <>
       <p className="text-muted-foreground">{t('section2d.viewSettings.visibilityHelp')}</p>
       <Button variant="outline" size="sm" onClick={() => save({ visibility: captureViewVisibility(useViewerStore.getState()) })}>
         {t('section2d.viewSettings.capture')}

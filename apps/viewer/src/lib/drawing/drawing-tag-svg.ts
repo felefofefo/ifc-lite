@@ -116,7 +116,7 @@ function rotateDirection(
   wrapper.append(group);
 }
 
-export function renderTagSvg(source: string, values: ReadonlyMap<string, string>, directionAngle?: number) {
+export function renderTagSvg(source: string, values: ReadonlyMap<string, string>, directionAngle?: number, style?: { font?: string; textHeight?: number }) {
   const svg = parseSvg(source);
   const viewBox = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number);
   const ratio = viewBox?.length === 4 && viewBox.every(Number.isFinite) && viewBox[2] > 0 && viewBox[3] > 0
@@ -145,7 +145,18 @@ export function renderTagSvg(source: string, values: ReadonlyMap<string, string>
   }
   const text: string[] = [];
   for (const node of textNodes(svg)) {
-    node.textContent = (node.textContent ?? '').replace(fieldPattern, (_, field: string) => {
+    const sourceText = node.textContent ?? '';
+    if (style && sourceText.includes('{{')) {
+      const element = node.parentElement as SVGElement | null;
+      if (element && style.font) element.style.fontFamily = style.font;
+      if (element && style.textHeight) {
+        const origin = anchorOnPaper({ x: 0, y: 0 }, box, width, height, aspect);
+        const one = anchorOnPaper({ x: 0, y: 1 }, box, width, height, aspect);
+        const mmPerUnit = Math.abs(one.y - origin.y);
+        if (mmPerUnit > 0) element.style.fontSize = String(style.textHeight / mmPerUnit) + 'px';
+      }
+    }
+    node.textContent = sourceText.replace(fieldPattern, (_, field: string) => {
       const value = values.get(field.trim()) ?? '—';
       text.push(value);
       return value;

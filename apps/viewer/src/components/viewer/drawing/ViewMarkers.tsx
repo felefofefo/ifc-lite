@@ -10,7 +10,7 @@ import { PlaceVerticalView } from './PlaceVerticalView';
 import { collectViewMarkers, DEFAULT_VIEW_MARKERS, markerHeadPoint, markerLineDash, markerLineWidth, markerTraceLines } from '@/lib/drawing/view-markers';
 import { resolveMarkerHeads } from '@/lib/drawing/drawing-tag-library';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
-import { applySavedSectionCut, setViewMarkerStyle, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { applySavedSectionCut, setViewMarkerStyle, selectActiveSavedView, drawingAnnotationVisible, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
@@ -20,19 +20,23 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const [failed, setFailed] = useState(false);
   const views = useSavedSectionCuts(s => s.cuts);
   const { templates, markerStyles } = useSavedSectionCuts(s => s.tagLibrary);
-  const active = useSavedSectionCuts(s => s.activeCutId);
+  const annotationView = useSavedSectionCuts(selectActiveSavedView);
   const { drawing, viewTransform, drawnPlane } = vm;
-  useEffect(() => { setSelectedId(undefined); setEditId(undefined); setFailed(false); }, [active]);
+  useEffect(() => { setSelectedId(undefined); setEditId(undefined); setFailed(false); }, [annotationView?.id]);
   const bounds = vm.runtime.geometryResult?.coordinateInfo.shiftedBounds;
   const markers = useMemo(() => {
     if (!bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return [];
-    const flags = views.find(view => view.id === active)?.markers ?? DEFAULT_VIEW_MARKERS;
+    const flags = annotationView?.annotationOptions ? DEFAULT_VIEW_MARKERS : annotationView?.markers ?? DEFAULT_VIEW_MARKERS;
     return collectViewMarkers(views, bounds, drawnPlane.flipped, flags).map(mark => {
+      const override = annotationView?.annotationOptions?.styleIds?.[mark.kind];
+      return override && markerStyles?.some(style => style.id === override && style.kind === mark.kind)
+        ? { ...mark, styleId: override } : mark;
+    }).filter(mark => drawingAnnotationVisible(annotationView, mark.kind, mark.styleId)).map(mark => {
       const angle = Math.atan2(mark.direction.y, mark.direction.x) * 180 / Math.PI;
       const line = mark.kind === 'section' ? markerStyles?.find(style => style.id === mark.styleId && style.kind === mark.kind)?.line : undefined;
       return { ...mark, angle, line, heads: resolveMarkerHeads(templates, mark, markerStyles, angle) };
     });
-  }, [views, active, bounds, drawnPlane.axis, drawnPlane.custom, drawnPlane.flipped, templates, markerStyles]);
+  }, [views, annotationView, bounds, drawnPlane.axis, drawnPlane.custom, drawnPlane.flipped, templates, markerStyles]);
   if (!drawing || !bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return null;
   const placingDimension = vm.annotation2DActiveTool === 'measure';
   const editing = placingDimension ? undefined : markers.find(marker => marker.id === editId);
@@ -109,7 +113,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   {selected && <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-md border bg-background p-1 shadow-sm"
     onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
     <span className="px-1 text-xs font-medium">{selected.code}</span>
-    <Select value={selected.styleId ?? (selected.symbolId ? 'legacy' : 'default')} onValueChange={value => {
+    <Select disabled={!!annotationView?.annotationOptions?.styleIds?.[selected.kind]} value={selected.styleId ?? (selected.symbolId ? 'legacy' : 'default')} onValueChange={value => {
       try {
         setViewMarkerStyle(selected.id, value === 'default' ? undefined : value);
         setFailed(false);

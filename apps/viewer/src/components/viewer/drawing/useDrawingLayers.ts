@@ -20,6 +20,7 @@ import { dxfPlaneDrawingMapper, dxfDrawingDeltaToPlacement } from '@/hooks/dxfRe
 import { useScanSectionLayer } from '@/hooks/useScanSectionLayer';
 import { useDrawingExport } from '@/hooks/useDrawingExport';
 import { useSavedViewBatch } from '@/hooks/useSavedViewBatch';
+import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 export function useDrawingLayers(vm: DrawingViewModel) {
@@ -41,7 +42,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
   ), [geometryResult, runtime.sourceCoordinateInfo, drawnPlane]);
 
   const ifcAnnotationData = useSymbolicAnnotationsForDrawing({
-    enabled: symbolicAnnotationsOverlayEnabled(displayOptions.showAnnotations && displayOptions.showIfcAnnotations, status, typeVisibility.ifcAnnotations),
+    enabled: symbolicAnnotationsOverlayEnabled(drawingAnnotationVisible(vm.savedView, 'ifcAnnotations') && displayOptions.showIfcAnnotations, status, typeVisibility.ifcAnnotations),
     axis: drawnPlane.axis,
     sectionPosWorld: ifcAnnotationsForDrawing.sectionPosWorld,
     viewDepth: ifcAnnotationsForDrawing.viewDepth,
@@ -115,9 +116,9 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     drawing: vm.exportableDrawing, lineweights: vm.lineweights, lineweightTable: vm.lineweightSettings.table, materialHatches: vm.materialSettings.hatches, displayOptions, sectionPlane: drawnPlane, activePresetId: vm.activePresetId,
     entityColorMap: vm.entityColorMap, overridesEnabled: vm.overridesEnabled, overrideEngine: vm.overrideEngine,
     dimensionStyles: vm.dimensionSettings.styles,
-    measure2DResults: displayOptions.showAnnotations ? vm.measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? vm.polygonArea2DResults : [],
+    measure2DResults: drawingAnnotationVisible(vm.savedView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(vm.savedView, 'dimensions', item.dimension?.styleId)) : [], polygonArea2DResults: vm.styledAreas,
     elementTags: displayOptions.showAnnotations ? vm.tags.items : [],
-    textAnnotations2D: displayOptions.showAnnotations ? vm.textAnnotations2D : [], cloudAnnotations2D: displayOptions.showAnnotations ? vm.cloudAnnotations2D : [],
+    textAnnotations2D: vm.styledNotes, cloudAnnotations2D: vm.styledClouds,
     sheetEnabled: vm.sheetEnabled, activeSheet: vm.activeSheet, dxfUnderlays: dxfUnderlayData,
     ifcDataStore, coordinateInfo: geometryResult?.coordinateInfo,
     scanSection: scanSectionLayer,

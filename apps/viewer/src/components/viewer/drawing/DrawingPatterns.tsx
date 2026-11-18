@@ -33,8 +33,8 @@ export function DrawingPatterns() {
     setFailed(false);
   }
   return <div className="space-y-3">
-    <div className="flex items-center justify-between gap-2">
-      <h3 className="text-sm font-medium">{t('section2d.patterns.custom')}</h3>
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="text-xs font-medium">{t('section2d.patterns.custom')}</h3>
       <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => fileInput.current?.click()}>
         <Upload className="h-3.5 w-3.5" />{t('section2d.patterns.import')}
       </Button>
