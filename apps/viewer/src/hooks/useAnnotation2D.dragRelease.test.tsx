@@ -57,7 +57,6 @@ function Probe({ dimensionText = false }: { dimensionText?: boolean }) {
     pickDimensionLabel: dimensionText ? (x, y) => x === 40 && y === 48 ? 'd1' : undefined : undefined,
     selectedAnnotation2D: selection,
     setSelectedAnnotation2D: dimensionText ? setSelection : () => {},
-    deleteSelectedAnnotation2D: () => {},
     moveAnnotation2D: (sel, origin) => { dragSelections.push(sel); moves.push(origin); },
     setAnnotation2DCursorPos: () => {},
     setMeasure2DSnapPoint: () => {},

@@ -71,7 +71,6 @@ function Probe({
     polygonArea2DResults,
     selectedAnnotation2D: null,
     setSelectedAnnotation2D: (sel) => { lastSelected = sel; },
-    deleteSelectedAnnotation2D: () => {},
     moveAnnotation2D: () => {},
     setAnnotation2DCursorPos: () => {},
     setMeasure2DSnapPoint: () => {},

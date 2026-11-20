@@ -10,6 +10,8 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n/en';
 import { IconAction, ToolSegment, ToolbarDivider } from './DrawingToolbarControls';
+import { DrawingArrangeMenu } from './DrawingArrangeMenu';
+import type { DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
 
 export type DrawingWidthTier = 'wide' | 'compact' | 'narrow';
 
@@ -40,7 +42,9 @@ export interface DrawingToolbarProps {
   canDelete: boolean;
   canCut: boolean;
   canPaste: boolean;
+  canArrange?: boolean;
   onMove: () => void;
+  onArrange?: (action: DrawingArrangeAction) => void;
   onCopy: () => void;
   onCut: () => void;
   onPaste: () => void;
@@ -81,6 +85,7 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
         <IconAction icon={Scissors} label={t('section2d.tools.cut')} disabled={!p.canCut} onClick={p.onCut} />
         <IconAction icon={Copy} label={t('section2d.tools.copy')} disabled={!p.canCopy} onClick={p.onCopy} />
         <IconAction icon={ClipboardPaste} label={t('section2d.tools.paste')} disabled={!p.canPaste} onClick={p.onPaste} />
+        <DrawingArrangeMenu onArrange={p.onArrange} disabled={!p.canArrange} />
         <IconAction icon={Trash2} label={t('section2d.tools.delete')} disabled={!p.canDelete} onClick={p.onDelete} />
       </div>
       <ToolbarDivider />

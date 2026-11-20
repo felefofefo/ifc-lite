@@ -14,8 +14,12 @@ import type React from 'react';
 import { GraphicOverrideEngine, suppressCutJoints, suppressDrawingCutJoints } from '@ifc-lite/drawing-2d';
 import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
 import { useViewerStore } from '@/store';
-import { selectActiveSavedView, setDrawingProjectionDisplay, saveProjectGrid, editSavedViewTrace, updateViewSettings, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { selectActiveSavedView, setDrawingProjectionDisplay, saveProjectGrid, editSavedViewTrace, updateViewSettings, removeSavedSectionCut, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { toast } from '@/components/ui/toast';
+import { useDialogs } from '@/components/ui/confirm-dialog';
+import { isTextEntryElement } from '@/lib/keyboard-event';
+import { registerKeyboardCommand } from '@/lib/commands/dispatcher';
+import { arrangeDrawingItems, type DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
 import { useTranslation } from '@/i18n';
 import { readDrawingTags, collectTagTargets, findTagTarget, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 import { moveProjectGrid } from '@/lib/drawing/project-grids';
@@ -55,6 +59,7 @@ import { useDrawingTags } from './DrawingElementTags';
 
 export function useDrawingViewModel() {
   const { t } = useTranslation();
+  const { confirmDialog } = useDialogs();
   const runtime = useDrawingRuntime();
   const { geometryResult } = runtime;
 
@@ -115,6 +120,12 @@ export function useDrawingViewModel() {
   const publicationScale = saved3D ? saved3D.publicationScale ?? displayOptions.scale
     : sheetEnabled && activeSheet ? activeSheet.scale.factor : displayOptions.scale;
   const [editableAnnotationId, setEditableAnnotationId] = useState<string | null>(null);
+  // One Delete route for the toolbar, context menus and keyboard shortcuts.
+  const deletionRef = useRef<(() => void) | null>(null);
+  useEffect(() => registerKeyboardCommand('drawing2d.delete', () => {
+    if (!deletionRef.current || isTextEntryElement(document.activeElement)) return false;
+    deletionRef.current();
+  }, { active: () => !!deletionRef.current }), []);
   const [selectedMarker, setSelectedMarker] = useState<{
     id: string; start: { x: number; y: number }; end: { x: number; y: number };
     reverse: boolean; distant?: DistantElements | null;
@@ -284,7 +295,7 @@ export function useDrawingViewModel() {
     completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey, defaultAnnotationStyles?.cloud); }, cancelCloudAnnotation2D,
     measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? polygonArea2DResults : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
-    selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D, deleteSelectedAnnotation2D, moveAnnotation2D,
+    selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D, moveAnnotation2D,
     snapForDrag: measureHandlers.findSnapPoint, angularSnap,
     setAnnotation2DCursorPos, setMeasure2DSnapPoint,
   });
@@ -420,10 +431,12 @@ export function useDrawingViewModel() {
     : null, [selectedAnnotation2D, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D]);
   const canEdit = !!selectedTag || !!annotationPayload || !!selectedMarker;
   const canCopy = !!selectedTag || !!annotationPayload;
-  const canDelete = !!selectedTag || !!annotationPayload;
+  const canDelete = !!selectedTag || !!annotationPayload || !!selectedMarker;
+  const canArrange = !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
   const canCut = !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
   useEffect(() => { setEditableAnnotationId(null); }, [selectedAnnotation2D?.id]);
   useEffect(() => { setSelectedMarker(null); }, [savedView?.id]);
+  useEffect(() => { if (selectedAnnotation2D) tags.clearSelection(); }, [selectedAnnotation2D?.id]);
   useEffect(() => { if (tags.selected || selectedAnnotation2D) setSelectedMarker(null); }, [tags.selected?.id, selectedAnnotation2D?.id]);
   const newDrawingId = () => globalThis.crypto?.randomUUID?.() ?? `drawing-${Date.now()}-${Math.random()}`;
 
@@ -443,20 +456,105 @@ export function useDrawingViewModel() {
     return true;
   }
 
+  function removeTag(tag: DrawingElementTag) {
+    try {
+      const grid = useSavedSectionCuts.getState().grids.find(item => item.id === tag.id);
+      if (grid) saveProjectGrid(grid, true);
+      else if (savedView) {
+        const latest = useSavedSectionCuts.getState().cuts.find(cut => cut.id === savedView.id);
+        if (!latest) return;
+        updateViewSettings(latest.id, { elementTags: readDrawingTags(latest.elementTags).filter(item => item.id !== tag.id) });
+      }
+      tags.close();
+      tags.clearSelection();
+    } catch (error) {
+      console.warn('Could not delete drawing symbol', error);
+      toast.error(t('section2d.tools.editError'));
+    }
+  }
+
   function deleteSelection() {
-    if (selectedTag) {
-      const grid = projectGrids.find(grid => grid.id === selectedTag.id);
+    if (selectedTag) { removeTag(selectedTag); return; }
+    if (selectedMarker) {
       try {
-        if (grid) saveProjectGrid(grid, true);
-        else if (savedView) {
-          const latest = useSavedSectionCuts.getState().cuts.find(cut => cut.id === savedView.id);
-          if (latest) updateViewSettings(latest.id, { elementTags: readDrawingTags(latest.elementTags).filter(tag => tag.id !== selectedTag.id) });
-        }
-        tags.close();
-      } catch (error) { console.warn('Could not delete drawing object', error); toast.error(t('section2d.tools.editError')); }
+        removeSavedSectionCut(selectedMarker.id);
+        setSelectedMarker(null);
+      } catch (error) {
+        console.warn('Could not delete drawing view', error);
+        toast.error(t('section2d.tools.editError'));
+      }
       return;
     }
     if (annotationPayload) deleteSelectedAnnotation2D();
+  }
+
+  async function requestDeleteTag(tag: DrawingElementTag): Promise<boolean> {
+    const projectId = drawingProjectId, viewId = savedView?.id;
+    const isGrid = useSavedSectionCuts.getState().grids.some(item => item.id === tag.id);
+    if (!await confirmDialog({
+      description: t(isGrid ? 'section2d.grid.deleteEverywhere' : 'section2d.tools.deleteConfirm'),
+      destructive: true,
+    })) return false;
+    if (useSavedSectionCuts.getState().projectId !== projectId
+      || useSavedSectionCuts.getState().activeCutId !== viewId) return false;
+    removeTag(tag);
+    return true;
+  }
+
+  async function requestDeleteMarker(id: string): Promise<boolean> {
+    const projectId = drawingProjectId, viewId = savedView?.id;
+    if (!await confirmDialog({ description: t('section2d.tools.deleteViewConfirm'), destructive: true })) return false;
+    const state = useSavedSectionCuts.getState();
+    if (state.projectId !== projectId || state.activeCutId !== viewId || !state.cuts.some(view => view.id === id)) return false;
+    try {
+      removeSavedSectionCut(id);
+      if (selectedMarker?.id === id) setSelectedMarker(null);
+      return true;
+    } catch (error) {
+      console.warn('Could not delete drawing view', error);
+      toast.error(t('section2d.tools.editError'));
+      return false;
+    }
+  }
+
+  async function requestDeleteSelection() {
+    if (!canDelete) return;
+    if (selectedTag) { await requestDeleteTag(selectedTag); return; }
+    if (selectedMarker) { await requestDeleteMarker(selectedMarker.id); return; }
+    const id = selectedAnnotation2D?.id, viewAtRequest = useSavedSectionCuts.getState().activeCutId, projectAtRequest = drawingProjectId;
+    if (!id || !await confirmDialog({ description: t('section2d.tools.deleteConfirm'), destructive: true })) return;
+    if (useSavedSectionCuts.getState().projectId !== projectAtRequest || useSavedSectionCuts.getState().activeCutId !== viewAtRequest
+      || useViewerStore.getState().selectedAnnotation2D?.id !== id) return;
+    deleteSelectedAnnotation2D();
+  }
+
+  deletionRef.current = canDelete ? () => { void requestDeleteSelection(); } : null;
+
+  function arrangeSelection(action: DrawingArrangeAction) {
+    if (selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id) && savedView) {
+      const latest = useSavedSectionCuts.getState().cuts.find(view => view.id === savedView.id);
+      if (!latest) return;
+      try {
+        updateViewSettings(latest.id, { elementTags: arrangeDrawingItems(readDrawingTags(latest.elementTags), selectedTag.id, action) });
+      } catch (error) { console.warn('Could not arrange drawing tag', error); toast.error(t('section2d.tools.editError')); }
+      return;
+    }
+    if (!selectedAnnotation2D || !annotationPayload) return;
+    const id = selectedAnnotation2D.id;
+    useViewerStore.setState(state => {
+      switch (selectedAnnotation2D.type) {
+        case 'measure': {
+          const selected = state.measure2DResults.find(item => item.id === id);
+          const chain = selected?.dimension?.chainId;
+          const ids = chain ? state.measure2DResults.filter(item => item.viewKey === selected?.viewKey
+            && item.dimension?.chainId === chain).map(item => item.id) : [id];
+          return { measure2DResults: arrangeDrawingItems(state.measure2DResults, ids, action) };
+        }
+        case 'polygon': return { polygonArea2DResults: arrangeDrawingItems(state.polygonArea2DResults, id, action) };
+        case 'text': return { textAnnotations2D: arrangeDrawingItems(state.textAnnotations2D, id, action) };
+        case 'cloud': return { cloudAnnotations2D: arrangeDrawingItems(state.cloudAnnotations2D, id, action) };
+      }
+    });
   }
 
   function cutSelection() {
@@ -650,6 +748,11 @@ export function useDrawingViewModel() {
     setEditableAnnotationId(selectedAnnotation2D.id);
     if (selectedAnnotation2D.type === 'text') setTextAnnotation2DEditing(selectedAnnotation2D.id);
   }
+  function resizeRevisionCloud(id: string, points: [{ x: number; y: number }, { x: number; y: number }]) {
+    if (!viewKey || selectedAnnotation2D?.type !== 'cloud' || selectedAnnotation2D.id !== id) return;
+    useViewerStore.setState(state => ({ cloudAnnotations2D: state.cloudAnnotations2D.map(cloud =>
+      cloud.id === id && cloud.viewKey === viewKey ? { ...cloud, points } : cloud) }));
+  }
   function clearAnnotationSelection() {
     setEditableAnnotationId(null);
     setTextAnnotation2DEditing(null);
@@ -736,10 +839,10 @@ export function useDrawingViewModel() {
     objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, findSnapPoint: measureHandlers.findSnapPoint,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,
-    canEdit, canCopy, canDelete, canCut, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection,
+    canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
-    editableAnnotationId,
+    editableAnnotationId, resizeRevisionCloud,
     polygonArea2DPoints, polygonArea2DResults,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,

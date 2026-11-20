@@ -195,7 +195,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     <div role="toolbar" aria-label={t(edit ? 'section2d.tools.edit' : 'section2d.create.trace')}
       className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
-      <span aria-live="polite">{t(edit ? 'section2d.create.dragLine'
+      <span aria-live="polite">{t(edit ? 'section2d.create.editLine'
         : end ? 'section2d.create.confirmLine' : start ? 'section2d.create.second' : 'section2d.create.first')}</span>
       {edit && <Select disabled={!!annotationView?.annotationOptions?.styleIds?.[kind]}
         value={annotationView?.annotationOptions?.styleIds?.[kind] ?? markerView?.markerStyleId ?? 'default'}

@@ -47,11 +47,15 @@ function Probe({ onDelete, onDeselect = () => {}, activeTool = 'none' }: {
     polygonArea2DResults: [],
     selectedAnnotation2D: { type: 'text', id: 't1' },
     setSelectedAnnotation2D: (selection) => { if (selection === null) onDeselect(); },
-    deleteSelectedAnnotation2D: onDelete,
     moveAnnotation2D: () => {},
     setAnnotation2DCursorPos: () => {},
     setMeasure2DSnapPoint: () => {},
   });
+  // The real Delete shortcut now belongs to the drawing view model. This probe
+  // registers its parent-level command to test dispatcher focus protection.
+  useEffect(() => registerKeyboardCommand('drawing2d.delete', () => {
+    onDelete();
+  }, { active: () => true }), [onDelete]);
   return <div ref={containerRef} />;
 }
 

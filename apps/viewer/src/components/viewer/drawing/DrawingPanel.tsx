@@ -279,13 +279,9 @@ export function DrawingPanel(): React.ReactElement {
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
         onOpenTags={() => setTagLibraryOpen(true)}
         canEdit={vm.canEdit} canCopy={vm.canCopy} canDelete={vm.canDelete} canCut={vm.canCut} canPaste={vm.canPaste}
+        canArrange={vm.canArrange} onArrange={vm.arrangeSelection}
         onMove={vm.startMove} onCopy={vm.copySelection} onCut={vm.cutSelection} onPaste={vm.pasteSelection}
-        onDelete={async () => {
-          const selected = vm.tags.selected ?? (vm.tags.draft?.mode === 'edit' ? vm.tags.draft.tag : undefined);
-          if (selected && useSavedSectionCuts.getState().grids.some(grid => grid.id === selected.id)
-            && !await confirmDialog({ description: t('section2d.grid.deleteEverywhere'), destructive: true })) return;
-          vm.deleteSelection();
-        }}
+        onDelete={vm.requestDeleteSelection}
         dimensionType={vm.dimensionType} onSelectDimensionType={vm.selectDimensionType}
         selectHint={t(navigationPreset === 'trackpad' ? 'section2d.tip.trackpad' : 'section2d.tip.pan')}
         hasMarkup={vm.hasMarkup} onClearMarkup={async () => {

@@ -12,6 +12,7 @@ import { Spinner } from '@/components/ui/spinner';
 
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useRef } from 'react';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
@@ -117,12 +118,15 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       )}
 
       {status === 'ready' && selection.overlay}
+      {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'cloud'
+        && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
+        && <CloudResizeHandles vm={vm} id={vm.editableAnnotationId} />}
       {status === 'ready' && <DrawingMovePreview vm={vm} />}
       {status === 'ready' && vm.annotation2DActiveTool === 'move' && <div
         className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
         role="status">{t(vm.moveBase ? 'section2d.tools.moveTarget' : 'section2d.tools.moveBase')}</div>}
       {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} />}
-      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags tags={vm.tags} />}
+      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags vm={vm} />}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
       {status === 'ready' && vm.selectedAnnotation2D && !vm.tags.selected && !vm.selectedMarker
         && vm.annotation2DActiveTool === 'none' && <div role="toolbar"
@@ -174,4 +178,83 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       )}
     </div>
   );
+}
+
+/** Edit a revision cloud by dragging its corners; Move remains a separate command. */
+function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
+  const { t } = useTranslation();
+  const cloud = vm.cloudAnnotations2D.find(item => item.id === id);
+  const drag = useRef<{ pointerId: number; opposite: { x: number; y: number };
+    original: [{ x: number; y: number }, { x: number; y: number }] } | null>(null);
+  if (!cloud || cloud.points.length < 2 || !(vm.markupTransform.scale > 0)) return null;
+
+  const [a, b] = cloud.points;
+  const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+  const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+  const corners = [
+    { x: minX, y: minY }, { x: maxX, y: minY },
+    { x: maxX, y: maxY }, { x: minX, y: maxY },
+  ];
+  const { x, y, scale } = vm.markupTransform;
+  const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
+  const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
+  const screen = (p: { x: number; y: number }) => ({ x: p.x * sx + x, y: p.y * sy + y });
+  const fromClient = (clientX: number, clientY: number) => {
+    const rect = vm.containerRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const raw = { x: (clientX - rect.left - x) / sx, y: (clientY - rect.top - y) / sy };
+    return vm.findSnapPoint(raw) ?? raw;
+  };
+  const resize = (clientX: number, clientY: number) => {
+    const current = drag.current;
+    const point = fromClient(clientX, clientY);
+    if (!current || !point) return;
+    if (Math.abs(point.x - current.opposite.x) < 1e-6 || Math.abs(point.y - current.opposite.y) < 1e-6) return;
+    vm.resizeRevisionCloud(id, [current.opposite, point]);
+  };
+
+  return <svg aria-label={t('section2d.tools.edit')} className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
+    {corners.map((corner, index) => {
+      const at = screen(corner);
+      return <circle key={index} cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={2}
+        className="pointer-events-auto cursor-crosshair touch-none"
+        role="button" tabIndex={0} aria-label={`${t('section2d.tools.edit')} · ${index + 1}`}
+        onMouseDown={event => event.stopPropagation()}
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+          const step = event.shiftKey ? 10 : 1;
+          const dx = event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0;
+          const dy = event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0;
+          if (!dx && !dy) return;
+          event.preventDefault(); event.stopPropagation();
+          const opposite = corners[(index + 2) % 4];
+          const point = { x: corner.x + dx / sx, y: corner.y + dy / sy };
+          if (Math.abs(point.x - opposite.x) > 1e-6 && Math.abs(point.y - opposite.y) > 1e-6)
+            vm.resizeRevisionCloud(id, [opposite, point]);
+        }}
+        onPointerDown={event => {
+          if (event.button !== 0) return;
+          event.preventDefault(); event.stopPropagation();
+          drag.current = { pointerId: event.pointerId, opposite: { ...corners[(index + 2) % 4] },
+            original: [{ ...cloud.points[0] }, { ...cloud.points[1] }] };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event => {
+          if (drag.current?.pointerId !== event.pointerId) return;
+          event.stopPropagation(); resize(event.clientX, event.clientY);
+        }}
+        onPointerUp={event => {
+          if (drag.current?.pointerId !== event.pointerId) return;
+          event.stopPropagation(); resize(event.clientX, event.clientY);
+          drag.current = null;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={event => {
+          if (drag.current?.pointerId !== event.pointerId) return;
+          event.stopPropagation(); vm.resizeRevisionCloud(id, drag.current.original);
+          drag.current = null;
+        }}
+        onLostPointerCapture={() => { drag.current = null; }} />;
+    })}
+  </svg>;
 }

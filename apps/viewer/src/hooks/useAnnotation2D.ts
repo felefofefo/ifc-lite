@@ -11,7 +11,6 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { isTextEntryElement } from '@/lib/keyboard-event';
 import { registerKeyboardCommand, registerKeyboardKeyUp } from '@/lib/commands/dispatcher';
 import type { Drawing2D } from '@ifc-lite/drawing-2d';
 import { snapDrawingAngle } from '@/lib/drawing/dimension-line';
@@ -57,7 +56,6 @@ export interface UseAnnotation2DParams {
   angularSnap?: 'off' | '15' | '90';
   pickDimensionLabel?: (x: number, y: number) => string | undefined;
   setSelectedAnnotation2D: (sel: SelectedAnnotation2D | null) => void;
-  deleteSelectedAnnotation2D: () => void;
   moveAnnotation2D: (sel: SelectedAnnotation2D, newOrigin: Point2D) => void;
   // Cursor and snap
   setAnnotation2DCursorPos: (pos: Point2D | null) => void;
@@ -108,7 +106,6 @@ export function useAnnotation2D({
   snapForDrag,
   angularSnap = 'off',
   setSelectedAnnotation2D,
-  deleteSelectedAnnotation2D,
   moveAnnotation2D,
   setAnnotation2DCursorPos,
   setMeasure2DSnapPoint,
@@ -292,18 +289,14 @@ export function useAnnotation2D({
       if (storeRef.current.selectedAnnotation2D) setSelectedAnnotation2D(null);
     }, { active: () => activeTool !== 'none' || Boolean(storeRef.current.selectedAnnotation2D),
       allowInTextEntry: true, ignoreModifiers: true });
-    const removeDelete = registerKeyboardCommand('drawing2d.delete', () => {
-      if (!storeRef.current.selectedAnnotation2D || isTextEntryElement(document.activeElement)) return false;
-      deleteSelectedAnnotation2D();
-    }, { active: () => Boolean(storeRef.current.selectedAnnotation2D) });
     const removeKeyUp = registerKeyboardKeyUp((event) => {
       if (event.key === 'Shift') shiftHeldRef.current = false;
     });
     return () => {
-      removeShift(); removeCancel(); removeDelete(); removeKeyUp();
+      removeShift(); removeCancel(); removeKeyUp();
     };
   }, [activeTool, setActiveTool, cancelPolygonArea2D, cancelCloudAnnotation2D,
-    setTextAnnotation2DEditing, setSelectedAnnotation2D, deleteSelectedAnnotation2D]);
+    setTextAnnotation2DEditing, setSelectedAnnotation2D]);
 
   // ── Mouse handlers ────────────────────────────────────────────────────
 
