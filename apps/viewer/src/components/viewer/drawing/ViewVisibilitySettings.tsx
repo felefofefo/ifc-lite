@@ -52,7 +52,7 @@ export function ViewVisibilitySettings() {
         </Select>}
       </>}
     </>}
-    {!annotations && runtime.viewFilterFailed && <p role="alert" className="text-destructive">{t('section2d.viewSettings.filterFailed')}</p>}
+    {runtime.viewFilterFailed && <p role="alert" className="text-destructive">{t('section2d.viewSettings.filterFailed')}</p>}
     {failed && <p role="alert" className="text-destructive">{t('section2d.views.saveError')}</p>}
   </div>;
 }

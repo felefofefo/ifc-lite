@@ -7,12 +7,13 @@ import type { Point2D } from '@ifc-lite/drawing-2d';
 import { useDrawingDirection } from '@/hooks/useDrawingDirection';
 import { DEFAULT_DISTANT, type DistantElements } from '@/lib/drawing/distant-elements';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ViewIdentityDialog } from './ViewIdentityFields';
 import { nextViewCode, type MarkerTrace } from '@/lib/drawing/view-markers';
 import { useTranslation } from '@/i18n';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { dragVerticalViewTrace, verticalViewPlane } from '@/lib/drawing/view-placement';
-import { createDrawingView, editSavedViewTrace, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { createDrawingView, editSavedViewTrace, selectActiveSavedView, setViewMarkerStyle, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 export type VerticalViewKind = 'section' | 'elevation';
@@ -30,9 +31,14 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ id: number; grip: 'line' | 'start' | 'end' | 'distant'; trace: MarkerTrace; distant: DistantElements | null; x: number; y: number; scale: number; moved: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [snap, setSnap] = useState<Point2D | null>(null);
   const [naming, setNaming] = useState(false);
   const { drawing, drawnPlane, viewTransform, sheetEnabled, activeSheet, isPinned, cachedSheetTransformRef } = vm;
   const project = useSavedSectionCuts(s => s.projectId);
+  const markerView = useSavedSectionCuts(s => edit && s.cuts.find(view => view.id === edit.id));
+  const annotationView = useSavedSectionCuts(selectActiveSavedView);
+  const markerStyles = useSavedSectionCuts(s => s.tagLibrary.markerStyles);
+  const [styleFailed, setStyleFailed] = useState(false);
   const { resolve: resolveDirection, resetDirection } = useDrawingDirection(edit?.id ?? null, vm.angularSnap);
 
   useEffect(() => {
@@ -99,6 +105,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     current.moved ||= delta.x !== 0 || delta.y !== 0;
     if (!current.moved) return;
     if (current.grip === 'distant') {
+      setSnap(null);
       if (current.distant && arrow) {
         const r = arrow.angle * Math.PI / 180;
         setDistant({ ...current.distant, offset: Math.max(0.01, current.distant.offset + delta.x * Math.cos(r) + delta.y * Math.sin(r)) });
@@ -106,12 +113,27 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       return;
     }
     let offset = delta;
+    if (current.grip === 'line') {
+      const [from, to] = current.trace;
+      const candidateA = { x: from.x + delta.x, y: from.y + delta.y };
+      const candidateB = { x: to.x + delta.x, y: to.y + delta.y };
+      const snapA = vm.findSnapPoint(candidateA);
+      const snapB = vm.findSnapPoint(candidateB);
+      const distanceA = snapA ? Math.hypot(snapA.x - candidateA.x, snapA.y - candidateA.y) : Infinity;
+      const distanceB = snapB ? Math.hypot(snapB.x - candidateB.x, snapB.y - candidateB.y) : Infinity;
+      const snapped = distanceA <= distanceB ? snapA : snapB;
+      const fromPoint = distanceA <= distanceB ? from : to;
+      setSnap(snapped);
+      if (snapped) offset = { x: snapped.x - fromPoint.x, y: snapped.y - fromPoint.y };
+    }
     if (current.grip === 'start' || current.grip === 'end') {
       const [from, to] = current.trace;
       const anchor = current.grip === 'start' ? to : from;
       const grip = current.grip === 'start' ? from : to;
       const point = { x: grip.x + delta.x, y: grip.y + delta.y };
-      const constrained = resolveDirection(anchor, point, vm.findSnapPoint(point), event.shiftKey);
+      const reference = vm.findSnapPoint(point);
+      const constrained = resolveDirection(anchor, point, reference, event.shiftKey);
+      setSnap(reference);
       if (constrained) offset = { x: constrained.x - grip.x, y: constrained.y - grip.y };
     }
     const trace = dragVerticalViewTrace(current.trace, current.grip, offset);
@@ -134,6 +156,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     }
     drag.current = null;
     resetDirection();
+    setSnap(null);
     setDragging(false);
   }
 
@@ -160,21 +183,35 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
         <line x1={a.x + offset.x} y1={a.y + offset.y} x2={b.x + offset.x} y2={b.y + offset.y}
           stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 5" />
       </g>}
-      {edit && a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth="22"
-        className={dragging ? 'cursor-grabbing' : 'cursor-grab'} onPointerDown={event => beginDrag(event, 'line')} />}
+      {edit && a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth="22" pointerEvents="none" />}
       {arrow && <path transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}
         d="M0 0H24m-7-5 7 5-7 5" stroke="currentColor" strokeWidth="2" fill="none" className="pointer-events-none" />}
-      {edit && a && b && ([['start', a], ['end', b]] as const).map(([grip, point]) => (
-        <g key={grip} className={dragging ? 'cursor-grabbing' : 'cursor-grab'} onPointerDown={event => beginDrag(event, grip)}>
-          <circle cx={point.x} cy={point.y} r="11" fill="transparent" />
-          <circle cx={point.x} cy={point.y} r="5" className="fill-background stroke-current" strokeWidth="2" />
-        </g>
-      ))}
+      {snap && <g pointerEvents="none" transform={`translate(${toScreen(snap).x} ${toScreen(snap).y})`}
+        stroke="#4CAF50" strokeWidth="1.5" fill="none">
+        <path d="M-12 0H12M0-12V12"/><circle r="6" />
+      </g>}
+      {/* Endpoint grips belong to Select/Move, not the properties editor. */}
     </svg>
-    <div className="pointer-events-auto absolute bottom-3 left-1/2 flex max-w-[95%] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs shadow-sm"
+    <div role="toolbar" aria-label={t(edit ? 'section2d.tools.edit' : 'section2d.create.trace')}
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
       <span aria-live="polite">{t(edit ? 'section2d.create.dragLine'
         : end ? 'section2d.create.confirmLine' : start ? 'section2d.create.second' : 'section2d.create.first')}</span>
+      {edit && <Select disabled={!!annotationView?.annotationOptions?.styleIds?.[kind]}
+        value={annotationView?.annotationOptions?.styleIds?.[kind] ?? markerView?.markerStyleId ?? 'default'}
+        onValueChange={value => {
+          try { setViewMarkerStyle(edit.id, value === 'default' ? undefined : value); setStyleFailed(false); }
+          catch (error) { console.warn('Could not change marker style', error); setStyleFailed(true); }
+        }}>
+        <SelectTrigger className="h-7 w-36 text-xs" aria-label={t('section2d.markerStyles.title')}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>
+          {markerStyles?.filter(style => style.kind === kind).map(style => (
+            <SelectItem key={style.id} value={style.id}>{style.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>}
+      {styleFailed && <span role="alert" className="text-destructive">{t('section2d.tagLibrary.saveFailed')}</span>}
       {edit && <label className="flex items-center gap-1">
         <input type="checkbox" checked={!!distant} onChange={e => setDistant(e.target.checked ? { ...DEFAULT_DISTANT } : null)} />
         {distant ? t('section2d.distant.offsetLabel', { offset: distant.offset.toFixed(2) }) : t('section2d.distant.label')}

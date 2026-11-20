@@ -17,8 +17,9 @@ import { publishDrawingRuntime } from '@/lib/drawing/drawing-runtime';
 import type { GeometryResult } from '@ifc-lite/geometry';
 import { activeSectionPlane } from './section-active.js';
 import {
+  applyDrawingTemplate, beginDrawingTemplateEdit, cancelDrawingTemplateEdit,
   applySavedSectionCut, createDrawingView, duplicateSavedSectionCut, setSavedViewsProject, updateSavedSectionCut,
-  removeSavedSectionCut, saveProjectGrid,
+  removeSavedSectionCut, saveProjectGrid, saveGridViewExtents,
   renameSavedSectionCut,
   saveCurrentSectionCut,
   setDrawingPublicationScale,
@@ -96,6 +97,53 @@ describe('saved section cuts (#5514)', () => {
     state().updateDrawing2DDisplayOptions({ scale: 100 });
     applySavedSectionCut(id);
     assert.equal(state().drawing2DDisplayOptions.scale, 125);
+  });
+
+  it('keeps the drawing visible through graphics template edits, cancel and apply', () => {
+    state().setActiveTool('section');
+    saveCurrentSectionCut('Drawing');
+    const template = { id: 'drawing-template:test', name: 'Test', rows: [] };
+    setDrawingViewTemplate(template.id);
+    const drawing = {} as NonNullable<ReturnType<typeof state>['drawing2D']>;
+    useViewerStore.setState({ drawing2D: drawing, drawing2DStatus: 'ready' });
+    try {
+      beginDrawingTemplateEdit({ ...template, groups: ['graphics'] });
+      assert.strictEqual(state().drawing2D, drawing);
+      assert.equal(state().drawing2DStatus, 'ready');
+      cancelDrawingTemplateEdit();
+      assert.strictEqual(state().drawing2D, drawing);
+      applyDrawingTemplate({ ...template, groups: ['graphics'] });
+      assert.strictEqual(state().drawing2D, drawing);
+      assert.equal(state().drawing2DStatus, 'ready');
+    } finally {
+      cancelDrawingTemplateEdit();
+      useViewerStore.setState({ drawing2D: null, drawing2DStatus: 'idle' });
+    }
+  });
+
+  it('keeps vertical grid extents local to the view, including after persistence', () => {
+    const project = 'test-vertical-grid-extents';
+    setSavedViewsProject(project);
+    state().setActiveTool('section');
+    const first = saveCurrentSectionCut('First', 'section');
+    const grid = { id: 'grid-height', name: 'A', templateId: 'grid-symbol',
+      start: { x: 0, y: 0, z: 0 }, end: { x: 6, y: 0, z: 0 } };
+    try {
+      saveProjectGrid(grid);
+      saveGridViewExtents(first, grid.id, { start: -1, end: 8 });
+      const second = saveCurrentSectionCut('Second', 'section');
+      assert.deepEqual(useSavedSectionCuts.getState().cuts.find(view => view.id === first)?.gridExtents?.[grid.id], { start: -1, end: 8 });
+      assert.equal(useSavedSectionCuts.getState().cuts.find(view => view.id === second)?.gridExtents?.[grid.id], undefined);
+      assert.deepEqual(useSavedSectionCuts.getState().grids[0], grid);
+      setSavedViewsProject(undefined);
+      setSavedViewsProject(project);
+      assert.deepEqual(useSavedSectionCuts.getState().cuts.find(view => view.id === first)?.gridExtents?.[grid.id], { start: -1, end: 8 });
+      saveProjectGrid(grid, true);
+      assert.equal(useSavedSectionCuts.getState().cuts.find(view => view.id === first)?.gridExtents?.[grid.id], undefined);
+    } finally {
+      setSavedViewsProject(undefined);
+      localStorage.removeItem(`ifc-lite:saved-drawing-views:v1:${project}`);
+    }
   });
 
   it('starts new views without a template and clears a template without losing custom rules', () => {

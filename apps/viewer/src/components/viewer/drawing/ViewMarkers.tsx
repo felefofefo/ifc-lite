@@ -1,7 +1,9 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import type { Point2D } from '@ifc-lite/drawing-2d';
+import { snapDrawingAngle } from '@/lib/drawing/dimension-line';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -10,7 +12,7 @@ import { PlaceVerticalView } from './PlaceVerticalView';
 import { collectViewMarkers, DEFAULT_VIEW_MARKERS, markerHeadPoint, markerLineDash, markerLineWidth, markerTraceLines } from '@/lib/drawing/view-markers';
 import { resolveMarkerHeads } from '@/lib/drawing/drawing-tag-library';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
-import { applySavedSectionCut, setViewMarkerStyle, selectActiveSavedView, drawingAnnotationVisible, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { applySavedSectionCut, editSavedViewTrace, setViewMarkerStyle, selectActiveSavedView, drawingAnnotationVisible, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
@@ -18,11 +20,17 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const [selectedId, setSelectedId] = useState<string>();
   const [editId, setEditId] = useState<string>();
   const [failed, setFailed] = useState(false);
+  const markerDrag = useRef<{ pointerId: number; id: string; clientX: number; clientY: number;
+    start: Point2D; end: Point2D; reverse: boolean; moved: boolean } | null>(null);
+  const [markerPreview, setMarkerPreview] = useState<{
+    id: string; start: Point2D; end: Point2D; reference: Point2D | null;
+  } | null>(null);
   const views = useSavedSectionCuts(s => s.cuts);
   const { templates, markerStyles } = useSavedSectionCuts(s => s.tagLibrary);
   const annotationView = useSavedSectionCuts(selectActiveSavedView);
   const { drawing, viewTransform, drawnPlane } = vm;
-  useEffect(() => { setSelectedId(undefined); setEditId(undefined); setFailed(false); }, [annotationView?.id]);
+  useEffect(() => { setSelectedId(undefined); setEditId(undefined); setFailed(false); vm.setSelectedMarker(null); }, [annotationView?.id]);
+  useEffect(() => { if (!vm.selectedMarker) setSelectedId(undefined); }, [vm.selectedMarker?.id]);
   const bounds = vm.runtime.geometryResult?.coordinateInfo.shiftedBounds;
   const markers = useMemo(() => {
     if (!bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return [];
@@ -38,7 +46,8 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
     });
   }, [views, annotationView, bounds, drawnPlane.axis, drawnPlane.custom, drawnPlane.flipped, templates, markerStyles]);
   if (!drawing || !bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return null;
-  const placingDimension = vm.annotation2DActiveTool === 'measure';
+  // A Move command needs unobstructed clicks on the drawing surface.
+  const placingDimension = vm.annotation2DActiveTool === 'measure' || vm.annotation2DActiveTool === 'move';
   const editing = placingDimension ? undefined : markers.find(marker => marker.id === editId);
   if (editing) {
     const dx = editing.end.x - editing.start.x, dy = editing.end.y - editing.start.y;
@@ -55,9 +64,44 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const ty = viewTransform.y + (sheet?.translateY ?? 0) * viewTransform.scale;
   const paperUnit = sheet ? viewTransform.scale : scale * vm.publicationScale / 1000;
   const selected = placingDimension ? undefined : markers.find(mark => mark.id === selectedId);
+  function updateMarkerDrag(event: PointerEvent<SVGGElement>, finish = false) {
+    const drag = markerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    const dx = (event.clientX - drag.clientX) / scale;
+    const dy = (event.clientY - drag.clientY) / scale;
+    if (!drag.moved && Math.hypot(event.clientX - drag.clientX, event.clientY - drag.clientY) < 4) {
+      if (finish) { markerDrag.current = null; setMarkerPreview(null); }
+      return;
+    }
+    drag.moved = true;
+    const raw: Point2D = { x: drag.start.x + dx, y: drag.start.y + dy };
+    const reference = vm.findSnapPoint(raw);
+    const angled = vm.angularSnap !== 'off'
+      ? snapDrawingAngle(drag.start, raw, 0, Number(vm.angularSnap)) : null;
+    const next = reference && (!angled || Math.hypot(reference.x - angled.x, reference.y - angled.y) < 1e-8)
+      ? reference : angled ?? reference ?? raw;
+    const delta = { x: next.x - drag.start.x, y: next.y - drag.start.y };
+    const shifted: typeof markerPreview = { id: drag.id,
+      start: { x: drag.start.x + delta.x, y: drag.start.y + delta.y },
+      end: { x: drag.end.x + delta.x, y: drag.end.y + delta.y },
+      reference: reference ?? (angled ? next : null) };
+    if (!finish) { setMarkerPreview(shifted); return; }
+    markerDrag.current = null;
+    setMarkerPreview(null);
+    try {
+      const world = (p: Point2D) => ({ x: drawnPlane.flipped ? -p.x : p.x, y: p.y });
+      editSavedViewTrace(drag.id, [world(shifted.start), world(shifted.end)],
+        drawnPlane.flipped !== drag.reverse);
+      vm.setSelectedMarker(current => current?.id === drag.id
+        ? { ...current, start: shifted.start, end: shifted.end } : current);
+    } catch (error) { console.warn('Could not move section/elevation trace', error); setFailed(true); }
+  }
   return <>
   <svg className="pointer-events-none absolute inset-0 h-full w-full text-primary">
-    {markers.map(mark => {
+    {markers.map(original => {
+      const mark = markerPreview && markerPreview.id === original.id
+        ? { ...original, start: markerPreview.start, end: markerPreview.end } : original;
       const { kind, angle, heads, line } = mark;
       const x1 = mark.start.x * scale + tx, x2 = mark.end.x * scale + tx;
       const y1 = mark.start.y * scale + ty, y2 = mark.end.y * scale + ty;
@@ -66,15 +110,40 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
       const dx = mark.direction.x * (distant?.offset ?? 0) * scale;
       const dy = mark.direction.y * (distant?.offset ?? 0) * scale;
       const open = () => applySavedSectionCut(mark.id);
+      const select = () => {
+        vm.tags.clearSelection();
+        vm.clearAnnotationSelection();
+        setSelectedId(mark.id);
+        const dx = mark.end.x - mark.start.x, dy = mark.end.y - mark.start.y;
+        vm.setSelectedMarker({ id: mark.id, start: mark.start, end: mark.end,
+          reverse: -dy * mark.direction.x + dx * mark.direction.y < 0, distant });
+      };
       return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={placingDimension ? -1 : 0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={selectedId === mark.id}
-        className="cursor-pointer outline-none focus-visible:opacity-60"
+        className={selectedId === mark.id ? 'cursor-grab touch-none outline-none focus-visible:opacity-60' : 'cursor-pointer outline-none focus-visible:opacity-60'}
+        onPointerDown={event => {
+          if (event.button !== 0 || placingDimension || vm.annotation2DActiveTool !== 'none' || selectedId !== mark.id) return;
+          event.stopPropagation();
+          markerDrag.current = { pointerId: event.pointerId, id: mark.id, clientX: event.clientX, clientY: event.clientY,
+            start: original.start, end: original.end,
+            reverse: -((original.end.y - original.start.y) * original.direction.x)
+              + (original.end.x - original.start.x) * original.direction.y < 0, moved: false };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event => updateMarkerDrag(event)}
+        onPointerUp={event => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          updateMarkerDrag(event, true);
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={() => { markerDrag.current = null; setMarkerPreview(null); }}
+        onLostPointerCapture={() => { markerDrag.current = null; setMarkerPreview(null); }}
         onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
-        onClick={e => { e.stopPropagation(); setSelectedId(mark.id); }} onDoubleClick={e => { e.stopPropagation(); open(); }}
+        onClick={e => { e.stopPropagation(); select(); }} onDoubleClick={e => { e.stopPropagation(); open(); }}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault(); e.stopPropagation();
             if (e.key === 'Enter') open();
-            else setSelectedId(mark.id);
+            else select();
           }
         }}>
         <title>{mark.name}</title>
@@ -107,12 +176,20 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
       </ContextMenu>;
     })}
   </svg>
+  {markerPreview?.reference && <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full"
+    fill="none" stroke="#4CAF50" strokeWidth={1.5}>
+    <g transform={`translate(${markerPreview.reference.x * scale + tx} ${markerPreview.reference.y * scale + ty})`}>
+      <path d="M-12 0H12M0-12V12" /><circle r="6" />
+    </g>
+  </svg>}
   {failed && <p role="alert" className="absolute left-3 top-3 rounded-md border bg-background px-2 py-1 text-xs text-destructive">
     {t('section2d.tagLibrary.saveFailed')}
   </p>}
   {selected && <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-md border bg-background p-1 shadow-sm"
     onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
-    <span className="px-1 text-xs font-medium">{selected.code}</span>
+    <span className="max-w-36 truncate px-2 text-xs font-medium">
+      {t(`section2d.annotationKind.${selected.kind}`)} · {selected.code}
+    </span>
     <Select disabled={!!annotationView?.annotationOptions?.styleIds?.[selected.kind]} value={selected.styleId ?? (selected.symbolId ? 'legacy' : 'default')} onValueChange={value => {
       try {
         setViewMarkerStyle(selected.id, value === 'default' ? undefined : value);
@@ -130,8 +207,8 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
         ))}
       </SelectContent>
     </Select>
-    <Button size="sm" variant="ghost" onClick={() => setEditId(selected.id)}>{t('section2d.create.editLine')}</Button>
-    <Button size="sm" variant="ghost" onClick={() => setSelectedId(undefined)}>{t('section2d.create.cancel')}</Button>
+    <Button size="sm" variant="ghost" onClick={() => setEditId(selected.id)}>{t('section2d.tools.edit')}</Button>
+    <Button size="sm" variant="ghost" onClick={() => { setSelectedId(undefined); vm.setSelectedMarker(null); }}>{t('section2d.create.cancel')}</Button>
   </div>}
   </>;
 }

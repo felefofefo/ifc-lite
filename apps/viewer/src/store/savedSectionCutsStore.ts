@@ -4,7 +4,7 @@
 
 /** Named drawing views and their project-scoped publication settings. */
 
-import { readProjectGrids, type ProjectGrid } from '@/lib/drawing/project-grids';
+import { readProjectGrids, validGridViewExtents, type GridViewExtents, type ProjectGrid } from '@/lib/drawing/project-grids';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { create } from 'zustand';
 import { COMMON_SCALES, formatScaleFactorLabel, type DrawingScale, type GraphicOverrideRule } from '@ifc-lite/drawing-2d';
@@ -74,6 +74,8 @@ export interface SavedSectionCut {
   annotationOptions?: DrawingAnnotationOptions;
   folderId?: string;
   elementTags?: DrawingElementTag[];
+  /** Per-view graphic extents of global grids in sections and elevations. */
+  gridExtents?: Record<string, GridViewExtents>;
   markerSymbolId?: string;
   markerStyleId?: string;
   id: string;
@@ -240,8 +242,25 @@ export function saveProjectGrid(grid: ProjectGrid, remove = false): void {
   if (!remove && !grid.name.trim()) throw new Error('Grid name is required');
   if (!remove && state.grids.some(item => item.id !== grid.id && item.name.trim().toLocaleLowerCase() === grid.name.trim().toLocaleLowerCase()))
     throw new Error('Grid name is already in use');
-  commitCuts({ grids: remove ? state.grids.filter(item => item.id !== grid.id)
-    : [...state.grids.filter(item => item.id !== grid.id), { ...grid, name: grid.name.trim() }] });
+  const grids = remove ? state.grids.filter(item => item.id !== grid.id)
+    : [...state.grids.filter(item => item.id !== grid.id), { ...grid, name: grid.name.trim() }];
+  if (!remove) { commitCuts({ grids }); return; }
+  commitCuts({ grids, cuts: state.cuts.map(view => {
+    if (!view.gridExtents?.[grid.id]) return view;
+    const gridExtents = { ...view.gridExtents };
+    delete gridExtents[grid.id];
+    return { ...view, gridExtents, updatedAt: Date.now() };
+  }) });
+}
+
+/** Changing graphic extents never moves the shared model grid. */
+export function saveGridViewExtents(viewId: string, gridId: string, extents: GridViewExtents): void {
+  const state = useSavedSectionCuts.getState();
+  if (!state.projectId || state.activeCutId !== viewId || !state.grids.some(grid => grid.id === gridId)
+    || !validGridViewExtents(extents)) throw new Error('Invalid grid view extents');
+  const view = state.cuts.find(item => item.id === viewId);
+  if (!view || savedViewKind(view) === 'plan' || savedViewKind(view) === '3d') throw new Error('Not a vertical view');
+  updateViewSettings(viewId, { gridExtents: { ...view.gridExtents, [gridId]: extents } });
 }
 
 export function promoteProjectGrid(grid: ProjectGrid, viewId: string): void {
@@ -590,7 +609,7 @@ export function renameSavedSectionCut(id: string, name: string, code?: string): 
   updateViewSettings(id, { name: trimmed, code: numbered ? cut.code : validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
 }
 
-export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags' | 'markerSymbolId' | 'markerStyleId' | 'annotationOptions'>>): void {
+export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags' | 'gridExtents' | 'markerSymbolId' | 'markerStyleId' | 'annotationOptions'>>): void {
   const { cuts, templateEdit } = useSavedSectionCuts.getState();
   if (templateEdit?.draft.id === id) {
     const { visibility, filter, display, graphics, publicationScale, annotationOptions, ...local } = settings;
@@ -725,10 +744,6 @@ export function cancelDrawingTemplateEdit(): void {
   });
   state.updateDrawing2DDisplayOptions({ ...templateEdit.display, ...templateProjectionDisplay(templateEdit.display) });
   if (templateEdit.sheetScale && state.activeSheet) state.setDrawingScale(templateEdit.sheetScale);
-  if (savedViewKind(templateEdit.draft) !== '3d') {
-    state.setDrawing2D(null);
-    state.setDrawing2DStatus('idle');
-  }
 }
 
 export function captureDrawingTemplate(view: SavedSectionCut): Pick<ViewTemplate, 'projection' | 'filters' | 'rules' | 'annotations'> {
@@ -807,10 +822,6 @@ function refreshDrawingTemplate(active: SavedSectionCut, patch: ReturnType<typeo
       ?? { factor, name: `1:${formatScaleFactorLabel(factor)}`, useCase: '' };
     state.updateDrawing2DDisplayOptions({ ...patch.display, scale: factor });
     if (savedViewKind(active) !== '3d' && state.sheetEnabled && state.activeSheet) state.setDrawingScale(scale);
-  }
-  if ((patch.display || patch.visibility || patch.graphics) && savedViewKind(active) !== '3d') {
-    state.setDrawing2D(null);
-    state.setDrawing2DStatus('idle');
   }
 }
 

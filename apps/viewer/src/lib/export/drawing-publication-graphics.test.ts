@@ -74,8 +74,8 @@ test('maps publication paints to both 2D clipping and 3D cap attributes', () => 
   const context = {
     save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, setLineDash() {},
     clip(rule: string) { order.push(rule); },
-    fillRect() { order.push(this.fillStyle); },
-    stroke() { order.push(this.strokeStyle); },
+    fillRect() { order.push(String(context.fillStyle)); },
+    stroke() { order.push(String(context.strokeStyle)); },
     fillStyle: '', strokeStyle: '',
   } as unknown as CanvasRenderingContext2D;
   drawPublicationCanvasFills(context, polygon, paints, (x, y) => ({ x, y }), 1, 0.05);

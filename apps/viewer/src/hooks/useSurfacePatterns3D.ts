@@ -37,7 +37,7 @@ export function useSurfacePatterns3D(renderer: RefObject<Renderer | null>, ready
       seen.add(key);
       const paints: DXFHatchLayer[] = resolve({ polygon: empty, isCut: false, entityId: mesh.expressId,
         ifcType: mesh.ifcType ?? '', modelIndex: mesh.modelIndex ?? 0, materialId: mesh.materialId }, '#666666') ?? [];
-      const solid = paints.findLastIndex(p => p.pattern === 'solid');
+      const solid = paints.reduce((last, paint, index) => paint.pattern === 'solid' ? index : last, -1);
       const hatch = paints.slice(solid + 1).find(p => p.pattern === 'diagonal' || p.pattern === 'cross-hatch'
         || (p.pattern === 'custom' && p.patternKey !== undefined && pat.offsets.has(p.patternKey)));
       const customOffset = hatch?.patternKey && pat.offsets.get(hatch.patternKey);

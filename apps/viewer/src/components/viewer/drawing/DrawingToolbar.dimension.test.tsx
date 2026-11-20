@@ -18,7 +18,9 @@ function Probe() {
   const [dimensionType, setType] = useState<DimensionType>('aligned');
   return <DrawingToolbar tier="wide" activeTool={activeTool} dimensionType={dimensionType}
     onSelectTool={onSelectTool} onSelectDimensionType={type => { setType(type); onSelectTool('measure'); }}
-    selectHint="" hasMarkup={false} onClearMarkup={noop} settingsOpen={false} onToggleSettings={noop}
+    selectHint="" hasMarkup={false} onClearMarkup={noop} onOpenTags={noop}
+    canEdit={false} canCopy={false} canDelete={false} canCut={false} canPaste={false}
+    onMove={noop} onCopy={noop} onDelete={noop} onCut={noop} onPaste={noop}
     zoomPercent={100} onZoomIn={noop} onZoomOut={noop} onFit={noop} pinned={false} onTogglePinned={noop} />;
 }
 

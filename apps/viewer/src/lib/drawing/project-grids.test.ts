@@ -41,3 +41,34 @@ test('project grid storage rejects duplicate ids, malformed and degenerate axes'
   assert.deepEqual(readProjectGrids([grid, grid, { ...grid, id: 'bad', start: { x: NaN, y: 0, z: 0 } },
     { ...grid, id: 'point', end: grid.start }]), [grid]);
 });
+
+test('editing a grid end in plan preserves the opposite end and the shared identity', () => {
+  const plane = { axis: 'y', position: 1.2, flipped: true } as const;
+  const tag = projectGrid(grid, drawing(plane));
+  assert.ok(tag?.gridStart);
+
+  const start = gridFromPlan({ ...tag, gridStart: { x: -6, y: -5 } }, plane);
+  assert.ok(start);
+  assert.equal(start.id, grid.id);
+  assert.equal(start.start.x, 6);
+  assert.equal(start.start.z, -5);
+  assert.deepEqual(start.end, { ...grid.end, y: plane.position });
+
+  const end = gridFromPlan({ ...tag, position: { x: -8, y: 7 } }, plane);
+  assert.ok(end);
+  assert.equal(end.id, grid.id);
+  assert.deepEqual(end.start, { ...grid.start, y: plane.position });
+  assert.equal(end.end.x, 8);
+  assert.equal(end.end.z, 7);
+});
+
+test('vertical view overrides change only the displayed grid height, not its shared position', () => {
+  const plane = { axis: 'z', position: 0, flipped: false } as const;
+  const original = projectGrid(grid, drawing(plane));
+  const adjusted = projectGrid(grid, drawing(plane), { start: -2, end: 8 });
+  assert.equal(adjusted?.gridStart?.x, original?.gridStart?.x);
+  assert.equal(adjusted?.position.x, original?.position.x);
+  assert.equal(adjusted?.gridStart?.y, -2);
+  assert.equal(adjusted?.position.y, 8);
+  assert.equal(projectGrid(grid, drawing(plane), { start: 9, end: 8 })?.position.y, original?.position.y);
+});

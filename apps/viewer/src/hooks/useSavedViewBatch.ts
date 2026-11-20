@@ -107,7 +107,8 @@ export function useSavedViewBatch(sourceDrawing: Drawing2D | null, builders: Dra
           fills: (polygon, fallbackColor) => {
             const paints = polygon.isCut && !live.drawing2DDisplayOptions.showHatching ? undefined : hatchStyle(polygon, fallbackColor);
             if (!polygon.isCut) return paints;
-            const solid = paints?.findLastIndex(paint => paint.pattern === 'solid' && (pdfColor(paint.color)?.alpha ?? 0) > 0) ?? -1;
+            const solid = paints?.reduce((last, paint, index) =>
+              paint.pattern === 'solid' && (pdfColor(paint.color)?.alpha ?? 0) > 0 ? index : last, -1) ?? -1;
             const base: DXFHatchLayer = {
               pattern: 'solid', spacing: 0,
               color: pdfColor(paints?.[solid]?.color ?? fallbackColor)?.color ?? '#666666',

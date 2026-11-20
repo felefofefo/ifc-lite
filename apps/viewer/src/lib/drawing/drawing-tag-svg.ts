@@ -100,7 +100,7 @@ function rotateDirection(
   // Conjugate the paper-space rotation into the parent group's coordinates.
   let basis = new DOMMatrix();
   for (let element = group.parentElement; element && element !== svg; element = element.parentElement) {
-    const list = (element as SVGGraphicsElement).transform?.baseVal;
+    const list = (element as unknown as SVGGraphicsElement).transform?.baseVal;
     if (!list) continue;
     let matrix = new DOMMatrix();
     for (let i = 0; i < list.numberOfItems; i++) matrix = matrix.multiply(list.getItem(i).matrix);

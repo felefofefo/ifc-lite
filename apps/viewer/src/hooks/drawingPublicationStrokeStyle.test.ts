@@ -13,13 +13,13 @@ test('keeps cut and projection pens independent and applies the distant pen last
   const weights = { heavy: 0.5, medium: 0.35, light: 0.17, hairline: 0.1 };
   const pen = drawingPublicationStrokeStyle(weights,
     { overridesEnabled: true, overrideEngine: new GraphicOverrideEngine([template, rule], weights), getElementProperties: () => undefined },
-    { offset: 2, fade: 0, color: '#888888', weight: 0.09 })!;
+    { offset: 2, fade: 0, color: '#888888', weight: 'hairline' })!;
   const line: DrawingLine = { category: 'projection', visibility: 'visible', entityId: 1, modelIndex: 0, ifcType: 'IfcWall',
     depth: 3, line: { start: { x: 0, y: 0 }, end: { x: 1, y: 0 } } };
   assert.equal(pen(line, 'cut').lineWeight, 0.5);
   assert.deepEqual(pen(line, 'cut').dash, []);
   assert.equal(pen(line, 'projection', line).lineWeight, 0.17);
   assert.ok(pen(line, 'projection', line).dash?.length);
-  assert.equal(pen(line, 'projection', { ...line, distant: true }).lineWeight, 0.09);
+  assert.equal(pen(line, 'projection', { ...line, distant: true }).lineWeight, 0.1);
   assert.equal(pen(line, 'projection', { ...line, distant: true }).color, '#888888');
 });

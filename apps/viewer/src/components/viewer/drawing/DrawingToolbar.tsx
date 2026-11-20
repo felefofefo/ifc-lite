@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { ChevronDown, Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Pin, PinOff, Ruler, Trash2, Type, ZoomIn, ZoomOut, Tag } from 'lucide-react';
+import { ChevronDown, Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Move, Scissors, Copy, ClipboardPaste, Pin, PinOff, Ruler, Trash2, Type, ZoomIn, ZoomOut, Tag } from 'lucide-react';
 import { DIMENSION_TYPES, type DimensionType } from '@/lib/drawing/dimension-line';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,6 @@ import { IconAction, ToolSegment, ToolbarDivider } from './DrawingToolbarControl
 export type DrawingWidthTier = 'wide' | 'compact' | 'narrow';
 
 const TOOLS: ReadonlyArray<{ tool: Annotation2DTool; icon: typeof Ruler; labelKey: TranslationKey }> = [
-  { tool: 'none', icon: MousePointer2, labelKey: 'section2d.tools.select' },
   { tool: 'measure', icon: Ruler, labelKey: 'section2d.tools.distance' },
   { tool: 'polygon-area', icon: Hexagon, labelKey: 'section2d.tools.area' },
   { tool: 'text', icon: Type, labelKey: 'section2d.tools.text' },
@@ -36,6 +35,16 @@ export interface DrawingToolbarProps {
   activeTool: Annotation2DTool;
   onSelectTool: (tool: Annotation2DTool) => void;
   onOpenTags: () => void;
+  canEdit: boolean;
+  canCopy: boolean;
+  canDelete: boolean;
+  canCut: boolean;
+  canPaste: boolean;
+  onMove: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
+  onDelete: () => void;
   dimensionType: DimensionType;
   onSelectDimensionType: (type: DimensionType) => void;
   /** The Select tool's tooltip: how to pan and zoom (was a permanent hint line). */
@@ -61,6 +70,20 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
 
   return (
     <div className={toolbarClass}>
+      <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+        <div role="radiogroup" aria-label={t('section2d.tools.editGroup')} className="inline-flex items-center gap-0.5">
+          <ToolSegment icon={MousePointer2} label={t('section2d.tools.select')} tip={p.selectHint}
+            active={p.activeTool === 'none'} showLabel={showLabels} onSelect={() => p.onSelectTool('none')} />
+          <ToolSegment icon={Move} label={t('section2d.tools.move')}
+            active={p.activeTool === 'move'} disabled={!p.canEdit && p.activeTool !== 'move'}
+            showLabel={showLabels} onSelect={p.onMove} />
+        </div>
+        <IconAction icon={Scissors} label={t('section2d.tools.cut')} disabled={!p.canCut} onClick={p.onCut} />
+        <IconAction icon={Copy} label={t('section2d.tools.copy')} disabled={!p.canCopy} onClick={p.onCopy} />
+        <IconAction icon={ClipboardPaste} label={t('section2d.tools.paste')} disabled={!p.canPaste} onClick={p.onPaste} />
+        <IconAction icon={Trash2} label={t('section2d.tools.delete')} disabled={!p.canDelete} onClick={p.onDelete} />
+      </div>
+      <ToolbarDivider />
       <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
         <div role="radiogroup" aria-label={t('section2d.tools.group')} className="inline-flex items-center gap-0.5">
           {TOOLS.map(({ tool, icon, labelKey }) => tool === 'measure' ? (
@@ -91,7 +114,7 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
             </div>
           ) : (
             <ToolSegment
-              key={tool} icon={icon} label={t(labelKey)} tip={tool === 'none' ? p.selectHint : undefined}
+              key={tool} icon={icon} label={t(labelKey)}
               active={p.activeTool === tool} showLabel={showLabels} onSelect={() => p.onSelectTool(tool)}
             />
           ))}
@@ -99,10 +122,6 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
         <IconAction icon={Tag} label={t('section2d.tagLibrary.title')} text={showLabels ? t('section2d.tagLibrary.button') : undefined}
           pressed={p.activeTool === 'tag'} onClick={p.onOpenTags} />
       </div>
-      {p.hasMarkup && !narrow && (
-        <IconAction icon={Trash2} label={t('section2d.annotations.clear')} onClick={p.onClearMarkup} />
-      )}
-
       <ToolbarDivider />
 
       <div className="ml-auto inline-flex items-center gap-0.5">
@@ -115,6 +134,7 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
         {!narrow && <IconAction icon={ZoomIn} label={t('section2d.zoom.in')} onClick={p.onZoomIn} />}
         <IconAction icon={Maximize2} label={t('section2d.zoom.fit')} text={showLabels ? t('section2d.zoom.fitShort') : undefined} onClick={p.onFit} />
         {!narrow && <IconAction icon={p.pinned ? Pin : PinOff} label={pinLabel} pressed={p.pinned} onClick={p.onTogglePinned} />}
+        {p.hasMarkup && !narrow && <IconAction icon={Trash2} label={t('section2d.annotations.clear')} onClick={p.onClearMarkup} />}
         {narrow && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

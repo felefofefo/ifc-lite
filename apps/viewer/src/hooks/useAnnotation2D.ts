@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { isTextEntryElement } from '@/lib/keyboard-event';
 import { registerKeyboardCommand, registerKeyboardKeyUp } from '@/lib/commands/dispatcher';
 import type { Drawing2D } from '@ifc-lite/drawing-2d';
+import { snapDrawingAngle } from '@/lib/drawing/dimension-line';
 import type {
   Annotation2DTool, Point2D, TextAnnotation2D,
   SelectedAnnotation2D, Measure2DResult, PolygonArea2DResult, CloudAnnotation2D,
@@ -50,6 +51,10 @@ export interface UseAnnotation2DParams {
   polygonArea2DResults: PolygonArea2DResult[];
   // Selection
   selectedAnnotation2D: SelectedAnnotation2D | null;
+  /** Editing/dragging is opt-in. The first click only selects. */
+  editableAnnotationId?: string | null;
+  snapForDrag?: (point: Point2D) => Point2D | null;
+  angularSnap?: 'off' | '15' | '90';
   pickDimensionLabel?: (x: number, y: number) => string | undefined;
   setSelectedAnnotation2D: (sel: SelectedAnnotation2D | null) => void;
   deleteSelectedAnnotation2D: () => void;
@@ -99,6 +104,9 @@ export function useAnnotation2D({
   polygonArea2DResults,
   pickDimensionLabel,
   selectedAnnotation2D,
+  editableAnnotationId,
+  snapForDrag,
+  angularSnap = 'off',
   setSelectedAnnotation2D,
   deleteSelectedAnnotation2D,
   moveAnnotation2D,
@@ -111,6 +119,7 @@ export function useAnnotation2D({
   // ── Ephemeral drag state as refs (no store churn during drag) ──────────
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef<Point2D | null>(null);
+  const dragAnchorRef = useRef<Point2D | null>(null);
   // Keep a stable ref to the latest store mutators to avoid stale closures
   const storeRef = useRef({
     measure2DResults,
@@ -359,11 +368,17 @@ export function useAnnotation2D({
     // ── Selection / drag (tool is 'none' or 'measure') ──────────────────
     const hit = hitTestAnnotations(screenX, screenY);
     if (hit) {
+      const alreadySelected = storeRef.current.selectedAnnotation2D?.id === hit.id;
       setSelectedAnnotation2D(hit);
-      const origin = getAnnotationOrigin(hit);
-      if (origin) {
-        isDraggingRef.current = true;
-        dragOffsetRef.current = { x: drawingCoord.x - origin.x, y: drawingCoord.y - origin.y };
+      // Selection is immediate; dragging the already-selected object is only
+      // possible outside the properties editor. A single click never moves it.
+      if (alreadySelected && editableAnnotationId !== hit.id) {
+        const origin = getAnnotationOrigin(hit);
+        if (origin) {
+          isDraggingRef.current = true;
+          dragOffsetRef.current = { x: drawingCoord.x - origin.x, y: drawingCoord.y - origin.y };
+          dragAnchorRef.current = origin;
+        }
       }
       return true; // consumed — don't start panning
     }
@@ -377,7 +392,7 @@ export function useAnnotation2D({
     applyShiftConstraint, polygonArea2DPoints, addPolygonArea2DPoint, completePolygonArea2D,
     addTextAnnotation2D, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, addCloudAnnotation2DPoint, completeCloudAnnotation2D,
-    hitTestAnnotations, getAnnotationOrigin, setSelectedAnnotation2D]);
+    hitTestAnnotations, getAnnotationOrigin, setSelectedAnnotation2D, editableAnnotationId]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -391,10 +406,15 @@ export function useAnnotation2D({
     if (isDraggingRef.current && dragOffsetRef.current) {
       // Throttle: Zustand set() is synchronous, but we skip if position
       // hasn't changed meaningfully (< 0.5 screen px)
-      const newDrawingPos: Point2D = {
+      const raw: Point2D = {
         x: drawingCoord.x - dragOffsetRef.current.x,
         y: drawingCoord.y - dragOffsetRef.current.y,
       };
+      const snapped = snapForDrag?.(raw) ?? null;
+      const angle = angularSnap !== 'off' && dragAnchorRef.current
+        ? snapDrawingAngle(dragAnchorRef.current, raw, 0, Number(angularSnap)) : null;
+      const newDrawingPos = snapped && (!angle || Math.hypot(snapped.x - angle.x, snapped.y - angle.y) < 1e-8)
+        ? snapped : angle ?? snapped ?? raw;
       // We call the store action directly — it's already optimized for single-item updates
       const sel = storeRef.current.selectedAnnotation2D;
       if (sel) {
@@ -424,11 +444,12 @@ export function useAnnotation2D({
     setAnnotation2DCursorPos(point);
   }, [activeTool, containerRef, screenToDrawing, findSnapPoint, setMeasure2DSnapPoint,
     setAnnotation2DCursorPos, applyShiftConstraint, polygonArea2DPoints, cloudAnnotation2DPoints,
-    commitDragPosition]);
+    commitDragPosition, snapForDrag, angularSnap]);
 
   const endDrag = useCallback(() => {
     isDraggingRef.current = false;
     dragOffsetRef.current = null;
+    dragAnchorRef.current = null;
   }, []);
   const handleMouseUp = useCallback((_e: React.MouseEvent) => endDrag(), [endDrag]);
 

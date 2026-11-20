@@ -36,7 +36,7 @@ test('dragging a trace translates both points or adjusts just the grabbed endpoi
   const delta = { x: -2, y: 3 };
   const translated = dragVerticalViewTrace(trace, 'line', delta)!;
   assert.deepEqual(translated, [{ x: -1, y: 5 }, { x: 2, y: 9 }]);
-  assert.deepEqual(verticalViewPlane(...translated, false, false)?.normal, verticalViewPlane(...trace, false, false)?.normal);
+  assert.deepEqual(verticalViewPlane(translated[0], translated[1], false, false)?.normal, verticalViewPlane(...trace, false, false)?.normal);
   assert.deepEqual(dragVerticalViewTrace(trace, 'start', delta), [{ x: -1, y: 5 }, trace[1]]);
   assert.deepEqual(dragVerticalViewTrace(trace, 'end', delta), [trace[0], { x: 2, y: 9 }]);
   assert.equal(dragVerticalViewTrace(trace, 'end', { x: -3, y: -4 }), null);

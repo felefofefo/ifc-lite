@@ -13,6 +13,15 @@ export interface ProjectGrid {
   end: Vec3;
 }
 
+/** Graphic height limits in a particular vertical view (not model geometry). */
+export interface GridViewExtents { start: number; end: number }
+
+export function validGridViewExtents(value: unknown): value is GridViewExtents {
+  if (!value || typeof value !== 'object') return false;
+  const { start, end } = value as Partial<GridViewExtents>;
+  return Number.isFinite(start) && Number.isFinite(end) && (end as number) - (start as number) > 1e-8;
+}
+
 export function readProjectGrids(value: unknown): ProjectGrid[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -34,7 +43,17 @@ export function gridFromPlan(tag: DrawingElementTag, plane: SectionPlaneConfig):
     start: world(tag.gridStart), end: world(tag.position) };
 }
 
-export function projectGrid(grid: ProjectGrid, drawing: Drawing2D): DrawingElementTag | undefined {
+/** Translate the common grid datum in the model's XZ plane. */
+export function moveProjectGrid(grid: ProjectGrid, plane: SectionPlaneConfig, delta: Point2D): ProjectGrid {
+  const shift = plane.axis === 'y' && !plane.customPlane
+    ? { x: plane.flipped ? -delta.x : delta.x, z: delta.y }
+    : { x: (plane.customPlane?.tangent.x ?? (plane.axis === 'x' ? 0 : plane.flipped ? -1 : 1)) * delta.x,
+        z: (plane.customPlane?.tangent.z ?? (plane.axis === 'x' ? plane.flipped ? -1 : 1 : 0)) * delta.x };
+  const move = (p: Vec3): Vec3 => ({ ...p, x: p.x + shift.x, z: p.z + shift.z });
+  return { ...grid, start: move(grid.start), end: move(grid.end) };
+}
+
+export function projectGrid(grid: ProjectGrid, drawing: Drawing2D, extents?: GridViewExtents): DrawingElementTag | undefined {
   const plane = drawing.config.plane;
   let start: Point2D, end: Point2D;
   if (plane.axis === 'y' && !plane.customPlane) {
@@ -52,7 +71,8 @@ export function projectGrid(grid: ProjectGrid, drawing: Drawing2D): DrawingEleme
     const point = projectPointForPlane({ x: grid.start.x + dx * t, y: 0, z: grid.start.z + dz * t }, plane);
     const margin = (drawing.bounds.max.x - drawing.bounds.min.x) * 0.1;
     if (point.x < drawing.bounds.min.x - margin || point.x > drawing.bounds.max.x + margin) return;
-    const bottom = drawing.bounds.min.y, top = drawing.bounds.max.y;
+    const bottom = validGridViewExtents(extents) ? extents.start : drawing.bounds.min.y;
+    const top = validGridViewExtents(extents) ? extents.end : drawing.bounds.max.y;
     if (!Number.isFinite(bottom + top) || top <= bottom) return;
     start = { x: point.x, y: bottom };
     end = { x: point.x, y: top };

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import type { Drawing2D, Point2D } from '@ifc-lite/drawing-2d';
 import { isPlacedSymbol, symbolFitsView, symbolUse } from '@/lib/drawing/drawing-tag-library';
 import { createDrawingModelIndex } from '@/lib/drawing/drawing-model-pick';
@@ -11,7 +11,7 @@ import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind } from '@/lib/drawing/
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
 import { useViewerStore } from '@/store';
-import { saveProjectGrid, promoteProjectGrid, drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
+import { saveProjectGrid, saveGridViewExtents, promoteProjectGrid, drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { collectTagTargets, drawingHeight, findTagTarget, measureDrawingSymbol, measurementLabel, pickTagTarget, readDrawingTags, resolveDrawingTag, resolveFreeSymbol, tagFields,
   type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
@@ -50,6 +50,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   findSnapPoint: (point: Point2D) => Point2D | null;
 }) {
   const active = tool === 'tag';
+  const [selectedTagId, setSelectedTagId] = useState<{ viewId: string; id: string } | null>(null);
   const [session, setSession] = useState<Draft | null>(null);
   const [cursor, setCursor] = useState<{ point: Point2D; reference: Point2D | null } | null>(null);
   const [failed, setFailed] = useState(false);
@@ -109,11 +110,24 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (isMeasurement(kind)) tag.field = label ?? '—';
     return resolveSymbol(tag);
   }, [freeTemplate, cursorPoint, plane, symbolValue, firstPoint, label, defaultAnnotationStyles, resolveSymbol]);
-  const { resolve: resolveDirection } = useDrawingDirection((placing && (draft.tag.leader || draft.tag.gridStart) ? draft : null) ?? (use === 'grid' ? firstPoint : null), angularSnap);
+  // Angle constraints also apply when adjusting an existing grid's visible ends.
+  const { resolve: resolveDirection } = useDrawingDirection(
+    (placing && (draft.tag.leader || draft.tag.gridStart) ? draft : null)
+    ?? (draft?.mode === 'edit' && draftUse === 'grid' ? `${draft.viewId}:${draft.tag.id}:grid-ends` : null)
+    ?? (use === 'grid' ? firstPoint : null), angularSnap);
   const stored = useMemo(() => [
     ...readDrawingTags(view?.elementTags).filter(tag => !grids.some(grid => grid.id === tag.id)),
-    ...(drawing ? grids.flatMap(grid => { const tag = projectGrid(grid, drawing); return tag ? [tag] : []; }) : []),
-  ], [view?.elementTags, grids, drawing]);
+    ...(drawing ? grids.flatMap(grid => { const tag = projectGrid(grid, drawing, view?.gridExtents?.[grid.id]); return tag ? [tag] : []; }) : []),
+  ], [view?.elementTags, view?.gridExtents, grids, drawing]);
+  const currentTagSelection = selectedTagId;
+  const selected = currentTagSelection !== null && currentTagSelection.viewId === view?.id
+    ? stored.find(tag => tag.id === currentTagSelection.id) : undefined;
+  const selectedTemplate = templates.find(item => item.id === selected?.templateId);
+  const selectedUse = selectedTemplate ? symbolUse(selectedTemplate) : 'ifc';
+  const selectedKind = ANNOTATION_STYLE_KINDS.find(kind => kind === selectedUse);
+  const selectedStyles = annotationStyles?.filter(style => style.kind === selectedKind) ?? [];
+  const selectedStyleLocked = selectedKind ? !!viewTypeIds?.[selectedKind] : false;
+  useEffect(() => { setSelectedTagId(null); }, [view?.id, projectId]);
   useEffect(() => {
     if (!view || !plane || plane.axis !== 'y' || plane.customPlane) return;
     for (const tag of readDrawingTags(view.elementTags)) {
@@ -152,9 +166,16 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     }
     return target ? resolveDrawingTag(draft.tag, target, fields, templates) : null;
   }, [draft, target, fields, templates, previewFree, placing, cursorPoint, draftUse, plane, mode, measuredPoint, label, overrideText, resolveSymbol]);
-  const preview = resolvedDraft && (placing || freeTemplate) && cursor
+  const [dragPreviewTag, setDragPreviewTag] = useState<DrawingElementTag | null>(null);
+  const draggedTarget = dragPreviewTag && !dragPreviewTag.free
+    ? findTagTarget(targets, dragPreviewTag) : undefined;
+  const dragPreview = dragPreviewTag
+    ? dragPreviewTag.free ? resolveSymbol(dragPreviewTag)
+      : draggedTarget ? resolveDrawingTag(dragPreviewTag, draggedTarget, undefined, templates) : null
+    : null;
+  const preview = dragPreview ?? (resolvedDraft && (placing || freeTemplate) && cursor
     ? { ...resolvedDraft, tag: { ...resolvedDraft.tag, position: cursor.point } }
-    : freeTemplate ? null : resolvedDraft;
+    : freeTemplate ? null : resolvedDraft);
 
   useEffect(() => {
     setSession(current => active && current?.viewId === view?.id ? current : null);
@@ -164,16 +185,21 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     setFirstPoint(null);
     setSymbolValue('');
     setOverride(null);
+    setDragPreviewTag(null);
+    dragRef.current = null;
   }, [active, view?.id]);
 
   const screenX = axis === 'side' ? -transform.scale : transform.scale;
   const screenY = axis === 'down' ? transform.scale : -transform.scale;
   const screen = (p: Point2D) => ({ x: p.x * screenX + transform.x, y: p.y * screenY + transform.y });
-  function point(e: MouseEvent): Point2D | null {
+  function clientPoint(clientX: number, clientY: number): Point2D | null {
     const rect = container.current?.getBoundingClientRect();
     if (!rect || transform.scale <= 0) return null;
-    return { x: (e.clientX - rect.left - transform.x) / screenX,
-      y: (e.clientY - rect.top - transform.y) / screenY };
+    return { x: (clientX - rect.left - transform.x) / screenX,
+      y: (clientY - rect.top - transform.y) / screenY };
+  }
+  function point(e: MouseEvent): Point2D | null {
+    return clientPoint(e.clientX, e.clientY);
   }
 
   function save(update: (tags: DrawingElementTag[]) => DrawingElementTag[]): boolean {
@@ -294,20 +320,234 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     return true;
   }
 
-  function choose(tag: DrawingElementTag, mode: 'edit' | 'move' = 'edit') {
+  function choose(tag: DrawingElementTag) {
     if (!view || tool !== 'none') return;
+    useViewerStore.getState().setSelectedAnnotation2D(null);
+    setSelectedTagId({ viewId: view.id, id: tag.id });
+  }
+
+  function editSelected(tag: DrawingElementTag | undefined = selected) {
+    if (!view || !tag) return;
+    setSelectedTagId({ viewId: view.id, id: tag.id });
+    useViewerStore.getState().setSelectedAnnotation2D(null);
+    setSession({ viewId: view.id, tag, mode: 'edit' });
     setTool('tag');
-    setSession({ viewId: view.id, tag, mode });
+  }
+
+  function setSelectedStyle(styleId: string) {
+    if (!selected || selectedStyleLocked) return;
+    const appearanceId = styleId === 'original' ? undefined : styleId;
+    try {
+      const grid = grids.find(item => item.id === selected.id);
+      if (grid) saveProjectGrid({ ...grid, appearanceId });
+      else save(tags => tags.map(tag => tag.id === selected.id ? { ...tag, appearanceId } : tag));
+    } catch (error) { console.warn('Could not change symbol style', error); setFailed(true); }
   }
 
   function change(patch: Partial<Pick<DrawingElementTag, 'field' | 'leader' | 'appearanceId'>>) {
     if (draft) setSession({ ...draft, tag: { ...draft.tag, ...patch } });
   }
 
+  const dragRef = useRef<{ from: Point2D; clientX: number; clientY: number; tag: DrawingElementTag } | null>(null);
+  const resizingRef = useRef<{ tag: DrawingElementTag; endpoint: 'start' | 'end'; clientX: number; clientY: number } | null>(null);
+
+  function saveMovedTag(tag: DrawingElementTag) {
+    if (!plane || !view) return;
+    const original = dragRef.current?.tag ?? selected;
+    if (!original) return;
+    try {
+      const grid = grids.find(item => item.id === tag.id);
+      if (grid && tag.gridStart) {
+        if (plane.axis === 'y' && !plane.customPlane) {
+          const next = gridFromPlan(tag, plane);
+          if (!next) return;
+          saveProjectGrid(next);
+        } else {
+          // A vertical edit translates the shared datum in plan; its height stays view-local.
+          const dx = tag.position.x - original.position.x;
+          const tangent = plane.customPlane?.tangent ?? (plane.axis === 'x'
+            ? { x: 0, y: 0, z: plane.flipped ? -1 : 1 }
+            : { x: plane.flipped ? -1 : 1, y: 0, z: 0 });
+          const move = (p: typeof grid.start) => ({ ...p, x: p.x + tangent.x * dx, z: p.z + tangent.z * dx });
+          saveProjectGrid({ ...grid, start: move(grid.start), end: move(grid.end),
+            name: tag.field, appearanceId: tag.appearanceId });
+        }
+      } else if (!save(tags => tags.map(item => item.id === tag.id ? tag : item))) return;
+      setFailed(false);
+    } catch (error) {
+      console.warn('Could not move drawing symbol', error);
+      setFailed(true);
+    }
+  }
+
+  const dragFrame = useRef<number | null>(null);
+  const pendingDrag = useRef<{ x: number; y: number } | null>(null);
+
+  function beginEditDrag(clientX: number, clientY: number) {
+    const from = clientPoint(clientX, clientY);
+    if (tool !== 'none' || !selected || !from) return false;
+    dragRef.current = { from, clientX, clientY, tag: selected };
+    return true;
+  }
+
+  function dragEditedSymbol(clientX: number, clientY: number, finish = false) {
+    if (!dragRef.current) return;
+    if (!finish) {
+      pendingDrag.current = { x: clientX, y: clientY };
+      if (dragFrame.current === null) dragFrame.current = requestAnimationFrame(() => {
+        dragFrame.current = null;
+        const pending = pendingDrag.current;
+        pendingDrag.current = null;
+        if (pending) computeEditedSymbolDrag(pending.x, pending.y, false);
+      });
+      return;
+    }
+    if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+    dragFrame.current = null;
+    pendingDrag.current = null;
+    computeEditedSymbolDrag(clientX, clientY, true);
+  }
+
+  function computeEditedSymbolDrag(clientX: number, clientY: number, finish: boolean) {
+    const drag = dragRef.current;
+    const to = clientPoint(clientX, clientY);
+    if (!drag || !to || tool !== 'none' || selected?.id !== drag.tag.id) return;
+    if (Math.hypot(clientX - drag.clientX, clientY - drag.clientY) < 4) {
+      if (finish) cancelEditDrag();
+      return;
+    }
+    let delta = { x: to.x - drag.from.x, y: to.y - drag.from.y };
+    const candidate = { x: drag.tag.position.x + delta.x, y: drag.tag.position.y + delta.y };
+    const reference = findSnapPoint(candidate);
+    const anchor = drag.tag.position;
+    const directed = resolveDirection(anchor, candidate, reference, false);
+    const final = directed ?? reference ?? candidate;
+    delta = { x: final.x - anchor.x, y: final.y - anchor.y };
+    if (drag.tag.gridStart && plane?.axis !== 'y') delta.y = 0;
+    const translate = (p: Point2D) => ({ x: p.x + delta.x, y: p.y + delta.y });
+    const next = { ...drag.tag, position: translate(drag.tag.position),
+      ...(drag.tag.gridStart && { gridStart: translate(drag.tag.gridStart) }),
+      ...(!drag.tag.free && { anchorOffset: translate(drag.tag.anchorOffset) }) };
+    if (!finish) {
+      setCursor({ point: next.position, reference: reference ?? (directed && angularSnap !== 'off' ? final : null) });
+      setDragPreviewTag(next);
+    } else {
+      saveMovedTag(next);
+      dragRef.current = null;
+      setDragPreviewTag(null);
+      setCursor(null);
+    }
+  }
+
+  function cancelEditDrag() {
+    if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+    dragFrame.current = null;
+    pendingDrag.current = null;
+    dragRef.current = null;
+    setCursor(null);
+    setDragPreviewTag(null);
+  }
+
+  const resizeFrame = useRef<number | null>(null);
+  const pendingResize = useRef<{ endpoint: 'start' | 'end'; x: number; y: number; shiftKey: boolean } | null>(null);
+  useEffect(() => () => {
+    if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+    if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
+  }, []);
+
+  function beginGridResize(endpoint: 'start' | 'end', clientX: number, clientY: number) {
+    if (draft?.mode !== 'edit' || !draft.tag.gridStart) return;
+    resizingRef.current = { tag: draft.tag, endpoint, clientX, clientY };
+  }
+
+  function resizeGridEndpoint(endpoint: 'start' | 'end', clientX: number, clientY: number, finish: boolean, shiftKey = false) {
+    if (!resizingRef.current) return;
+    if (!finish) {
+      pendingResize.current = { endpoint, x: clientX, y: clientY, shiftKey };
+      if (resizeFrame.current === null) resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = null;
+        const pending = pendingResize.current;
+        pendingResize.current = null;
+        if (pending) computeGridResize(pending.endpoint, pending.x, pending.y, false, pending.shiftKey);
+      });
+      return;
+    }
+    if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
+    resizeFrame.current = null;
+    pendingResize.current = null;
+    computeGridResize(endpoint, clientX, clientY, true, shiftKey);
+  }
+
+  function computeGridResize(endpoint: 'start' | 'end', clientX: number, clientY: number, finish: boolean, shiftKey: boolean) {
+    if (!draft || draft.mode !== 'edit' || draftUse !== 'grid' || !draft.tag.gridStart || !plane) return;
+    const position = clientPoint(clientX, clientY);
+    if (!position) return;
+    const resize = resizingRef.current;
+    if (!resize || resize.endpoint !== endpoint) return;
+    if (Math.hypot(clientX - resize.clientX, clientY - resize.clientY) < 4) {
+      if (finish) { resizingRef.current = null; setCursor(null); }
+      return;
+    }
+    const snapped = findSnapPoint(position);
+    const anchor = endpoint === 'start' ? resize.tag.position : resize.tag.gridStart!;
+    // The opposite end is the angle-lock reference; object snaps win only when
+    // they lie on the active angular direction. Vertical grids stay vertical.
+    const angled = resolveDirection(anchor, position, snapped, shiftKey);
+    const adjusted = angled ?? snapped ?? position;
+    const constrained = plane.axis === 'y' && !plane.customPlane
+      ? adjusted : { x: resize.tag.position.x, y: adjusted.y };
+    const indicated = snapped || (angled && angularSnap !== 'off') ? constrained : null;
+    const change = endpoint === 'start' ? { gridStart: constrained } : { position: constrained };
+    const next = { ...draft.tag, ...change };
+    if (!finish) {
+      setCursor({ point: constrained, reference: indicated });
+      setSession(current => current?.viewId === draft.viewId && current.tag.id === draft.tag.id
+        ? { ...current, tag: { ...current.tag, ...change } } : current);
+      return;
+    }
+    const original = resize.tag;
+    resizingRef.current = null;
+    setCursor(null);
+    try {
+      if (plane.axis === 'y' && !plane.customPlane) {
+        const grid = gridFromPlan(next, plane);
+        if (!grid) throw new Error('Invalid plan grid');
+        saveProjectGrid(grid);
+      } else {
+        if (!view) return;
+        const bottom = next.gridStart?.y;
+        if (bottom === undefined || next.position.y - bottom <= 1e-8) throw new Error('Grid extents must not cross');
+        saveGridViewExtents(view.id, next.id, { start: bottom, end: next.position.y });
+      }
+      setFailed(false);
+      setSession({ ...draft, tag: next });
+    } catch (error) {
+      console.warn('Could not resize grid', error);
+      setFailed(true);
+      setSession({ ...draft, tag: original });
+    }
+  }
+
+  function cancelGridResize() {
+    if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
+    resizeFrame.current = null;
+    pendingResize.current = null;
+    const original = resizingRef.current?.tag ?? stored.find(tag => tag.id === draft?.tag.id);
+    resizingRef.current = null;
+    setCursor(null);
+    if (original) setSession(current => current ? { ...current, tag: original } : current);
+  }
+
   return {
     gridStyles: annotationStyles?.filter(style => style.kind === 'grid') ?? [],
     gridStyleLocked: !!viewTypeIds?.grid,
     gridStyleId: viewTypeIds?.grid,
+    canResizeGrid: draft?.mode === 'edit' && draftUse === 'grid' && !!draft.tag.gridStart,
+    resizeGridEndpoint, beginGridResize, cancelGridResize, beginEditDrag, dragEditedSymbol, cancelEditDrag,
+    selected, selectedUse, selectedKind, selectedStyles, selectedStyleLocked,
+    draggingSelectedTag: dragPreviewTag?.id ?? null,
+    selectedStyleId: (selectedKind && viewTypeIds?.[selectedKind]) ?? selected?.appearanceId ?? 'original',
+    editSelected, setSelectedStyle, clearSelection() { setSelectedTagId(null); },
     template, draftUse, placingFree: !!freeTemplate, use, firstPoint, symbolValue, mode, overrideText, modelLabel,
     setOverride(value: string) { setOverride(value); setMiss(false); },
     setSymbolValue(value: string) { setSymbolValue(value); setMiss(false); },
@@ -335,7 +575,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       catch (error) { console.warn('Could not delete grid', error); setFailed(true); }
     },
     canPlace: !!view && !!drawing,
-    snapReference: placing || freeTemplate ? cursor?.reference : null,
+    snapReference: placing || freeTemplate || !!dragRef.current || !!resizingRef.current ? cursor?.reference : null,
     fontSize: Math.max(11, 2.5 * transform.scale * (scale || 100) / 1000),
     click,
     move(e: MouseEvent) { if (!active) return false; if (placing || freeTemplate) setCursor(placementPoint(e)); return true; },

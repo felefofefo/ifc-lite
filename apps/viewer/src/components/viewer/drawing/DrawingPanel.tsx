@@ -23,7 +23,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, FileSearch, Magnet, PanelLeft, RefreshCw, Video } from 'lucide-react';
+import { Box, ChevronDown, FileSearch, Magnet, PanelLeft, RefreshCw, Video } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -211,8 +211,14 @@ export function DrawingPanel(): React.ReactElement {
         <PanelLeft className="h-3.5 w-3.5" />
         {tier !== 'narrow' && t('section2d.views.title')}
       </Button>
-      <DrawingHeaderToggle icon={Magnet} compact={tier === 'narrow'} label={t('section2d.snaps.title')}
-        onClick={() => setSnapsOpen(true)} />
+      <div className="inline-flex items-center gap-0.5">
+        <DrawingHeaderToggle icon={Magnet} compact={tier === 'narrow'} label={t('section2d.snaps.title')}
+          pressed={vm.snapsEnabled} onClick={vm.toggleSnaps} />
+        <Button type="button" size="icon-xs" variant="ghost" title={t('section2d.snaps.title')}
+          aria-label={t('section2d.snaps.title')} onClick={() => setSnapsOpen(true)}>
+          <ChevronDown className="size-3" />
+        </Button>
+      </div>
       {!selected3D && <DrawingHeaderToggle icon={FileSearch} compact={tier === 'narrow'} label={t('section2d.display.printPreview')}
         pressed={displayOptions.showPrintPreview} onClick={vm.togglePrintPreview} />}
       <DrawingExportMenu
@@ -272,6 +278,14 @@ export function DrawingPanel(): React.ReactElement {
         tier={tier}
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
         onOpenTags={() => setTagLibraryOpen(true)}
+        canEdit={vm.canEdit} canCopy={vm.canCopy} canDelete={vm.canDelete} canCut={vm.canCut} canPaste={vm.canPaste}
+        onMove={vm.startMove} onCopy={vm.copySelection} onCut={vm.cutSelection} onPaste={vm.pasteSelection}
+        onDelete={async () => {
+          const selected = vm.tags.selected ?? (vm.tags.draft?.mode === 'edit' ? vm.tags.draft.tag : undefined);
+          if (selected && useSavedSectionCuts.getState().grids.some(grid => grid.id === selected.id)
+            && !await confirmDialog({ description: t('section2d.grid.deleteEverywhere'), destructive: true })) return;
+          vm.deleteSelection();
+        }}
         dimensionType={vm.dimensionType} onSelectDimensionType={vm.selectDimensionType}
         selectHint={t(navigationPreset === 'trackpad' ? 'section2d.tip.trackpad' : 'section2d.tip.pan')}
         hasMarkup={vm.hasMarkup} onClearMarkup={async () => {
@@ -311,6 +325,7 @@ export function DrawingPanel(): React.ReactElement {
 
       {!selected3D && <DrawingStatusLine
         activeTool={vm.annotation2DActiveTool}
+        moveBase={!!vm.moveBase}
         dimensionType={vm.dimensionType}
         dimensionPointCount={vm.dimensionDraft.points.length}
         placingDimension={vm.dimensionDraft.placing}

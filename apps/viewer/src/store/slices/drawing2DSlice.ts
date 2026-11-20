@@ -28,7 +28,7 @@ export type Drawing2DStatus = 'idle' | 'generating' | 'ready' | 'error';
 export type DrawnSectionPlane = Pick<SectionPlane, 'axis' | 'position' | 'flipped' | 'custom'> & Partial<Pick<SectionPlane, 'id'>>;
 
 /** Active 2D annotation tool */
-export type Annotation2DTool = 'none' | 'measure' | 'polygon-area' | 'text' | 'cloud' | 'tag';
+export type Annotation2DTool = 'none' | 'move' | 'measure' | 'polygon-area' | 'text' | 'cloud' | 'tag';
 
 /** Point in 2D drawing coordinates */
 export interface Point2D {

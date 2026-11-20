@@ -60,7 +60,7 @@ it('records points only on click, collects a third point, and previews before pl
   press(window, 'Escape');
   assert.equal(canvas.textContent, 'offset');
   mouse(canvas, 'mousemove', 40, 100);
-  assert.deepEqual(placed, []);
+  assert.equal(placed.length, 0);
   mouse(canvas, 'click', 52, 130);
   assert.equal(placed.length, 1);
   assert.deepEqual(placed[0].map(segment => segment.distance), [3, 2]);

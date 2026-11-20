@@ -230,6 +230,7 @@ interface UseDrawingExportParams {
   drawing: Drawing2D | null;
   displayOptions: {
     showHiddenLines: boolean;
+    showAnnotations?: boolean;
     distantElements?: DistantElements;
     showHatching?: boolean;
     scale: number;

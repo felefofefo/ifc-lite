@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 
 export interface DrawingStatusLineProps {
   activeTool: Annotation2DTool;
+  moveBase?: boolean;
   dimensionType?: DimensionType;
   dimensionPointCount: number;
   placingDimension: boolean;
@@ -40,6 +41,9 @@ export function DrawingStatusLine(p: DrawingStatusLineProps) {
 
   let hint: string;
   switch (p.activeTool) {
+    case 'move':
+      hint = t(p.moveBase ? 'section2d.tools.moveTarget' : 'section2d.tools.moveBase');
+      break;
     case 'measure':
       if (p.dimensionType && isCurvedDimension(p.dimensionType)) {
         hint = p.placingDimension ? t(p.dimensionType === 'angular'
