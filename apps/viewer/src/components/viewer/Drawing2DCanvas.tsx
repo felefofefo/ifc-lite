@@ -1324,7 +1324,7 @@ export function Drawing2DCanvas({
       }
     }
 
-    if (measureMode && measureSnapPoint) {
+    if ((measureMode || annotation2DActiveTool === 'polygon-area') && measureSnapPoint) {
       const screenSnap = markupToScreen(measureSnapPoint);
       // Draw snap crosshair
       ctx.strokeStyle = '#4CAF50';

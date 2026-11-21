@@ -76,3 +76,24 @@ it('cancels when Escape is pressed before the second point', () => {
   assert.equal(cancels, 1);
   assert.equal(canvas.textContent, '0');
 });
+
+function RoomSnapProbe({ enabled }: { enabled: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { findSnapPoint } = useMeasure2D({
+    drawing, viewTransform: { x: 0, y: 0, scale: 50 }, setViewTransform: noop,
+    sectionAxis: 'down', containerRef, measure2DMode: false, dimensionType: 'aligned',
+    setMeasure2DSnapPoint: noop, onCancel: noop, onPlace: noop,
+    objectSnaps: { endpoint: enabled, midpoint: false, intersection: false, nearest: enabled },
+    extraSnapContours: [[{ x: 9, y: 9 }, { x: 11, y: 9 }, { x: 11, y: 11 }, { x: 9, y: 11 }]],
+  });
+  const snap = findSnapPoint({ x: 9.04, y: 10 });
+  return <output>{snap ? `${snap.x},${snap.y}` : 'none'}</output>;
+}
+
+it('snaps to visible IFC room outlines using the existing Object Snap switches', () => {
+  const withSnaps = render(<RoomSnapProbe enabled />);
+  assert.equal(withSnaps.textContent, '9,10');
+  cleanup();
+  const withoutSnaps = render(<RoomSnapProbe enabled={false} />);
+  assert.equal(withoutSnaps.textContent, 'none');
+});

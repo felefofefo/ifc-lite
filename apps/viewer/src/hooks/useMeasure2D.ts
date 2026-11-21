@@ -28,6 +28,8 @@ interface UseMeasure2DParams {
   drawing: Drawing2D | null;
   drawingKey?: string;
   objectSnaps?: DrawingObjectSnaps;
+  /** Visible extra geometry, e.g. read-only IFC room boundaries. */
+  extraSnapContours?: readonly (readonly Point2D[])[];
   viewTransform: { x: number; y: number; scale: number };
   setViewTransform: React.Dispatch<React.SetStateAction<{ x: number; y: number; scale: number }>>;
   sectionAxis: 'down' | 'front' | 'side';
@@ -42,7 +44,7 @@ interface UseMeasure2DParams {
 }
 
 export function useMeasure2D({
-  drawing, drawingKey, objectSnaps = DEFAULT_OBJECT_SNAPS, viewTransform, setViewTransform, sectionAxis, containerRef,
+  drawing, drawingKey, objectSnaps = DEFAULT_OBJECT_SNAPS, extraSnapContours, viewTransform, setViewTransform, sectionAxis, containerRef,
   measure2DMode, dimensionType, angularSnap = 'off', showHiddenLines, setMeasure2DSnapPoint, onCancel, onPlace,
 }: UseMeasure2DParams) {
   const pan = useRef<Point2D | null>(null);
@@ -135,6 +137,10 @@ export function useMeasure2D({
       if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
       consider(line.line.start, line.line.end);
     }
+    for (const ring of extraSnapContours ?? []) {
+      if (ring.length < 2) continue;
+      for (let i = 0; i < ring.length; i++) consider(ring[i], ring[(i + 1) % ring.length]);
+    }
     const candidates = nearby.sort((a, b) => a.dist - b.dist).slice(0, 64);
     for (let i = 0; i < candidates.length; i++) {
       const { a, b } = candidates[i];
@@ -144,7 +150,7 @@ export function useMeasure2D({
       }
     }
     return bestFixed ?? bestNearest;
-  }, [drawing, showHiddenLines, viewTransform.scale, nearestPointOnSegment, objectSnaps]);
+  }, [drawing, showHiddenLines, viewTransform.scale, nearestPointOnSegment, objectSnaps, extraSnapContours]);
 
 
   useEffect(() => {

@@ -216,6 +216,11 @@ export function useDrawingViewModel() {
     return readIfcSpaceRooms(selectModelMeshes(geometryResult.meshes), drawing.config.plane,
       createMeshOutlineProvider(outlineFn));
   }, [drawing?.config.plane, geometryResult]);
+  const roomSnapContours = useMemo(() =>
+    status === 'ready' && displayOptions.showAnnotations
+      && savedView?.annotationOptions?.visibility?.roomBoundaries === true
+      ? ifcSpaceRooms.flatMap(room => room.contours) : [],
+    [status, displayOptions.showAnnotations, savedView?.annotationOptions?.visibility?.roomBoundaries, ifcSpaceRooms]);
   const hasReferences = hasRasterReferences || dxfUnderlayData.some(r=>r.lines.length>0 || r.fills.length>0 || r.texts.length>0);
   // The references' own extent, which Fit always frames (#8802).
   const referenceBounds = useMemo(() => referenceOnlyBounds(sourceDrawing, referenceCorners, dxfUnderlayData), [sourceDrawing, referenceCorners, dxfUnderlayData]);
@@ -276,7 +281,7 @@ export function useDrawingViewModel() {
 
   const finishDimension = useCallback(() => setAnnotation2DActiveTool('none'), [setAnnotation2DActiveTool]);
   const measureHandlers = useMeasure2D({
-    objectSnaps,
+    objectSnaps, extraSnapContours: roomSnapContours,
     drawing: status === 'ready' && viewKey ? drawing : null,
     drawingKey: viewKey ?? undefined,
     viewTransform: markupTransform, setViewTransform, sectionAxis: drawnPlane.axis, containerRef,
