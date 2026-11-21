@@ -177,6 +177,8 @@ export function useAnnotation2D({
   // ── Snap point detection ──────────────────────────────────────────────
 
   const findSnapPoint = useCallback((drawingCoord: Point2D): Point2D | null => {
+    // Respect shared Object Snap switches; preserve fallback for isolated hook uses.
+    if (snapForDrag) return snapForDrag(drawingCoord);
     if (!drawing) return null;
     const snapThreshold = 10 / scaleRef.current;
     let bestSnap: Point2D | null = null;
@@ -222,7 +224,7 @@ export function useAnnotation2D({
     }
 
     return bestSnap;
-  }, [drawing]); // only recreated when the drawing changes
+  }, [drawing, snapForDrag]);
 
   // ── Hit-testing for annotation selection ──────────────────────────────
 
@@ -317,7 +319,7 @@ export function useAnnotation2D({
 
       switch (activeTool) {
         case 'polygon-area': {
-          if (shiftHeldRef.current && polygonArea2DPoints.length > 0) {
+          if (!snapPoint && shiftHeldRef.current && polygonArea2DPoints.length > 0) {
             point = applyShiftConstraint(polygonArea2DPoints[polygonArea2DPoints.length - 1], point);
           }
           if (isNearFirstVertex(point)) {
@@ -342,7 +344,7 @@ export function useAnnotation2D({
           return true;
         }
         case 'cloud': {
-          if (shiftHeldRef.current && cloudAnnotation2DPoints.length === 1) {
+          if (!snapPoint && shiftHeldRef.current && cloudAnnotation2DPoints.length === 1) {
             const firstPt = cloudAnnotation2DPoints[0];
             const dx = point.x - firstPt.x;
             const dy = point.y - firstPt.y;
@@ -423,10 +425,10 @@ export function useAnnotation2D({
     setMeasure2DSnapPoint(snapPoint);
     let point = snapPoint || drawingCoord;
 
-    if (shiftHeldRef.current && activeTool === 'polygon-area' && polygonArea2DPoints.length > 0) {
+    if (!snapPoint && shiftHeldRef.current && activeTool === 'polygon-area' && polygonArea2DPoints.length > 0) {
       point = applyShiftConstraint(polygonArea2DPoints[polygonArea2DPoints.length - 1], point);
     }
-    if (shiftHeldRef.current && activeTool === 'cloud' && cloudAnnotation2DPoints.length === 1) {
+    if (!snapPoint && shiftHeldRef.current && activeTool === 'cloud' && cloudAnnotation2DPoints.length === 1) {
       const firstPt = cloudAnnotation2DPoints[0];
       const dx = point.x - firstPt.x;
       const dy = point.y - firstPt.y;

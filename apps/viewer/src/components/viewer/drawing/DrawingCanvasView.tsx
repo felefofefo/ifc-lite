@@ -117,6 +117,17 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         />
       )}
 
+      {status === 'ready' && displayOptions.showAnnotations
+        && vm.savedView?.annotationOptions?.visibility?.roomBoundaries === true
+        && vm.ifcSpaceRooms.length > 0 && <svg aria-label={t('section2d.viewOptions.roomBoundaries')}
+          className="pointer-events-none absolute inset-0 h-full w-full text-muted-foreground"
+          fill="none" stroke="currentColor" strokeWidth={1} strokeDasharray="5 3" opacity={0.65}>
+          {vm.ifcSpaceRooms.flatMap(room => room.contours.map((ring, index) =>
+            <path key={room.id + ':' + index} d={ring.map((point, i) =>
+              (i === 0 ? 'M' : 'L') + (point.x * markupTransform.scale + markupTransform.x)
+              + ' ' + (point.y * markupTransform.scale + markupTransform.y)).join(' ') + ' Z'} />
+          ))}
+        </svg>}
       {status === 'ready' && selection.overlay}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'cloud'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'

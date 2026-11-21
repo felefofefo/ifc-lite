@@ -472,7 +472,8 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
   function row(group: string, label: string, styleId?: string) {
     const key = styleId ? `${group}:${styleId}` : group;
     return <DrawingSettingSwitch key={key} label={label}
-      checked={styleId ? options.visibility[key] !== false : drawingAnnotationVisible(view, group)}
+      checked={group === 'roomBoundaries' ? options.visibility.roomBoundaries === true
+        : styleId ? options.visibility[key] !== false : drawingAnnotationVisible(view, group)}
       onCheckedChange={checked => save({ ...options, visibility: { ...options.visibility, [key]: checked } })} />;
   }
   function group(key: string, label: string, styles: readonly { id: string; name: string }[] = [],
@@ -519,6 +520,7 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
   }
   const dimensions = vm.dimensionSettings.library.types;
   return <div className="space-y-1 py-2 text-xs">
+    {savedViewKind(view) === 'plan' && <div className="border-b px-3">{row('roomBoundaries', t('section2d.viewOptions.roomBoundaries'))}</div>}
     {group('dimensions', t('section2d.dimensionStyle.title'), dimensions, 'dimensions',
       dimensions.filter(style => vm.measure2DResults.some(item => item.dimension?.styleId === style.id)))}
     {savedViewKind(view) === 'plan' && (['section', 'elevation'] as const).map(kind => {

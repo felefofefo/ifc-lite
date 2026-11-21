@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { effectiveMetadataRecord, extractPropertiesOnDemand } from '@ifc-lite/parser';
+import { effectiveMetadataRecord, extractPropertiesOnDemand, extractQuantitiesOnDemand } from '@ifc-lite/parser';
 import type { Drawing2D, DXFExportOptions, Point2D } from '@ifc-lite/drawing-2d';
 import type { jsPDF } from 'jspdf';
 import { resolveEntityRef, useViewerStore } from '@/store';
@@ -12,6 +12,7 @@ import { drawingTagClass, isPlacedSymbol, symbolUse, type SymbolUse, type TagCla
 import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle } from './annotation-types';
 import type { LineweightRow } from './lineweight-table';
 import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import type { DrawingIfcSpaceRoom } from './ifc-space-rooms';
 
 export interface DrawingElementTag {
   id: string;
@@ -104,7 +105,7 @@ const dataFor = (ref: EntityRef) => {
     mutations: state.mutationViews.get(ref.modelId === 'legacy' ? '__legacy__' : ref.modelId) };
 };
 
-export function collectTagTargets(drawing: Drawing2D, showHidden: boolean): TagTarget[] {
+export function collectTagTargets(drawing: Drawing2D, showHidden: boolean, rooms: readonly DrawingIfcSpaceRoom[] = []): TagTarget[] {
   const geometry = new Map<number, { ifcClass: TagClass; segments: Segment[]; polygons: Polygon[] }>();
   function entry(id: number, ifcClass: TagClass) {
     const existing = geometry.get(id);
@@ -122,6 +123,11 @@ export function collectTagTargets(drawing: Drawing2D, showHidden: boolean): TagT
     if (ifcClass && (showHidden || (line.visibility !== 'hidden' && line.category !== 'hidden'))) {
       entry(line.entityId, ifcClass).segments.push([line.line.start, line.line.end]);
     }
+  }
+  // IFC spaces may be hidden from the architectural cut but remain taggable.
+  for (const room of rooms) {
+    const target = entry(room.id, 'IfcSpace');
+    if (!target.polygons.length) target.polygons.push(...room.polygons);
   }
   return Array.from(geometry, ([id, shape]): TagTarget | null => {
     const ref = resolveEntityRef(id);
@@ -199,6 +205,8 @@ export function tagFields(target: TagTarget, svgValues?: Map<string, string>): {
   const fields = [
     { key: 'mark', label: 'Mark', value: attr('Tag') || text(mark?.value) },
     { key: 'name', label: 'Name', value: attr('Name') },
+    ...(record.type.toLowerCase() === 'ifcspace'
+      ? [{ key: 'long-name', label: 'Long name', value: attr('LongName') }] : []),
     { key: 'object-type', label: 'Object type', value: attr('ObjectType') },
     { key: 'class', label: 'IFC class', value: record.type },
   ];
@@ -219,6 +227,18 @@ export function tagFields(target: TagTarget, svgValues?: Map<string, string>): {
     seen.add(key);
     fields.push({ key, label: set.name + ' / ' + prop.name, value });
     svgValues?.set(set.name + '.' + prop.name, value);
+  }
+  // Display original IFC quantities, without inventing a calculated room area.
+  if (record.type.toLowerCase() === 'ifcspace') {
+    for (const set of extractQuantitiesOnDemand(data, id)) {
+      for (const quantity of set.quantities) {
+        if (!Number.isFinite(quantity.value)) continue;
+        const value = String(quantity.value);
+        fields.push({ key: JSON.stringify([set.name, quantity.name]), label: set.name + ' / ' + quantity.name, value });
+        svgValues?.set(set.name + '.' + quantity.name, value);
+        if (quantity.name === 'NetFloorArea') svgValues?.set('NetFloorArea', value);
+      }
+    }
   }
   return fields.filter(field => field.value);
 }

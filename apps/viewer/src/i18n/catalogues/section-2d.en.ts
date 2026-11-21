@@ -262,6 +262,7 @@ export const section2dEn = {
   'section2d.drawers.scan': 'Scan',
   'section2d.drawers.activeTip': '{label} · in use',
   'section2d.viewOptions.title': 'View Options',
+  'section2d.viewOptions.roomBoundaries': 'IFC room boundaries',
   'section2d.viewOptions.classes': 'Classes and types',
   'section2d.templateManager.manage': 'Manage',
   'section2d.templateManager.assignViews': 'Assign views',

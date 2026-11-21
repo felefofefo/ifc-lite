@@ -13,6 +13,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { GraphicOverrideEngine, suppressCutJoints, suppressDrawingCutJoints } from '@ifc-lite/drawing-2d';
 import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
+import * as IfcWasm from '@ifc-lite/wasm';
+import { createMeshOutlineProvider, type MeshOutline2dFn } from '@/hooks/meshOutlineProvider';
+import { selectModelMeshes } from '@/lib/type-view-visibility';
+import { readIfcSpaceRooms } from '@/lib/drawing/ifc-space-rooms';
 import { useViewerStore } from '@/store';
 import { selectActiveSavedView, setDrawingProjectionDisplay, saveProjectGrid, editSavedViewTrace, updateViewSettings, removeSavedSectionCut, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { toast } from '@/components/ui/toast';
@@ -206,6 +210,12 @@ export function useDrawingViewModel() {
     const result = drawingWithDxfBounds(rasterDrawing, dxfUnderlayData, hasRasterReferences);
     return applyDistantZone(result, displayOptions.distantElements);
   }, [rasterDrawing, dxfUnderlayData, hasRasterReferences, drawnPlane.axis, displayOptions.distantElements]);
+  const ifcSpaceRooms = useMemo(() => {
+    const outlineFn = (IfcWasm as unknown as { meshOutline2d?: MeshOutline2dFn }).meshOutline2d;
+    if (!drawing || !geometryResult?.meshes || typeof outlineFn !== 'function') return [];
+    return readIfcSpaceRooms(selectModelMeshes(geometryResult.meshes), drawing.config.plane,
+      createMeshOutlineProvider(outlineFn));
+  }, [drawing?.config.plane, geometryResult]);
   const hasReferences = hasRasterReferences || dxfUnderlayData.some(r=>r.lines.length>0 || r.fills.length>0 || r.texts.length>0);
   // The references' own extent, which Fit always frames (#8802).
   const referenceBounds = useMemo(() => referenceOnlyBounds(sourceDrawing, referenceCorners, dxfUnderlayData), [sourceDrawing, referenceCorners, dxfUnderlayData]);
@@ -281,7 +291,7 @@ export function useDrawingViewModel() {
     transform: markupTransform, axis: drawnPlane.axis, container: containerRef,
     tool: annotation2DActiveTool, setTool: setAnnotation2DActiveTool,
     showHidden: displayOptions.showHiddenLines, scale: publicationScale,
-    findSnapPoint: measureHandlers.findSnapPoint, angularSnap, lineweights,
+    findSnapPoint: measureHandlers.findSnapPoint, angularSnap, lineweights, roomContours: ifcSpaceRooms,
   });
 
   const annotationHandlers = useAnnotation2D({
@@ -589,7 +599,7 @@ export function useDrawingViewModel() {
         case 'tag': {
           if (!savedView) return;
           const item = pasted.item;
-          if (!item.free && !findTagTarget(collectTagTargets(drawing, displayOptions.showHiddenLines), item)) {
+          if (!item.free && !findTagTarget(collectTagTargets(drawing, displayOptions.showHiddenLines, ifcSpaceRooms), item)) {
             toast.error(t('section2d.tools.pasteMissingTarget')); return;
           }
           const current = useSavedSectionCuts.getState().cuts.find(cut => cut.id === savedView.id);
@@ -803,7 +813,7 @@ export function useDrawingViewModel() {
 
   return {
     runtime, geometryResult, models,
-    drawing, sourceDrawing, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
+    drawing, sourceDrawing, ifcSpaceRooms, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
     displayOptions, unitDisplayOverrides, typeVisibility,
     activePresetId, overridesEnabled, overrideEngine, entityColorMap,
     lineweights, lineweightSettings, materialSettings, dimensionSettings, dimensionEditing: dimensions, publicationScale, saved3D, savedView, drawingPlaneId,

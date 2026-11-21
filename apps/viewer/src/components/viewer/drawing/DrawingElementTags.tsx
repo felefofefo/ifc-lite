@@ -13,6 +13,7 @@ import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirecti
 import { useViewerStore } from '@/store';
 import { saveProjectGrid, saveGridViewExtents, promoteProjectGrid, drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
+import type { DrawingIfcSpaceRoom } from '@/lib/drawing/ifc-space-rooms';
 import { collectTagTargets, drawingHeight, findTagTarget, measureDrawingSymbol, measurementLabel, pickTagTarget, readDrawingTags, resolveDrawingTag, resolveFreeSymbol, tagFields,
   type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 
@@ -35,7 +36,7 @@ function freeSymbol(id: string, templateId: string, position: Point2D): DrawingE
 }
 
 
-export function useDrawingTags({ view, drawing, transform, axis, container, tool, setTool, showHidden, scale, findSnapPoint, angularSnap, lineweights }: {
+export function useDrawingTags({ view, drawing, transform, axis, container, tool, setTool, showHidden, scale, findSnapPoint, angularSnap, lineweights, roomContours = [] }: {
   view: SavedSectionCut | undefined;
   drawing: Drawing2D | null;
   transform: Transform;
@@ -47,6 +48,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   scale: number;
   angularSnap: AngularSnap;
   lineweights: LineweightRow;
+  roomContours?: readonly DrawingIfcSpaceRoom[];
   findSnapPoint: (point: Point2D) => Point2D | null;
 }) {
   const active = tool === 'tag';
@@ -139,7 +141,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     }
   }, [view?.id, view?.elementTags, plane]);
   const targets = useMemo(() => drawing && view && (active || stored.length)
-    ? collectTagTargets(drawing, showHidden) : [], [drawing, view?.id, active, stored.length, showHidden, models, mutationVersion]);
+    ? collectTagTargets(drawing, showHidden, roomContours) : [], [drawing, view?.id, active, stored.length, showHidden, roomContours, models, mutationVersion]);
   const pickIndex = useMemo(() => drawing ? createDrawingModelIndex(drawing, showHidden) : undefined, [drawing, showHidden]);
   const items = useMemo(() => stored.flatMap(tag => {
     if (tag.free) {
