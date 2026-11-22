@@ -123,6 +123,22 @@ export function DrawingAnnotationStyles() {
                 onChange={event => change({ textHeight: event.target.value ? event.target.valueAsNumber : undefined })} />
             </label>
             </>}
+             {kind === 'text' && <div className="grid gap-2 sm:col-span-2">
+               <div className="flex flex-wrap gap-4 text-sm">
+                 <label className="inline-flex items-center gap-2"><input type="checkbox" checked={style.bold === true}
+                   onChange={event => change({ bold:event.target.checked })} />Bold</label>
+                 <label className="inline-flex items-center gap-2"><input type="checkbox" checked={style.italic === true}
+                   onChange={event => change({ italic:event.target.checked })} />Italic</label>
+               </div>
+               <label className="grid gap-1 text-sm">Alignment
+                 <Select value={style.align ?? 'left'} onValueChange={align => change({ align: align as 'left'|'center'|'right' })}>
+                   <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+                     <SelectItem value="left">Left</SelectItem><SelectItem value="center">Center</SelectItem>
+                     <SelectItem value="right">Right</SelectItem>
+                   </SelectContent>
+                 </Select>
+               </label>
+             </div>}
             {hasUnits && <>
               <div className="grid gap-1 text-sm">
                 <label htmlFor="annotation-type-unit">{t('section2d.annotationStyles.unit')}</label>

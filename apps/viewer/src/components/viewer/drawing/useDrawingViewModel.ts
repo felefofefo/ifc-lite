@@ -31,6 +31,7 @@ import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { cloneClipboardPayload, sameDrawingCoordinates, snapshotAnnotation, type DrawingClipboardPayload, type DrawingEditClipboard } from '@/lib/drawing/drawing-edit-clipboard';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
+import { temporaryDimensionViewKey } from '@/lib/drawing/dimension-view';
 import { transferViewMarkup } from '@/lib/drawing/dimension-view';
 import { useViewDimensions } from './useViewDimensions';
 import type { DimensionType } from '@/lib/drawing/dimension-line';
@@ -51,6 +52,7 @@ import { useDrawingMaterials } from '@/hooks/useDrawingMaterials';
 import { useDrawingCutJointMaterial } from '@/hooks/useDrawingCutJoints';
 import { applyDistantZone } from '@/lib/drawing/distant-elements';
 import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
+import { editedPolygonAreaVertex } from '@/components/viewer/tools/computePolygonArea';
 import { annotationAppearance } from '@/lib/drawing/annotation-types';
 import { lineweightsAtScale } from '@/lib/drawing/lineweight-table';
 import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
@@ -184,6 +186,10 @@ export function useDrawingViewModel() {
   const sectionPlane = useViewerStore((s) => s.sectionPlane);
   // Everything drawn with or exported from the drawing follows the cut it was generated at.
   const drawnPlane = useViewerStore(drawnSectionPlane);
+  const temporaryKey = temporaryDimensionViewKey(drawnPlane);
+  const temporaryOptions = useSavedSectionCuts(state => state.temporaryOptions[temporaryKey]);
+  const viewAnnotationOptions = savedView?.annotationOptions ?? temporaryOptions?.annotationOptions;
+  const annotationView = savedView ?? (viewAnnotationOptions ? { annotationOptions: viewAnnotationOptions } : undefined);
   const dimensions = useViewDimensions(drawnPlane, sectionPlane.id, saved3D ? undefined : savedView?.id, drawingPlaneId, dimensionSettings.library.defaultId);
   const { viewKey, measure2DResults } = dimensions;
   const polygonArea2DResults = useMemo(() => allPolygonArea2DResults.filter(item => item.viewKey === viewKey), [allPolygonArea2DResults, viewKey]);
@@ -218,9 +224,9 @@ export function useDrawingViewModel() {
   }, [drawing?.config.plane, geometryResult]);
   const roomSnapContours = useMemo(() =>
     status === 'ready' && displayOptions.showAnnotations
-      && savedView?.annotationOptions?.visibility?.roomBoundaries === true
+      && viewAnnotationOptions?.visibility?.roomBoundaries === true
       ? ifcSpaceRooms.flatMap(room => room.contours) : [],
-    [status, displayOptions.showAnnotations, savedView?.annotationOptions?.visibility?.roomBoundaries, ifcSpaceRooms]);
+    [status, displayOptions.showAnnotations, viewAnnotationOptions?.visibility?.roomBoundaries, ifcSpaceRooms]);
   const hasReferences = hasRasterReferences || dxfUnderlayData.some(r=>r.lines.length>0 || r.fills.length>0 || r.texts.length>0);
   // The references' own extent, which Fit always frames (#8802).
   const referenceBounds = useMemo(() => referenceOnlyBounds(sourceDrawing, referenceCorners, dxfUnderlayData), [sourceDrawing, referenceCorners, dxfUnderlayData]);
@@ -693,8 +699,8 @@ export function useDrawingViewModel() {
   }
 
   // Text editor handlers
-  const handleTextConfirm = useCallback((id: string, text: string) => {
-    updateTextAnnotation2D(id, { text });
+  const handleTextConfirm = useCallback((id: string, text: string, format?: { bold?: boolean; italic?: boolean; align?: 'left'|'center'|'right' }) => {
+    updateTextAnnotation2D(id, { text, ...format });
     setMoveCursor(null);
     setMeasure2DSnapPoint(null);
     setTextAnnotation2DEditing(null);
@@ -737,15 +743,15 @@ export function useDrawingViewModel() {
       const result = measure2DResults.find(item => item.id === selection.id);
       return { kind: 'dimensions' as const, value: result?.dimension?.styleId ?? dimensionSettings.library.defaultId,
         choices: dimensionSettings.library.types.map(type => ({ id: type.id, name: type.name })),
-        locked: !!savedView?.annotationOptions?.styleIds?.dimensions };
+        locked: !!viewAnnotationOptions?.styleIds?.dimensions };
     }
     const kind = selection.type === 'polygon' ? 'area' : selection.type;
     const source = selection.type === 'polygon' ? polygonArea2DResults.find(item => item.id === selection.id)
       : selection.type === 'text' ? textAnnotations2D.find(item => item.id === selection.id)
       : cloudAnnotations2D.find(item => item.id === selection.id);
-    return { kind, value: savedView?.annotationOptions?.styleIds?.[kind] ?? source?.appearanceId ?? 'original',
+    return { kind, value: viewAnnotationOptions?.styleIds?.[kind] ?? source?.appearanceId ?? 'original',
       choices: (annotationStyles ?? []).filter(style => style.kind === kind).map(style => ({ id: style.id, name: style.name })),
-      locked: !!savedView?.annotationOptions?.styleIds?.[kind] };
+      locked: !!viewAnnotationOptions?.styleIds?.[kind] };
   })();
   function changeSelectedAnnotationStyle(id: string) {
     const selection = selectedAnnotation2D;
@@ -762,6 +768,15 @@ export function useDrawingViewModel() {
     if (!selectedAnnotation2D) return;
     setEditableAnnotationId(selectedAnnotation2D.id);
     if (selectedAnnotation2D.type === 'text') setTextAnnotation2DEditing(selectedAnnotation2D.id);
+  }
+  function updateAreaVertex(id: string, index: number, point: { x: number; y: number }) {
+    if (!viewKey || selectedAnnotation2D?.type !== 'polygon' || selectedAnnotation2D.id !== id
+      || editableAnnotationId !== id) return;
+    useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item => {
+      if (item.id !== id || item.viewKey !== viewKey) return item;
+      const edited = editedPolygonAreaVertex(item.points, index, point);
+      return edited ? { ...item, ...edited } : item;
+    }) }));
   }
   function resizeRevisionCloud(id: string, points: [{ x: number; y: number }, { x: number; y: number }]) {
     if (!viewKey || selectedAnnotation2D?.type !== 'cloud' || selectedAnnotation2D.id !== id) return;
@@ -798,16 +813,16 @@ export function useDrawingViewModel() {
     }
   }, [annotation2DActiveTool, drawingProjectId, viewKey, savedView?.id, selectTool]);
 
-  const dimensionTypeOverride = savedView?.annotationOptions?.styleIds?.dimensions;
+  const dimensionTypeOverride = viewAnnotationOptions?.styleIds?.dimensions;
   const displayedMeasurements = dimensionTypeOverride && dimensionSettings.styles.has(dimensionTypeOverride)
     ? measure2DResults.map(item => item.dimension ? { ...item, dimension: { ...item.dimension, styleId: dimensionTypeOverride } } : item)
     : measure2DResults;
 
   function styledMarkup<T extends { appearanceId?: string }>(kind: 'area' | 'text' | 'cloud', items: T[]) {
-    const options = savedView?.annotationOptions;
+    const options = viewAnnotationOptions;
     return items.flatMap(item => {
       const id = options?.styleIds?.[kind] ?? item.appearanceId;
-      if (!drawingAnnotationVisible(savedView, kind, id)) return [];
+      if (!drawingAnnotationVisible(annotationView, kind, id)) return [];
       const appearance = annotationAppearance(kind, id, annotationStyles, options?.styles?.[kind]);
       return [appearance ? { ...item, appearance } : item];
     });
@@ -819,7 +834,7 @@ export function useDrawingViewModel() {
   return {
     runtime, geometryResult, models,
     drawing, sourceDrawing, ifcSpaceRooms, hasReferences, visibleRasterReferenceCount, dxfUnderlayData, status, progress, progressPhase, drawingError,
-    displayOptions, unitDisplayOverrides, typeVisibility,
+    displayOptions, unitDisplayOverrides, typeVisibility, viewAnnotationOptions,
     activePresetId, overridesEnabled, overrideEngine, entityColorMap,
     lineweights, lineweightSettings, materialSettings, dimensionSettings, dimensionEditing: dimensions, publicationScale, saved3D, savedView, drawingPlaneId,
     dxfUnderlays, pointCloudClassMask,
@@ -857,7 +872,7 @@ export function useDrawingViewModel() {
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
-    editableAnnotationId, resizeRevisionCloud,
+    editableAnnotationId, resizeRevisionCloud, updateAreaVertex,
     polygonArea2DPoints, polygonArea2DResults,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,

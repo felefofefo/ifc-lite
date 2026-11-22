@@ -24,6 +24,8 @@ import { DrawingSettingsPanel } from '../DrawingSettingsPanel';
 import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import { symbolUse, SYMBOL_USES } from '@/lib/drawing/drawing-tag-library';
+import { temporaryDimensionViewKey } from '@/lib/drawing/dimension-view';
+import { updateTemporaryDrawingOptions } from '@/store/savedSectionCutsStore';
 import { DrawingPenControls } from './DrawingPenControls';
 
 const GROUP_LABEL = {
@@ -326,24 +328,26 @@ export function DrawingViewOptions({ vm, locked }: { vm: DrawingViewModel; locke
   const { t } = useTranslation();
   const { templates } = useViewTemplates();
   const view = useSavedSectionCuts(selectActiveSavedView);
+  const temporaryKey = temporaryDimensionViewKey(vm.drawnPlane);
+  const temporary = useSavedSectionCuts(state => state.temporaryOptions[temporaryKey]);
   const [open, setOpen] = useState(false);
   const assigned = templates.find(item => item.id === view?.graphics?.presetId);
   const groups = assigned ? viewTemplateGroups(assigned) : [];
   const graphicsLocked = !!locked && groups.includes('graphics');
   const annotationsLocked = !!locked && groups.includes('annotations');
-  const hasAnnotations = !!view && savedViewKind(view) !== '3d';
+  const hasAnnotations = !vm.saved3D;
   const legacy = view?.graphics?.rows === undefined ? templates.find(item => item.id === view?.graphics?.presetId) : undefined;
-  const rows = view?.graphics?.rows ?? legacy?.rows ?? [];
+  const rows = view?.graphics?.rows ?? temporary?.graphicsRows ?? legacy?.rows ?? [];
   return <Dialog open={open} onOpenChange={setOpen}>
     <DialogTrigger asChild>
-      <Button type="button" variant="ghost" size="sm" disabled={!view || (graphicsLocked && (!hasAnnotations || annotationsLocked))}
+      <Button type="button" variant="ghost" size="sm" disabled={!vm.drawing || (graphicsLocked && (!hasAnnotations || annotationsLocked))}
         className="w-full justify-between rounded-none border-b px-3 text-xs font-medium">
         {t('section2d.viewOptions.title')}<ChevronRight aria-hidden="true" className="size-4 shrink-0" />
       </Button>
     </DialogTrigger>
     <DialogContent scrollBody aria-describedby={undefined} className="sm:max-w-3xl">
       <DialogHeader><DialogTitle>{t('section2d.viewOptions.title')}</DialogTitle></DialogHeader>
-      {open && view && <ClassOptions key={view.id} initialRows={rows} inheritedRules={legacy?.rules} lineweights={vm.lineweights} vm={vm} graphicsLocked={graphicsLocked} annotationsLocked={annotationsLocked} hasAnnotations={hasAnnotations} onClose={() => setOpen(false)} />}
+      {open && <ClassOptions key={view?.id ?? temporaryKey} initialRows={rows} inheritedRules={legacy?.rules} lineweights={vm.lineweights} vm={vm} graphicsLocked={graphicsLocked} annotationsLocked={annotationsLocked} hasAnnotations={hasAnnotations} onClose={() => setOpen(false)} />}
     </DialogContent>
   </Dialog>;
 }
@@ -457,13 +461,15 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
   const grids = useSavedSectionCuts(state => state.grids);
   const library = useSavedSectionCuts(state => state.tagLibrary);
   const [failed, setFailed] = useState(false);
-  if (!view) return null;
-  const usedTemplates = library.templates.filter(template => view.elementTags?.some(tag => tag.templateId === template.id));
-  const options = view.annotationOptions ?? { visibility: { ...view.markers } };
+  const temporaryKey = temporaryDimensionViewKey(vm.drawnPlane);
+  const temporary = useSavedSectionCuts(state => state.temporaryOptions[temporaryKey]);
+  const usedTemplates = library.templates.filter(template => view?.elementTags?.some(tag => tag.templateId === template.id));
+  const options = view?.annotationOptions ?? temporary?.annotationOptions ?? { visibility: { ...view?.markers } };
+  const effectiveView = view ?? { annotationOptions: options };
   function save(next: typeof options) {
-    if (!view) return;
     try {
-      updateViewSettings(view.id, { annotationOptions: next });
+      if (view) updateViewSettings(view.id, { annotationOptions: next });
+      else updateTemporaryDrawingOptions(temporaryKey, { annotationOptions: next });
       setFailed(false);
     } catch {
       setFailed(true);
@@ -473,7 +479,7 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
     const key = styleId ? `${group}:${styleId}` : group;
     return <DrawingSettingSwitch key={key} label={label}
       checked={group === 'roomBoundaries' ? options.visibility.roomBoundaries === true
-        : styleId ? options.visibility[key] !== false : drawingAnnotationVisible(view, group)}
+        : styleId ? options.visibility[key] !== false : drawingAnnotationVisible(effectiveView, group)}
       onCheckedChange={checked => save({ ...options, visibility: { ...options.visibility, [key]: checked } })} />;
   }
   function group(key: string, label: string, styles: readonly { id: string; name: string }[] = [],
@@ -520,10 +526,10 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
   }
   const dimensions = vm.dimensionSettings.library.types;
   return <div className="space-y-1 py-2 text-xs">
-    {savedViewKind(view) === 'plan' && <div className="border-b px-3">{row('roomBoundaries', t('section2d.viewOptions.roomBoundaries'))}</div>}
+    {(view ? savedViewKind(view) === 'plan' : vm.drawnPlane.axis === 'down') && <div className="border-b px-3">{row('roomBoundaries', t('section2d.viewOptions.roomBoundaries'))}</div>}
     {group('dimensions', t('section2d.dimensionStyle.title'), dimensions, 'dimensions',
       dimensions.filter(style => vm.measure2DResults.some(item => item.dimension?.styleId === style.id)))}
-    {savedViewKind(view) === 'plan' && (['section', 'elevation'] as const).map(kind => {
+    {(view ? savedViewKind(view) === 'plan' : vm.drawnPlane.axis === 'down') && (['section', 'elevation'] as const).map(kind => {
       const styles = library.markerStyles?.filter(style => style.kind === kind) ?? [];
       return group(kind, t(`section2d.annotationKind.${kind}`), styles, kind,
         styles.filter(style => cuts.some(cut => cut.markerTrace && cut.markerStyleId === style.id)));
@@ -534,7 +540,7 @@ function AnnotationOptions({ vm }: { vm: DrawingViewModel }) {
       if (kind === 'ifc' || kind === 'free') return group(`symbol:${kind}`, t(`section2d.annotationKind.${kind}`), original);
       const styles = library.annotationStyles?.filter(style => style.kind === kind) ?? [];
       const used = styles.filter(style => kind === 'grid' ? grids.some(grid => grid.appearanceId === style.id)
-        : view.elementTags?.some(tag => tag.appearanceId === style.id));
+        : view?.elementTags?.some(tag => tag.appearanceId === style.id));
       return group(`symbol:${kind}`, t(`section2d.annotationKind.${kind}`), styles, kind, [...used, ...original]);
     })}
     {([['area', vm.polygonArea2DResults], ['text', vm.textAnnotations2D], ['cloud', vm.cloudAnnotations2D]] as const).map(([kind, items]) => {

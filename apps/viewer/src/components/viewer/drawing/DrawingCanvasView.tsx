@@ -28,6 +28,7 @@ import type { DrawingLayers } from './useDrawingLayers';
 export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   vm: DrawingViewModel; layers: DrawingLayers; placement?: VerticalViewKind; stopPlacement: () => void;
 }) {
+  const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
   const fillPreview = usePublicationFillPreview();
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
@@ -35,7 +36,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
     status === 'ready' && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing);
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
   const editingAnnotation = vm.textAnnotation2DEditing
-    ? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
+    ? vm.styledNotes.find((a) => a.id === vm.textAnnotation2DEditing) ?? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
     : null;
 
   return (
@@ -89,7 +90,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           markupTransform={markupTransform}
           dimensionPreview={vm.dimensionPreview}
           dimensionPoints={vm.dimensionDraft.points}
-          measureResults={drawingAnnotationVisible(vm.savedView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(vm.savedView, 'dimensions', item.dimension?.styleId)) : []}
+          measureResults={drawingAnnotationVisible(annotationView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)) : []}
           measureSnapPoint={vm.measure2DSnapPoint}
           sheetEnabled={vm.sheetEnabled}
           activeSheet={vm.activeSheet}
@@ -118,7 +119,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       )}
 
       {status === 'ready' && displayOptions.showAnnotations
-        && vm.savedView?.annotationOptions?.visibility?.roomBoundaries === true
+        && vm.viewAnnotationOptions?.visibility?.roomBoundaries === true
         && vm.ifcSpaceRooms.length > 0 && <svg aria-label={t('section2d.viewOptions.roomBoundaries')}
           className="pointer-events-none absolute inset-0 h-full w-full text-muted-foreground"
           fill="none" stroke="currentColor" strokeWidth={1} strokeDasharray="5 3" opacity={0.65}>
@@ -129,6 +130,9 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           ))}
         </svg>}
       {status === 'ready' && selection.overlay}
+      {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'polygon'
+        && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
+        && <AreaVertexHandles vm={vm} id={vm.editableAnnotationId} />}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'cloud'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
         && <CloudResizeHandles vm={vm} id={vm.editableAnnotationId} />}
@@ -189,6 +193,57 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       )}
     </div>
   );
+}
+
+/** Area editing uses the existing authored polygon; room IFC meshes remain read-only. */
+function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
+  const area = vm.polygonArea2DResults.find(item => item.id === id);
+  const drag = useRef<{ pointerId: number; index: number; original: {x:number;y:number} } | null>(null);
+  if (!area || !(vm.markupTransform.scale > 0)) return null;
+  const { x, y, scale } = vm.markupTransform;
+  const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
+  const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
+  const toScreen = (p: {x:number;y:number}) => ({x:p.x*sx+x,y:p.y*sy+y});
+  function setVertex(index: number, clientX: number, clientY: number) {
+    const rect = vm.containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const raw = {x:(clientX-rect.left-x)/sx,y:(clientY-rect.top-y)/sy};
+    vm.updateAreaVertex(id,index,vm.findSnapPoint(raw) ?? raw);
+  }
+  return <svg aria-label="Edit area vertices" className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
+    {area.points.map((point,index) => {
+      const at=toScreen(point);
+      return <circle key={index} cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)"
+        stroke="currentColor" strokeWidth={2} className="pointer-events-auto cursor-crosshair touch-none"
+        role="button" tabIndex={0} aria-label={`Edit area vertex ${index+1}`}
+        onMouseDown={event=>event.stopPropagation()} onClick={event=>event.stopPropagation()}
+        onKeyDown={event=>{
+          const dx=event.key==='ArrowRight'?1:event.key==='ArrowLeft'?-1:0;
+          const dy=event.key==='ArrowDown'?1:event.key==='ArrowUp'?-1:0;
+          if (!dx && !dy) return;
+          event.preventDefault();event.stopPropagation();
+          const step=event.shiftKey?10:1;
+          vm.updateAreaVertex(id,index,{x:point.x+dx*step/sx,y:point.y+dy*step/sy});
+        }}
+        onPointerDown={event=>{
+          if (event.button!==0) return;
+          event.preventDefault();event.stopPropagation();
+          drag.current={pointerId:event.pointerId,index,original:{...point}};
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event=>{
+          if (drag.current?.pointerId!==event.pointerId || drag.current.index!==index) return;
+          event.stopPropagation();setVertex(index,event.clientX,event.clientY);
+        }}
+        onPointerUp={event=>{
+          if (drag.current?.pointerId!==event.pointerId || drag.current.index!==index) return;
+          event.stopPropagation();setVertex(index,event.clientX,event.clientY);
+          drag.current=null;event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={event=>{if(drag.current?.pointerId===event.pointerId){event.stopPropagation();vm.updateAreaVertex(id,index,drag.current.original);drag.current=null;}}}
+      />;
+    })}
+  </svg>;
 }
 
 /** Edit a revision cloud by dragging its corners; Move remains a separate command. */

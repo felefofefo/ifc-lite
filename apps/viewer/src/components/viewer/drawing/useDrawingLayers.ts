@@ -32,6 +32,8 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     typeVisibility, models, pointCloudClassMask,
   } = vm;
 
+  const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
+
   // ─── IFC annotation overlay (issue #812) ──────────────────────────────────
   // Re-derive the section's world-coord cut position from the same bounds
   // useDrawingGeneration uses, so the annotation filter stays in lockstep
@@ -42,7 +44,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
   ), [geometryResult, runtime.sourceCoordinateInfo, drawnPlane]);
 
   const ifcAnnotationData = useSymbolicAnnotationsForDrawing({
-    enabled: symbolicAnnotationsOverlayEnabled(drawingAnnotationVisible(vm.savedView, 'ifcAnnotations') && displayOptions.showIfcAnnotations, status, typeVisibility.ifcAnnotations),
+    enabled: symbolicAnnotationsOverlayEnabled(drawingAnnotationVisible(annotationView, 'ifcAnnotations') && displayOptions.showIfcAnnotations, status, typeVisibility.ifcAnnotations),
     axis: drawnPlane.axis,
     sectionPosWorld: ifcAnnotationsForDrawing.sectionPosWorld,
     viewDepth: ifcAnnotationsForDrawing.viewDepth,
@@ -116,7 +118,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     drawing: vm.exportableDrawing, lineweights: vm.lineweights, lineweightTable: vm.lineweightSettings.table, materialHatches: vm.materialSettings.hatches, displayOptions, sectionPlane: drawnPlane, activePresetId: vm.activePresetId,
     entityColorMap: vm.entityColorMap, overridesEnabled: vm.overridesEnabled, overrideEngine: vm.overrideEngine,
     dimensionStyles: vm.dimensionSettings.styles,
-    measure2DResults: drawingAnnotationVisible(vm.savedView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(vm.savedView, 'dimensions', item.dimension?.styleId)) : [], polygonArea2DResults: vm.styledAreas,
+    measure2DResults: drawingAnnotationVisible(annotationView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)) : [], polygonArea2DResults: vm.styledAreas,
     elementTags: displayOptions.showAnnotations ? vm.tags.items : [],
     textAnnotations2D: vm.styledNotes, cloudAnnotations2D: vm.styledClouds,
     sheetEnabled: vm.sheetEnabled, activeSheet: vm.activeSheet, dxfUnderlays: dxfUnderlayData,

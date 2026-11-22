@@ -66,6 +66,9 @@ export interface TextAnnotation2D {
   viewKey?: string;
   position: Point2D;       // Top-left corner (drawing coords)
   text: string;
+  bold?: boolean;
+  italic?: boolean;
+  align?: 'left' | 'center' | 'right';
   fontSize: number;        // Font size in screen px (default 14)
   color: string;           // Text color (default '#000000')
   backgroundColor: string; // Background fill

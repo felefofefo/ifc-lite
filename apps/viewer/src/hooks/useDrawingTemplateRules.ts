@@ -7,6 +7,8 @@ import { RelationshipType } from '@ifc-lite/data';
 import type { IfcDataStore } from '@ifc-lite/parser';
 import type { GraphicOverrideRule } from '@ifc-lite/drawing-2d';
 import { evaluateFilterGroupsFederated, resolveCapturedEntityScope } from '@ifc-lite/rules';
+import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
+import { temporaryDimensionViewKey } from '@/lib/drawing/dimension-view';
 import { selectActiveSavedView, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useViewerStore } from '@/store';
 import { toGlobalIdFromModels } from '@/store/globalId';
@@ -77,7 +79,9 @@ export function useDrawingTemplateRules() {
   const lenses = useViewerStore(s => s.savedLenses);
   const tagDefinitions = useViewerStore(s => s.modelTags);
   const legacyRules = useViewerStore(s => s.graphicOverridePresets);
-  const viewRows = useSavedSectionCuts(s => selectActiveSavedView(s)?.graphics?.rows);
+  const drawnPlane = useViewerStore(drawnSectionPlane);
+  const temporaryKey = temporaryDimensionViewKey(drawnPlane);
+  const viewRows = useSavedSectionCuts(s => selectActiveSavedView(s)?.graphics?.rows ?? s.temporaryOptions[temporaryKey]?.graphicsRows);
   const template = viewRows === undefined ? templates.find(candidate => candidate.id === id) : undefined;
   const shared = useMemo(() => {
     const localIds = new Set(custom.map(rule => rule.id));

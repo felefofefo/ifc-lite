@@ -44,6 +44,19 @@ export function computePolygonPerimeter(points: Point2D[]): number {
   return perimeter;
 }
 
+/** Edited 2D measurement: immutable vertices and freshly derived geometry. */
+export function editedPolygonAreaVertex(points: Point2D[], index: number, point: Point2D) {
+  if (index < 0 || index >= points.length || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  const next = points.map((value, i) => i === index ? { ...point } : value);
+  const area = computePolygonArea(next);
+  if (!(area > 1e-8)) return null;
+  const n = next.length;
+  for (let i = 0; i < n; i++) {
+    if (Math.hypot(next[i].x - next[(i + 1) % n].x, next[i].y - next[(i + 1) % n].y) < 1e-7) return null;
+  }
+  return { points: next, area, perimeter: computePolygonPerimeter(next) };
+}
+
 /**
  * Compute the centroid (geometric center) of a polygon.
  */

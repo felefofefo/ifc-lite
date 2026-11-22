@@ -1485,7 +1485,9 @@ export function Drawing2DCanvas({
       const sy = drawingToScreenY(textAnnotation.position.y);
 
       const textSize = textAnnotation.appearance?.textHeight ? textAnnotation.appearance.textHeight * paperUnit : textAnnotation.fontSize;
-      ctx.font = `${textSize}px ${textAnnotation.appearance?.font ?? 'system-ui, sans-serif'}`;
+      const bold = textAnnotation.bold ?? textAnnotation.appearance?.bold ?? false;
+      const italic = textAnnotation.italic ?? textAnnotation.appearance?.italic ?? false;
+      ctx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${textSize}px ${textAnnotation.appearance?.font ?? 'system-ui, sans-serif'}`;
       const lines = textAnnotation.text.split('\n');
       const lineHeight = textSize * 1.3;
       let maxWidth = 0;
@@ -1509,10 +1511,12 @@ export function Drawing2DCanvas({
 
       // Text
       ctx.fillStyle = textAnnotation.appearance?.color ?? textAnnotation.color;
-      ctx.textAlign = 'left';
+      const align = textAnnotation.align ?? textAnnotation.appearance?.align ?? 'left';
+      ctx.textAlign = align;
       ctx.textBaseline = 'top';
+      const textX = align === 'center' ? sx + bgW / 2 : align === 'right' ? sx + bgW - padding : sx + padding;
       for (let i = 0; i < lines.length; i++) {
-        ctx.fillText(lines[i], sx + padding, sy + padding + i * lineHeight);
+        ctx.fillText(lines[i], textX, sy + padding + i * lineHeight);
       }
     }
 

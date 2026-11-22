@@ -143,6 +143,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const targets = useMemo(() => drawing && view && (active || stored.length)
     ? collectTagTargets(drawing, showHidden, roomContours) : [], [drawing, view?.id, active, stored.length, showHidden, roomContours, models, mutationVersion]);
   const pickIndex = useMemo(() => drawing ? createDrawingModelIndex(drawing, showHidden) : undefined, [drawing, showHidden]);
+  const selectedTarget = selected && !selected.free ? findTagTarget(targets, selected) : undefined;
+  const selectedIfcTemplates = selectedTarget ? templates.filter(item =>
+    symbolUse(item) === 'ifc' && item.classes.includes(selectedTarget.ifcClass)) : [];
   const items = useMemo(() => stored.flatMap(tag => {
     if (tag.free) {
       const measurement = tag.measurement;
@@ -346,7 +349,11 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     } catch (error) { console.warn('Could not change symbol style', error); setFailed(true); }
   }
 
-  function change(patch: Partial<Pick<DrawingElementTag, 'field' | 'leader' | 'appearanceId'>>) {
+  function replaceSelectedIfcTemplate(templateId: string) {
+    if (!selected || selected.free || !selectedIfcTemplates.some(item => item.id === templateId)) return;
+    save(tags => tags.map(tag => tag.id === selected.id ? { ...tag, templateId, svg: undefined } : tag));
+  }
+  function change(patch: Partial<Pick<DrawingElementTag, 'field' | 'leader' | 'appearanceId' | 'templateId' | 'svg'>>) {
     if (draft) setSession({ ...draft, tag: { ...draft.tag, ...patch } });
   }
 
@@ -546,7 +553,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     gridStyleId: viewTypeIds?.grid,
     canResizeGrid: draft?.mode === 'edit' && draftUse === 'grid' && !!draft.tag.gridStart,
     resizeGridEndpoint, beginGridResize, cancelGridResize, beginEditDrag, dragEditedSymbol, cancelEditDrag,
-    selected, selectedUse, selectedKind, selectedStyles, selectedStyleLocked,
+    selected, selectedUse, selectedKind, selectedStyles, selectedStyleLocked, selectedIfcTemplates, replaceSelectedIfcTemplate,
     draggingSelectedTag: dragPreviewTag?.id ?? null,
     selectedStyleId: (selectedKind && viewTypeIds?.[selectedKind]) ?? selected?.appearanceId ?? 'original',
     editSelected, setSelectedStyle, clearSelection() { setSelectedTagId(null); },

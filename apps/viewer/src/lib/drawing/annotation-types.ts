@@ -9,6 +9,9 @@ export type AnnotationStyleKind = typeof ANNOTATION_STYLE_KINDS[number];
 export const ANNOTATION_FONTS = ['sans-serif', 'serif', 'monospace'] as const;
 export type AnnotationSymbolStyle = {
   font?: typeof ANNOTATION_FONTS[number];
+  bold?: boolean;
+  italic?: boolean;
+  align?: 'left' | 'center' | 'right';
   textHeight?: number;
   precision?: number;
   unit?: 'm' | 'cm' | 'mm' | '%' | '°';
@@ -26,6 +29,9 @@ export function validAnnotationStyles(styles: unknown): boolean {
     const units = kind === 'slope' ? ['%', '°'] : ['m', 'cm', 'mm'];
     return (item.font === undefined || ANNOTATION_FONTS.includes(item.font))
       && (item.textHeight === undefined || (Number.isFinite(item.textHeight) && item.textHeight >= 0.5 && item.textHeight <= 12))
+      && (item.bold === undefined || typeof item.bold === 'boolean')
+      && (item.italic === undefined || typeof item.italic === 'boolean')
+      && (item.align === undefined || ['left', 'center', 'right'].includes(item.align))
       && (item.precision === undefined || (Number.isInteger(item.precision) && item.precision >= 0 && item.precision <= 6))
       && (item.unit === undefined || units.includes(item.unit))
       && (item.color === undefined || (typeof item.color === 'string' && /^#[0-9a-f]{6}$/i.test(item.color)))

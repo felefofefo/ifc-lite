@@ -179,6 +179,9 @@ function isTextAnnotation2D(v: unknown): v is TextAnnotation2D {
     isPoint2D(a.position) &&
     typeof a.text === 'string' &&
     isFiniteNumber(a.fontSize) &&
+    (a.bold === undefined || typeof a.bold === 'boolean') &&
+    (a.italic === undefined || typeof a.italic === 'boolean') &&
+    (a.align === undefined || a.align === 'left' || a.align === 'center' || a.align === 'right') &&
     typeof a.color === 'string' &&
     typeof a.backgroundColor === 'string' &&
     typeof a.borderColor === 'string'

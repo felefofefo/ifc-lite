@@ -18,7 +18,7 @@ interface TextAnnotationEditorProps {
   screenX: number;
   screenY: number;
   /** Called with the new text when user confirms (Enter) */
-  onConfirm: (id: string, text: string) => void;
+  onConfirm: (id: string, text: string, format?: Pick<TextAnnotation2D, 'bold' | 'italic' | 'align'>) => void;
   /** Called when user cancels (Escape) or submits empty text */
   onCancel: (id: string) => void;
 }
@@ -31,7 +31,10 @@ export function TextAnnotationEditor({
   onCancel,
 }: TextAnnotationEditorProps): React.ReactElement {
   const { t } = useTranslation();
-  const [text, setText] = useState(annotation.text);
+
+  const [bold, setBold] = useState(annotation.bold ?? annotation.appearance?.bold ?? false);
+  const [italic, setItalic] = useState(annotation.italic ?? annotation.appearance?.italic ?? false);
+  const [align, setAlign] = useState<'left'|'center'|'right'>(annotation.align ?? annotation.appearance?.align ?? 'left');  const [text, setText] = useState(annotation.text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Guard against blur firing during the initial click that created this editor.
   // Without this, the mouseup from the placement click can steal focus from the
@@ -54,7 +57,11 @@ export function TextAnnotationEditor({
       e.preventDefault();
       const trimmed = text.trim();
       if (trimmed) {
-        onConfirm(annotation.id, trimmed);
+        onConfirm(annotation.id, trimmed, {
+          bold: bold === (annotation.appearance?.bold ?? false) ? undefined : bold,
+          italic: italic === (annotation.appearance?.italic ?? false) ? undefined : italic,
+          align: align === (annotation.appearance?.align ?? 'left') ? undefined : align,
+        });
       } else {
         onCancel(annotation.id);
       }
@@ -64,7 +71,7 @@ export function TextAnnotationEditor({
     }
     // Stop propagation so the canvas doesn't receive these events
     e.stopPropagation();
-  }, [text, annotation.id, onConfirm, onCancel]);
+  }, [text, annotation.id, onConfirm, onCancel, bold, italic, align]);
 
   const handleBlur = useCallback(() => {
     // Ignore blur events that fire before the editor is fully ready
@@ -73,11 +80,15 @@ export function TextAnnotationEditor({
 
     const trimmed = text.trim();
     if (trimmed) {
-      onConfirm(annotation.id, trimmed);
+      onConfirm(annotation.id, trimmed, {
+          bold: bold === (annotation.appearance?.bold ?? false) ? undefined : bold,
+          italic: italic === (annotation.appearance?.italic ?? false) ? undefined : italic,
+          align: align === (annotation.appearance?.align ?? 'left') ? undefined : align,
+        });
     } else {
       onCancel(annotation.id);
     }
-  }, [text, annotation.id, onConfirm, onCancel]);
+  }, [text, annotation.id, onConfirm, onCancel, bold, italic, align]);
 
   return (
     // The wrapper only stops canvas click placement; the textarea and buttons own keyboard interaction.
@@ -92,6 +103,17 @@ export function TextAnnotationEditor({
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
+       <div className="flex flex-wrap items-center gap-1 rounded-t border bg-popover p-1 text-xs"
+         role="toolbar" aria-label="Text formatting" onMouseDown={event => event.preventDefault()}>
+         <button type="button" title="Bold" aria-pressed={bold} className={bold ? 'rounded bg-accent px-2 py-1 font-bold' : 'rounded px-2 py-1 font-bold'}
+           onClick={() => setBold(value => !value)}>B</button>
+         <button type="button" title="Italic" aria-pressed={italic} className={italic ? 'rounded bg-accent px-2 py-1 italic' : 'rounded px-2 py-1 italic'}
+           onClick={() => setItalic(value => !value)}>I</button>
+         {(['left','center','right'] as const).map(value => <button key={value} type="button"
+           aria-label={`Align ${value}`} aria-pressed={align===value} title={`Align ${value}`}
+           className={align===value?'rounded bg-accent px-2 py-1':'rounded px-2 py-1'}
+           onClick={() => setAlign(value)}>{value==='left'?'⫷':value==='center'?'≡':'⫸'}</button>)}
+       </div>
       <textarea
         ref={textareaRef}
         value={text}
@@ -104,6 +126,7 @@ export function TextAnnotationEditor({
         rows={2}
         style={{
           fontSize: annotation.fontSize,
+          fontWeight: bold ? 'bold' : 'normal', fontStyle: italic ? 'italic' : 'normal', textAlign: align,
           backgroundColor: '#ffffff',
           color: '#000000',
           caretColor: '#000000',

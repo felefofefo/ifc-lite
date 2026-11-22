@@ -14,6 +14,7 @@ import { getDefaultSectionPlane } from './slices/sectionSlice.js';
 import { clippingSectionPlanes } from '@/store/section-active';
 import { orderedSectionPlanes, sectionPlaneCount } from '@/lib/section/section-plane-set';
 import { zoomToSectionTarget } from '@/lib/section/section-zoom';
+import { drawnSectionPlane } from '@/lib/drawing/drawn-section-plane';
 import { savedDimensionViewKey, temporaryDimensionViewKey, transferViewMarkup } from '@/lib/drawing/dimension-view';
 import { planCutPosition, verticalViewPlane } from '@/lib/drawing/view-placement';
 import { getDrawingRuntime } from '@/lib/drawing/drawing-runtime';
@@ -64,7 +65,7 @@ export interface DrawingAnnotationOptions {
   styleIds?: Partial<Record<AnnotationStyleSelection, string>>;
 }
 
-export function drawingAnnotationVisible(view: SavedSectionCut | undefined, group: string, style?: string): boolean {
+export function drawingAnnotationVisible(view: Pick<SavedSectionCut, 'annotationOptions' | 'markers'> | undefined, group: string, style?: string): boolean {
   const visibility = view?.annotationOptions?.visibility;
   const markerFlag = group === 'section' || group === 'elevation' ? view?.markers?.[group] : undefined;
   return (visibility?.[group] ?? markerFlag) !== false && (!style || visibility?.[`${group}:${style}`] !== false);
@@ -104,6 +105,7 @@ export interface SavedSectionCut {
 }
 
 interface SavedSectionCutsState {
+  temporaryOptions: Record<string, { graphicsRows?: TemplateRow[]; annotationOptions?: DrawingAnnotationOptions }>;
   tagLibrary: TagLibrary;
   cuts: SavedSectionCut[];
   folders: SavedViewFolder[];
@@ -149,6 +151,7 @@ export const useSavedSectionCuts = create<SavedSectionCutsState>()(() => ({
   cuts: [],
   folders: [],
   grids: [],
+  temporaryOptions: {},
   tagLibrary: EMPTY_TAG_LIBRARY,
   activeCutId: null,
 }));
@@ -221,7 +224,7 @@ export function setSavedViewsProject(projectId: string | undefined): void {
       console.warn('Could not load drawing tag library', error);
     }
   }
-  useSavedSectionCuts.setState({ projectId, cuts, folders, grids, tagLibrary, activeCutId: null, drawingPlaneId: undefined });
+  useSavedSectionCuts.setState({ projectId, cuts, folders, grids, tagLibrary, activeCutId: null, drawingPlaneId: undefined, temporaryOptions: {} });
 }
 
 function commitCuts(patch: Partial<SavedSectionCutsState>): void {
@@ -421,6 +424,8 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
   if (scale !== undefined && (!Number.isFinite(scale) || scale <= 0)) throw new Error('Invalid publication scale.');
   if (kind === '3d' && !viewpoint) throw new Error('The 3D camera is not ready.');
   const drawingPlane = newPlane ?? drawingPlaneToSave(state);
+  const temporary = !existing && !newPlane
+    ? useSavedSectionCuts.getState().temporaryOptions[temporaryDimensionViewKey(drawingPlane)] : undefined;
   const drawingKind = newPlane
     ? isPlanPlane(drawingPlane) ? 'plan' : kind === 'elevation' && isVerticalPlane(drawingPlane) ? 'elevation' : 'section'
     : currentDrawingViewKind(state);
@@ -440,7 +445,7 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     name,
     code: existing?.code,
     folderId: existing?.folderId,
-    annotationOptions: existing?.annotationOptions,
+    annotationOptions: existing?.annotationOptions ?? temporary?.annotationOptions,
     markers: existing?.markers,
     elementTags: existing?.elementTags,
     markerSymbolId: existing?.markerSymbolId,
@@ -458,7 +463,7 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
       ? cutElevationForPosition(drawingPlane.position) ?? existing.planElevation : undefined,
     publicationScale: scale ?? (kind !== '3d' && state.sheetEnabled && state.activeSheet ? state.activeSheet.scale.factor : display.scale),
     graphics: { presetId: existing?.graphics?.presetId ?? null, enabled: state.overridesEnabled,
-      rules: newPlane ? [] : structuredClone(state.customOverrideRules), rows: newPlane ? [] : existing?.graphics?.rows,
+      rules: newPlane ? [] : structuredClone(state.customOverrideRules), rows: newPlane ? [] : (existing?.graphics?.rows ?? temporary?.graphicsRows),
       templateRevision: existing?.graphics?.templateRevision },
     display: {
       showConstructionProjection: newPlane ? true : display.showConstructionProjection,
@@ -660,6 +665,15 @@ export function removeSavedSectionCut(id: string): void {
     ...(activeCutId === id ? { drawingPlaneId: undefined } : {}) });
 }
 
+/** Session-only options for an unsaved drawing, keyed by its semantic plane. */
+export function updateTemporaryDrawingOptions(key: string,
+  patch: Partial<SavedSectionCutsState['temporaryOptions'][string]>): void {
+  if (!key.startsWith('plane:')) throw new Error('Invalid temporary drawing view key');
+  useSavedSectionCuts.setState(state => ({ temporaryOptions: {
+    ...state.temporaryOptions, [key]: { ...state.temporaryOptions[key], ...patch },
+  } }));
+}
+
 export function selectActiveSavedView(state: SavedSectionCutsState): SavedSectionCut | undefined {
   return state.templateEdit?.draft ?? state.cuts.find(view => view.id === state.activeCutId);
 }
@@ -707,10 +721,10 @@ function mergedDrawingRules(local: GraphicOverrideRule[], inherited?: GraphicOve
 
 export function saveDrawingViewRows(rows: TemplateRow[], inherited?: GraphicOverrideRule[]): void {
   const active = selectActiveSavedView(useSavedSectionCuts.getState());
-  if (!active) return;
   const state = useViewerStore.getState();
+  if (!active) updateTemporaryDrawingOptions(temporaryDimensionViewKey(drawnSectionPlane(state)), { graphicsRows: structuredClone(rows) });
   const rules = mergedDrawingRules(state.customOverrideRules, inherited);
-  updateViewSettings(active.id, { graphics: { ...active.graphics, presetId: state.activePresetId, enabled: true,
+  if (active) updateViewSettings(active.id, { graphics: { ...active.graphics, presetId: state.activePresetId, enabled: true,
     rules: structuredClone(rules), rows: structuredClone(rows) } });
   useViewerStore.setState({ customOverrideRules: rules, overridesEnabled: true });
 }

@@ -141,6 +141,11 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       <span className="max-w-36 truncate px-2 font-medium" title={tags.selected.field}>
         {t(`section2d.annotationKind.${tags.selectedKind ?? 'ifc'}`)}
       </span>
+      {tags.selected && !tags.selected.free && tags.selectedIfcTemplates.length > 0 && <Select
+        value={tags.selected.templateId ?? ''} onValueChange={tags.replaceSelectedIfcTemplate}>
+        <SelectTrigger className="h-7 w-40 text-xs" aria-label="IFC tag template"><SelectValue placeholder="IFC tag" /></SelectTrigger>
+        <SelectContent>{tags.selectedIfcTemplates.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
+      </Select>}
       {tags.selectedKind && <Select disabled={tags.selectedStyleLocked} value={tags.selectedStyleId}
         onValueChange={tags.setSelectedStyle}>
         <SelectTrigger className="h-7 w-36 text-xs" aria-label={t('section2d.annotationStyles.title')}><SelectValue /></SelectTrigger>
@@ -188,6 +193,11 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
         value={tags.overrideText} inputMode="decimal" maxLength={32}
         placeholder={tags.modelLabel ?? t('section2d.symbols.automaticValue')}
         onChange={event => tags.setOverride(event.currentTarget.value)} />}
+      {!draft.tag.free && tags.selectedIfcTemplates.length > 0 && <Select
+        value={draft.tag.templateId ?? ''} onValueChange={id => tags.change({ templateId:id, svg: undefined })}>
+        <SelectTrigger className="h-7 w-40 text-xs" aria-label="IFC tag template"><SelectValue placeholder="IFC tag" /></SelectTrigger>
+        <SelectContent>{tags.selectedIfcTemplates.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
+      </Select>}
       {!draft.tag.free && <label className="flex items-center gap-1 px-1">
         <input type="checkbox" checked={draft.tag.leader} onChange={event => tags.change({ leader: event.currentTarget.checked })} />
         {t('section2d.tags.leader')}

@@ -164,6 +164,21 @@ export function DrawingTagLibraryDialog({ canInsert, close, insert }: {
     }
   }
 
+  function addRoomTag() {
+    const id = newId();
+    const symbol: TagTemplate = {
+      id, use: 'ifc', name: 'Room / Area (IFC)', folderId: currentFolder?.id,
+      classes: ['IfcSpace'],
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="32mm" height="10mm" viewBox="0 0 32 10">'
+        + '<circle id="tag-anchor" cx="2" cy="5" r="0.8"/>'
+        + '<g fill="#202124" font-family="Arial" font-size="2.5">'
+        + '<text x="5" y="4">{{Name}}</text><text x="5" y="8">{{NetFloorArea}} m²</text></g></svg>',
+    };
+    if (save(latest => ({ ...latest, templates: [...latest.templates, symbol] }))) {
+      setIfcClass('IfcSpace');setSelected(id);
+    }
+  }
+
   function filePicker(id: string) {
     replace.current = id;
     fileInput.current?.click();
@@ -241,6 +256,7 @@ export function DrawingTagLibraryDialog({ canInsert, close, insert }: {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                   <DropdownMenuItem onSelect={addRoomTag}>Room / Area (IFC)</DropdownMenuItem>
                   {SYMBOL_USES.map(kind => (
                     <DropdownMenuItem key={kind} onSelect={() => addStandardSymbol(kind)}>
                       {t(USE_LABEL[kind])}

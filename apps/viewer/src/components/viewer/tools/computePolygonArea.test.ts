@@ -5,6 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
+  editedPolygonAreaVertex,
   computePolygonArea,
   computePolygonPerimeter,
   computePolygonCentroid,
@@ -70,6 +71,22 @@ describe('computePolygonArea', () => {
     ];
     // Area: 3*1 + 1*1 = 4
     assert.strictEqual(computePolygonArea(lShape), 4);
+  });
+});
+
+describe('editedPolygonAreaVertex', () => {
+  it('moves one point and recomputes area and perimeter without modifying the original', () => {
+    const source = [{x:0,y:0},{x:2,y:0},{x:2,y:2},{x:0,y:2}];
+    const edited = editedPolygonAreaVertex(source, 1, {x:3,y:0});
+    assert.strictEqual(edited?.area, 5);
+    assert.strictEqual(edited?.perimeter, 3 + Math.sqrt(5) + 2 + 2);
+    assert.deepStrictEqual(source[1], {x:2,y:0});
+  });
+  it('rejects invalid coordinates and collapsed adjacent vertices', () => {
+    const source = [{x:0,y:0},{x:2,y:0},{x:0,y:2}];
+    assert.strictEqual(editedPolygonAreaVertex(source, 1, source[0]), null);
+    assert.strictEqual(editedPolygonAreaVertex(source, 8, {x:1,y:1}), null);
+    assert.strictEqual(editedPolygonAreaVertex(source, 1, {x:Infinity,y:1}), null);
   });
 });
 
