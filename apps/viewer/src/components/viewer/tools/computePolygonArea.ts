@@ -44,15 +44,43 @@ export function computePolygonPerimeter(points: Point2D[]): number {
   return perimeter;
 }
 
+/** Whether two non-adjacent polygon edges cross or touch (including collinear overlap). */
+function edgesIntersect(a: Point2D, b: Point2D, c: Point2D, d: Point2D): boolean {
+  const cross = (p: Point2D, q: Point2D, r: Point2D) =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const onSegment = (p: Point2D, q: Point2D, r: Point2D) =>
+    q.x >= Math.min(p.x, r.x) && q.x <= Math.max(p.x, r.x)
+    && q.y >= Math.min(p.y, r.y) && q.y <= Math.max(p.y, r.y);
+  const abC = cross(a, b, c), abD = cross(a, b, d);
+  const cdA = cross(c, d, a), cdB = cross(c, d, b);
+  return ((abC > 0 && abD < 0 || abC < 0 && abD > 0)
+      && (cdA > 0 && cdB < 0 || cdA < 0 && cdB > 0))
+    || (abC === 0 && onSegment(a, c, b))
+    || (abD === 0 && onSegment(a, d, b))
+    || (cdA === 0 && onSegment(c, a, d))
+    || (cdB === 0 && onSegment(c, b, d));
+}
+
 /** Edited 2D measurement: immutable vertices and freshly derived geometry. */
 export function editedPolygonAreaVertex(points: Point2D[], index: number, point: Point2D) {
-  if (index < 0 || index >= points.length || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  if (!Number.isInteger(index) || index < 0 || index >= points.length
+    || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
   const next = points.map((value, i) => i === index ? { ...point } : value);
   const area = computePolygonArea(next);
   if (!(area > 1e-8)) return null;
   const n = next.length;
   for (let i = 0; i < n; i++) {
     if (Math.hypot(next[i].x - next[(i + 1) % n].x, next[i].y - next[(i + 1) % n].y) < 1e-7) return null;
+  }
+  // Moving one vertex only changes its two incident edges: check those against
+  // non-neighbouring edges in O(n), so dragging stays responsive on large areas.
+  for (const edge of [(index + n - 1) % n, index]) {
+    const end = (edge + 1) % n;
+    for (let other = 0; other < n; other++) {
+      const otherEnd = (other + 1) % n;
+      if (other === edge || other === end || otherEnd === edge) continue;
+      if (edgesIntersect(next[edge], next[end], next[other], next[otherEnd])) return null;
+    }
   }
   return { points: next, area, perimeter: computePolygonPerimeter(next) };
 }

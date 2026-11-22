@@ -87,6 +87,23 @@ describe('editedPolygonAreaVertex', () => {
     assert.strictEqual(editedPolygonAreaVertex(source, 1, source[0]), null);
     assert.strictEqual(editedPolygonAreaVertex(source, 8, {x:1,y:1}), null);
     assert.strictEqual(editedPolygonAreaVertex(source, 1, {x:Infinity,y:1}), null);
+    assert.strictEqual(editedPolygonAreaVertex(source, 0.5, {x:1,y:1}), null);
+  });
+  it('rejects edits that cross, touch or overlap non-adjacent edges', () => {
+    const source = [{x:0,y:0},{x:4,y:0},{x:4,y:4},{x:0,y:4}];
+    // A crossing can retain a positive shoelace area, so area > 0 is not enough.
+    assert.strictEqual(computePolygonArea([source[0], {x:-1,y:2}, source[2], source[3]]), 2);
+    assert.strictEqual(editedPolygonAreaVertex(source, 1, {x:-1,y:2}), null);
+    assert.strictEqual(editedPolygonAreaVertex(source, 1, {x:2,y:4}), null);
+    assert.strictEqual(editedPolygonAreaVertex(source, 1, {x:0,y:4}), null);
+    assert.deepStrictEqual(source[1], {x:4,y:0});
+  });
+  it('preserves valid concave polygons after vertex editing', () => {
+    const concave = [{x:0,y:0},{x:3,y:0},{x:3,y:1},{x:1,y:1},{x:1,y:2},{x:0,y:2}];
+    const edited = editedPolygonAreaVertex(concave, 1, {x:3.2,y:0});
+    assert.ok(edited);
+    assert.strictEqual(edited.points[1].x, 3.2);
+    assert.strictEqual(concave[1].x, 3);
   });
 });
 
