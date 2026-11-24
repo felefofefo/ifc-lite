@@ -26,11 +26,11 @@ describe('drawing export omissions (#5850)', () => {
     assert.deepEqual(await omissions(empty, 'dxf'), []);
   });
 
-  it('reports area/text/cloud omissions only where those writers omit them', async () => {
+  it('reports area/text/cloud omissions only for PDF views without sheets', async () => {
     for (const kind of ['areas', 'texts', 'clouds'] as const) {
       const content = { ...empty, markupCounts: { ...empty.markupCounts, [kind]: 1 } };
       assert.deepEqual(await omissions(content, 'pdf'), ['markups'], kind);
-      assert.deepEqual(await omissions(content, 'dxf'), ['markups'], kind);
+      assert.deepEqual(await omissions(content, 'dxf'), [], kind);
       assert.deepEqual(await omissions({ ...content, sheetScale: 50 }, 'pdf'), [], kind);
     }
     const dimensions = { ...empty, markupCounts: { ...empty.markupCounts, measurements: 1 } };

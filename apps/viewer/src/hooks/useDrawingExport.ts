@@ -50,6 +50,7 @@ import { makePropertiesGetter } from '@/hooks/drawingElementProperties';
 import { resolveCutPolygonStyle, type CutPolygonStyleContext } from '@/components/viewer/drawing/cut-polygon-style';
 import { publicationCutSvg, svgDash } from '@/lib/export/drawing-publication-svg';
 import { pdfColor } from '@/lib/export/pdf-color';
+import { drawingAnnotationDxf } from '@/lib/export/drawing-annotation-dxf';
 import { drawCutPolygonsPdf, isPagePoint, prepareCutPolygonsPdf, type PdfCutPolygon } from '@/lib/export/section-pdf-cut-polygons';
 import { viewMarkersSvg, viewMarkersDxf, drawViewMarkersPdf, viewMarkerExportBounds, useDrawingViewMarkers } from '@/lib/export/drawing-view-markers';
 import { titleBlockWithEffectiveScale } from '@/hooks/titleBlockScaleField';
@@ -966,6 +967,11 @@ function useDrawingExport({
     const paperPoint = (x: number, y: number) => ({ x: flipX ? -x : x, y: flipY ? -y : y });
     const fromPaper = (point: { x: number; y: number }) => paperPoint(point.x, point.y);
     const annotations = dimensionGraphics(paperPoint, scale / 1000, scale);
+    const markups = drawingAnnotationDxf(
+      displayOptions.showAnnotations === false ? [] : polygonArea2DResults,
+      displayOptions.showAnnotations === false ? [] : textAnnotations2D,
+      displayOptions.showAnnotations === false ? [] : cloudAnnotations2D, scale, lineweightTable,
+    );
     const dxf = exportToDXF(drawing, addDrawingTagsDxf({
       objectStyles: !!stroke,
       strokeStyle: stroke ? (element, role, line) => {
@@ -992,7 +998,7 @@ function useDrawingExport({
           ...graphic.circles.map(({ center, radius }) => Array.from({ length: 25 }, (_, i) => ({
             x: center.x + radius * Math.cos(i * Math.PI / 12), y: center.y + radius * Math.sin(i * Math.PI / 12),
           })))].map(points => points.map(fromPaper)),
-      }))],
+      })), ...markups.polylineLayers],
       labels: [...(overlays.labels ?? []), ...annotations.map(({ position, label, style, graphic, angle }) => {
         const origin = coordinateTransform(fromPaper(position));
         const radians = angle * Math.PI / 180;
@@ -1004,7 +1010,7 @@ function useDrawingExport({
           position: fromPaper(position), height: graphic.textSize,
           rotationDeg: Math.atan2(next.y - origin.y, next.x - origin.x) * 180 / Math.PI,
         };
-      })],
+      }), ...markups.labels],
     }, elementTags, scale));
     const suffix = lineweights ? `-1-${formatScaleFactorLabel(scale)}` : '';
     const stem = `section-${sectionPlane.axis}-${sectionPlane.position}${suffix}`;
@@ -1013,6 +1019,7 @@ function useDrawingExport({
     drawing, dxfUnderlays, displayOptions.showHiddenLines, displayOptions.showHatching, displayOptions.showScanSection, scanSection.outline,
     sectionPlane, ifcDataStore, coordinateInfo, storeModels, anchorModelIdOverride, georefMutations, mutationVersion,
     lineweights, cutPolygonStyleContext, sheetEnabled, activeSheet, displayOptions.scale, markers, dimensionGraphics, elementTags,
+    polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, lineweightTable,
   ]);
   const handleExportDXF = useCallback(() => {
     const file = buildDXF();

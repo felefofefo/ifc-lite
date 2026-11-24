@@ -31,10 +31,10 @@ export function drawingExportOmissions(
 ): DrawingExportOmission[] {
   const omissions: DrawingExportOmission[] = [];
   const { markupCounts, visibleRasterReferenceCount = 0, sheetScale, requestedScale } = content;
-  // Dimension annotations are already exported in both formats. With a
-  // sheet, PDF rasterizes the sheet SVG, which also contains area/text/cloud.
-  if (markupCounts.areas + markupCounts.texts + markupCounts.clouds > 0 &&
-      (format === 'dxf' || sheetScale === null)) {
+  // PDF views without a sheet still omit area/text/cloud. DXF exports them
+  // natively as TEXT and polylines; sheet PDF includes them via sheet SVG.
+  if (format === 'pdf' && sheetScale === null &&
+      markupCounts.areas + markupCounts.texts + markupCounts.clouds > 0) {
     omissions.push('markups');
   }
   if (visibleRasterReferenceCount > 0 && format === 'dxf') {

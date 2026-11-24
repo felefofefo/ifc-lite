@@ -94,7 +94,7 @@ describe('drawing export notices (#5850)', () => {
     selectItem('Download DXF');
     const first = document.body.querySelector('[role="alertdialog"]');
     assert.ok(first, 'DXF notice is shown before download');
-    assert.match(first.textContent ?? '', /drawing markups/);
+    assert.doesNotMatch(first.textContent ?? '', /drawing markups/);
     assert.match(first.textContent ?? '', /visible PDF\/image reference underlays/);
     assert.equal(exports, 0);
     const cancel = [...first.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Cancel');
@@ -112,9 +112,12 @@ describe('drawing export notices (#5850)', () => {
     await waitFor(() => exports === 1, 'confirming exports exactly once');
   });
 
-  it('exports immediately when the DXF writer has nothing to omit', () => {
+  it('exports annotated DXF immediately when no raster references are omitted', () => {
     let exports = 0;
-    render(<DrawingExportMenu {...props({ visibleUnderlayCount: 1, onExportDxf: () => { exports++; } })} />);
+    render(<DrawingExportMenu {...props({
+      markupCounts: { measurements: 1, areas: 1, texts: 1, clouds: 1 },
+      visibleUnderlayCount: 1, onExportDxf: () => { exports++; },
+    })} />);
     openMenu();
     selectItem('Download DXF');
     assert.equal(exports, 1);

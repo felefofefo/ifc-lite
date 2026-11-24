@@ -33,7 +33,7 @@ import { getLineStyle, getHatchPattern } from './styles.js';
 import { applyDxfPlacement } from './dxf/convert.js';
 import { DEFAULT_DXF_PLACEMENT, type DxfPlacement, type DxfUnderlay } from './dxf/types.js';
 import { ModernDxfWriter, type DxfObjectStroke } from './dxf/writer-modern.js';
-import { DxfWriter, type DxfLinetype } from './dxf/writer.js';
+import { DxfWriter, type DxfLinetype, type DxfTextHAlign, type DxfTextVAlign } from './dxf/writer.js';
 
 export interface DXFHatchLayer {
   pattern: 'solid' | 'diagonal' | 'cross-hatch' | 'custom';
@@ -86,7 +86,7 @@ export interface DXFExportOptions {
    */
   polylineLayers?: DXFPolylineLayer[];
   /** Additional drawing-space labels, kept on the same layer as their marker lines. */
-  labels?: readonly { layer: string; color: string; text: string; position: Point2D; height: number; rotationDeg?: number }[];
+  labels?: readonly { layer: string; color: string; text: string; position: Point2D; height: number; rotationDeg?: number; hAlign?: DxfTextHAlign; vAlign?: DxfTextVAlign }[];
 }
 
 /** One named layer of polylines to embed. */
@@ -99,6 +99,8 @@ export interface DXFPolylineLayer {
   /** Close every polyline back to its first point. Default true. */
   closed?: boolean;
   lineWeight?: number;
+  /** Optional drawing-space dash lengths (metres), for R2007 polylines. */
+  dash?: readonly number[];
 }
 
 /** One DXF reference underlay to embed (mirrors `SVGUnderlayOptions`). */
@@ -245,8 +247,10 @@ export class DXFExporter {
       const layer = writer.layer(extra.name, extra.color);
       for (const polyline of extra.polylines) {
         const points = polyline.map(map);
-        if (writer instanceof ModernDxfWriter && extra.lineWeight !== undefined) {
-          writer.addPolyline(points, layer, extra.closed ?? true, undefined, { color: extra.color, lineWeight: extra.lineWeight });
+        if (writer instanceof ModernDxfWriter && (extra.lineWeight !== undefined || extra.dash?.length)) {
+          writer.addPolyline(points, layer, extra.closed ?? true, undefined, {
+            color: extra.color, lineWeight: extra.lineWeight ?? 0.25, dash: extra.dash,
+          });
         } else {
           writer.addPolyline(points, layer, extra.closed ?? true);
         }
@@ -255,7 +259,10 @@ export class DXFExporter {
 
     for (const label of options.labels ?? []) {
       const layer = writer.layer(label.layer, label.color);
-      writer.addText(map(label.position), label.text, label.height, layer, { hAlign: 'center', vAlign: 'middle', rotationDeg: label.rotationDeg, colorOverride: label.color });
+      writer.addText(map(label.position), label.text, label.height, layer, {
+        hAlign: label.hAlign ?? 'center', vAlign: label.vAlign ?? 'middle',
+        rotationDeg: label.rotationDeg, colorOverride: label.color,
+      });
     }
 
     return writer.toString();
