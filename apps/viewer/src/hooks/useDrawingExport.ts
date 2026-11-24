@@ -619,10 +619,15 @@ function useDrawingExport({
         const lineHeight = fontSize * 1.3;
         const approxWidth = Math.max(...lines.map(l => l.length * fontSize * 0.6)) + padding * 2;
         const height = lines.length * lineHeight + padding * 2;
+        const align = annotation.align ?? annotation.appearance?.align ?? 'left';
+        const textAnchor = align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start';
+        const textX = align === 'center' ? pt.x + approxWidth / 2 : align === 'right' ? pt.x + approxWidth - padding : pt.x + padding;
+        const fontWeight = (annotation.bold ?? annotation.appearance?.bold) ? ' font-weight="bold"' : '';
+        const fontStyle = (annotation.italic ?? annotation.appearance?.italic) ? ' font-style="italic"' : '';
 
-        svg += `    <rect x="${pt.x.toFixed(4)}" y="${pt.y.toFixed(4)}" width="${approxWidth.toFixed(4)}" height="${height.toFixed(4)}" fill="${annotation.backgroundColor}" stroke="${annotation.borderColor}" stroke-width="${mmToModel(0.15).toFixed(4)}"/>\n`;
+        svg += `    <rect x="${pt.x.toFixed(4)}" y="${pt.y.toFixed(4)}" width="${approxWidth.toFixed(4)}" height="${height.toFixed(4)}" fill="${escapeXml(annotation.backgroundColor)}" stroke="${escapeXml(annotation.borderColor)}" stroke-width="${mmToModel(0.15).toFixed(4)}"/>\n`;
         for (let i = 0; i < lines.length; i++) {
-          svg += `    <text x="${(pt.x + padding).toFixed(4)}" y="${(pt.y + padding + fontSize * 0.8 + i * lineHeight).toFixed(4)}" font-family="${annotation.appearance?.font ?? 'Arial, sans-serif'}" font-size="${fontSize.toFixed(4)}" fill="${annotation.appearance?.color ?? annotation.color}">${escapeXml(lines[i])}</text>\n`;
+          svg += `    <text x="${textX.toFixed(4)}" y="${(pt.y + padding + fontSize * 0.8 + i * lineHeight).toFixed(4)}" font-family="${escapeXml(annotation.appearance?.font ?? 'Arial, sans-serif')}" font-size="${fontSize.toFixed(4)}" fill="${escapeXml(annotation.appearance?.color ?? annotation.color)}" text-anchor="${textAnchor}"${fontWeight}${fontStyle}>${escapeXml(lines[i])}</text>\n`;
         }
       }
       svg += '  </g>\n';
