@@ -123,6 +123,36 @@ it('respects hidden-line visibility, extra room contours and disabled snap switc
   assert.equal(hover(off, 0.01, 0), 'none');
 });
 
+it('uses the middle button to pan and never pans with the left button', () => {
+  function PanProbe() {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [transform, setTransform] = useState({ x: 0, y: 0, scale: 50 });
+    const handlers = useMeasure2D({
+      drawing: null, viewTransform: transform, setViewTransform: setTransform,
+      sectionAxis: 'down', containerRef, measure2DMode: false,
+      dimensionType: 'aligned', setMeasure2DSnapPoint: noop,
+      onCancel: noop, onPlace: noop,
+    });
+    return <div ref={containerRef} data-pan-x={transform.x} data-pan-y={transform.y}
+      onMouseDown={handlers.handleMouseDown} onMouseMove={handlers.handleMouseMove}
+      onMouseUp={handlers.handleMouseUp} />;
+  }
+  const canvas = render(<PanProbe />).firstElementChild as HTMLElement;
+  function mouse(type: string, button: number, buttons: number, x: number, y: number) {
+    act(() => canvas.dispatchEvent(new window.MouseEvent(type, {
+      bubbles: true, cancelable: true, button, buttons, clientX: x, clientY: y,
+    })));
+  }
+  mouse('mousedown', 0, 1, 10, 20);
+  mouse('mousemove', 0, 1, 40, 25);
+  assert.equal(canvas.dataset.panX, '0');
+  mouse('mouseup', 0, 0, 40, 25);
+  mouse('mousedown', 1, 4, 10, 20);
+  mouse('mousemove', 1, 4, 40, 25);
+  assert.equal(canvas.dataset.panX, '30');
+  assert.equal(canvas.dataset.panY, '5');
+});
+
 it('reports the exact snapped target kind to the drawing HUD', () => {
   const geometry = drawingOf([seg(0, 0, 4, 0), seg(2, -2, 2, 2)]);
   for (const [snaps, x, expected] of [

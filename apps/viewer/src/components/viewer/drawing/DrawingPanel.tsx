@@ -23,7 +23,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, ChevronDown, FileSearch, Magnet, PanelLeft, RefreshCw, Video } from 'lucide-react';
+import { Box, ChevronDown, FileSearch, Magnet, MousePointer2, PanelLeft, RefreshCw, Video } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -218,6 +218,8 @@ export function DrawingPanel(): React.ReactElement {
           aria-label={t('section2d.snaps.title')} onClick={() => setSnapsOpen(true)}>
           <ChevronDown className="size-3" />
         </Button>
+        {!selected3D && <DrawingHeaderToggle icon={MousePointer2} compact={tier === 'narrow'}
+          label="Select Only 2D" pressed={vm.selectOnly2D} onClick={vm.toggleSelectOnly2D} />}
       </div>
       {!selected3D && <DrawingHeaderToggle icon={FileSearch} compact={tier === 'narrow'} label={t('section2d.display.printPreview')}
         pressed={displayOptions.showPrintPreview} onClick={vm.togglePrintPreview} />}

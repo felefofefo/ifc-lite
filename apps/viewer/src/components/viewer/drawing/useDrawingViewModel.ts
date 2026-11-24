@@ -144,6 +144,11 @@ export function useDrawingViewModel() {
   const [dimensionType, setDimensionType] = useState<DimensionType>('aligned');
   const [angularSnap, setAngularSnap] = useState<AngularSnap>('off');
   const [objectSnaps, setObjectSnaps] = useState(DEFAULT_OBJECT_SNAPS);
+  const [selectOnly2D, setSelectOnly2D] = useState(false);
+  function toggleSelectOnly2D() {
+    if (!selectOnly2D) useViewerStore.getState().clearEntitySelection();
+    setSelectOnly2D(!selectOnly2D);
+  }
   const lastActiveSnaps = useRef({ objectSnaps: { ...DEFAULT_OBJECT_SNAPS }, angularSnap: 'off' as AngularSnap });
   const snapsEnabled = Object.values(objectSnaps).some(Boolean) || angularSnap !== 'off';
   function toggleSnaps() {
@@ -314,6 +319,7 @@ export function useDrawingViewModel() {
     paperUnit: textPaperUnit,
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
     polygonArea2DPoints, addPolygonArea2DPoint,
+    areaEndpointSnaps: objectSnaps.endpoint,
     completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, defaultAnnotationStyles?.area); }, cancelPolygonArea2D,
     textAnnotations2D: displayOptions.showAnnotations ? styledNotes : [],
     addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey, appearanceId: defaultAnnotationStyles?.text }); }, setTextAnnotation2DEditing,
@@ -602,15 +608,19 @@ export function useDrawingViewModel() {
       switch (pasted.kind) {
         case 'dimensions':
           useViewerStore.setState(state => ({ measure2DResults: [...state.measure2DResults, ...pasted.items] }));
+          if (pasted.items[0]) setSelectedAnnotation2D({ type: 'measure', id: pasted.items[0].id });
           break;
         case 'area':
           useViewerStore.setState(state => ({ polygonArea2DResults: [...state.polygonArea2DResults, pasted.item] }));
+          setSelectedAnnotation2D({ type: 'polygon', id: pasted.item.id });
           break;
         case 'text':
           useViewerStore.getState().addTextAnnotation2D(pasted.item);
+          setSelectedAnnotation2D({ type: 'text', id: pasted.item.id });
           break;
         case 'cloud':
           useViewerStore.setState(state => ({ cloudAnnotations2D: [...state.cloudAnnotations2D, pasted.item] }));
+          setSelectedAnnotation2D({ type: 'cloud', id: pasted.item.id });
           break;
         case 'tag': {
           if (!savedView) return;
@@ -621,6 +631,7 @@ export function useDrawingViewModel() {
           const current = useSavedSectionCuts.getState().cuts.find(cut => cut.id === savedView.id);
           if (!current || useSavedSectionCuts.getState().activeCutId !== savedView.id) return;
           updateViewSettings(current.id, { elementTags: [...readDrawingTags(current.elementTags), item] });
+          tags.selectById(item.id);
           break;
         }
         case 'grid': {
@@ -629,6 +640,7 @@ export function useDrawingViewModel() {
           let name = base, number = 2;
           while (existing.some(grid => grid.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) name = `${base} ${number++}`;
           saveProjectGrid({ ...pasted.item, name });
+          tags.selectById(pasted.item.id);
           break;
         }
       }
@@ -688,7 +700,10 @@ export function useDrawingViewModel() {
         } else if (savedView) {
           const latest = useSavedSectionCuts.getState().cuts.find(view => view.id === savedView.id);
           if (latest) updateViewSettings(latest.id, { elementTags: readDrawingTags(latest.elementTags).map(tag =>
-            tag.id === target.tag?.id ? { ...tag, position: { x: tag.position.x + delta.x, y: tag.position.y + delta.y } } : tag) });
+            tag.id === target.tag?.id ? { ...tag,
+              position: { x: tag.position.x + delta.x, y: tag.position.y + delta.y },
+              anchorOffset: { x: tag.anchorOffset.x + delta.x, y: tag.anchorOffset.y + delta.y },
+            } : tag) });
         }
       } else if (target.annotation) {
         const selected = target.annotation;
@@ -854,11 +869,14 @@ export function useDrawingViewModel() {
     tags, canvasMouseHandlers: {
       ...canvasMouseHandlers,
       onMouseDown: (e: React.MouseEvent) => {
+        // Middle-button Pan must work even while a drawing tool or tag editor is active.
+        if (e.button === 1) { measureHandlers.handleMouseDown(e); return true; }
         if (annotation2DActiveTool === 'move' || tags.active) return true;
         if (annotation2DActiveTool === 'none') { tags.clearSelection(); setSelectedMarker(null); }
         return canvasMouseHandlers.onMouseDown(e);
       },
       onMouseMove: (e: React.MouseEvent) => {
+        if (e.buttons & 4) { measureHandlers.handleMouseMove(e); return; }
         if (annotation2DActiveTool === 'move') {
           const input = mouseDrawingInput(e);
           if (input) { setMoveCursor(input); setMeasure2DSnapPoint(input.reference); }
@@ -871,7 +889,8 @@ export function useDrawingViewModel() {
       },
     }, cursorClass: tags.active ? 'cursor-crosshair' : cursorClass,
     measure2DMode, measure2DResults, displayedMeasurements, styledAreas, styledNotes, styledClouds, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
-    objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, findSnapPoint: measureHandlers.findSnapPoint, snapKindFor: measureHandlers.snapKindFor,
+    objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, selectOnly2D, toggleSelectOnly2D,
+    findSnapPoint: measureHandlers.findSnapPoint, snapKindFor: measureHandlers.snapKindFor,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,

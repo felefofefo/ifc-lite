@@ -248,9 +248,14 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (plane && draftUse === 'level') {
       next.field = drawingHeight(plane, position).toFixed(3) + ' m';
     }
-    if (draft.tag.gridStart && draft.mode === 'move') {
-      next.gridStart = { x: draft.tag.gridStart.x + position.x - draft.tag.position.x,
-        y: draft.tag.gridStart.y + position.y - draft.tag.position.y };
+    if (draft.mode === 'move') {
+      const dx = position.x - draft.tag.position.x, dy = position.y - draft.tag.position.y;
+      if (draft.tag.gridStart) {
+        next.gridStart = { x: draft.tag.gridStart.x + dx, y: draft.tag.gridStart.y + dy };
+      }
+      if (!draft.tag.free) {
+        next.anchorOffset = { x: draft.tag.anchorOffset.x + dx, y: draft.tag.anchorOffset.y + dy };
+      }
     }
     if (next.gridStart && plane) {
       try {
@@ -359,6 +364,35 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
 
   const dragRef = useRef<{ from: Point2D; clientX: number; clientY: number; tag: DrawingElementTag } | null>(null);
   const resizingRef = useRef<{ tag: DrawingElementTag; endpoint: 'start' | 'end'; clientX: number; clientY: number } | null>(null);
+  const leaderBaseRef = useRef<{ tag: DrawingElementTag } | null>(null);
+
+  function beginLeaderBaseDrag() {
+    if (draft?.mode !== 'edit' || draft.tag.free || !draft.tag.leader || draft.tag.gridStart || !target) return false;
+    leaderBaseRef.current = { tag: structuredClone(draft.tag) };
+    return true;
+  }
+
+  function dragLeaderBase(clientX: number, clientY: number, finish = false) {
+    const initial = leaderBaseRef.current;
+    const raw = clientPoint(clientX, clientY);
+    if (!initial || !raw || draft?.mode !== 'edit' || draft.tag.id !== initial.tag.id || !target) return;
+    const reference = findSnapPoint(raw);
+    const at = reference ?? raw;
+    const anchorOffset = { x: at.x - target.center.x, y: at.y - target.center.y };
+    setSession(current => current?.tag.id === initial.tag.id && current.mode === 'edit'
+      ? { ...current, tag: { ...current.tag, anchorOffset } } : current);
+    setCursor({ point: at, reference });
+    if (finish) { leaderBaseRef.current = null; setCursor(null); }
+  }
+
+  function cancelLeaderBaseDrag() {
+    const initial = leaderBaseRef.current;
+    if (!initial) return;
+    leaderBaseRef.current = null;
+    setCursor(null);
+    setSession(current => current?.tag.id === initial.tag.id
+      ? { ...current, tag: { ...current.tag, anchorOffset: initial.tag.anchorOffset } } : current);
+  }
 
   function saveMovedTag(tag: DrawingElementTag) {
     if (!plane || !view) return;
@@ -548,10 +582,16 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   }
 
   return {
+    selectById(id: string) {
+      if (!view) return;
+      useViewerStore.getState().setSelectedAnnotation2D(null);
+      setSelectedTagId({ viewId: view.id, id });
+    },
     gridStyles: annotationStyles?.filter(style => style.kind === 'grid') ?? [],
     gridStyleLocked: !!viewTypeIds?.grid,
     gridStyleId: viewTypeIds?.grid,
     canResizeGrid: draft?.mode === 'edit' && draftUse === 'grid' && !!draft.tag.gridStart,
+    beginLeaderBaseDrag, dragLeaderBase, cancelLeaderBaseDrag,
     resizeGridEndpoint, beginGridResize, cancelGridResize, beginEditDrag, dragEditedSymbol, cancelEditDrag,
     selected, selectedUse, selectedKind, selectedStyles, selectedStyleLocked, selectedIfcTemplates, replaceSelectedIfcTemplate,
     draggingSelectedTag: dragPreviewTag?.id ?? null,

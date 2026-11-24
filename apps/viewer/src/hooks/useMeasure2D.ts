@@ -106,7 +106,8 @@ export function useMeasure2D({
   // this solver is responsible only for geometric targets and their stability.
   const snapProfile = useMemo<SnapProfile>(() => ({
     radiusPx: 12,
-    hysteresisPx: 3,
+    // A held target has a slightly wider exit radius than its entry radius.
+    hysteresisPx: 4,
     sources: ['linework'],
     tiers: [
       ...(objectSnaps.endpoint ? [['endpoint', 'vertex'] as const] : []),
@@ -211,21 +212,28 @@ export function useMeasure2D({
   }
 
   function handleMouseDown(e: React.MouseEvent) {
-    if (!measure2DMode && e.button === 0) pan.current = { x: e.clientX, y: e.clientY };
+    // 2D CAD navigation: middle button pans, left button is reserved for tools/selection.
+    if (e.button === 1) {
+      e.preventDefault(); // Suppress the browser's middle-click auto-scroll.
+      pan.current = { x: e.clientX, y: e.clientY };
+    }
   }
 
   function handleMouseMove(e: React.MouseEvent) {
+    if (pan.current && (e.buttons & 4)) {
+      const dx = e.clientX - pan.current.x;
+      const dy = e.clientY - pan.current.y;
+      pan.current = { x: e.clientX, y: e.clientY };
+      setViewTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+      return;
+    }
+    if (pan.current) pan.current = null;
     if (measure2DMode && drawing) {
       const point = drawingPoint(e);
       if (!point) return;
       const { reference, ...input } = dimensionInput(point, e.shiftKey);
       setCursor(input);
       setMeasure2DSnapPoint(reference);
-    } else if (pan.current && (e.buttons & 1)) {
-      const dx = e.clientX - pan.current.x;
-      const dy = e.clientY - pan.current.y;
-      pan.current = { x: e.clientX, y: e.clientY };
-      setViewTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
     }
   }
 

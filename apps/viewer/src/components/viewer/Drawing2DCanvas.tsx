@@ -1595,30 +1595,27 @@ export function Drawing2DCanvas({
     // ═══════════════════════════════════════════════════════════════════════
     if (selectedAnnotation) {
       const SEL_COLOR = '#1976D2';
-      const SEL_HANDLE_SIZE = 5;
-
+      // Selection is a light, non-interactive outline. Actual edit handles are
+      // rendered by each tool only while editing, not during simple selection.
       const drawSelectionRect = (x: number, y: number, w: number, h: number) => {
-        const margin = 4;
-        ctx.strokeStyle = SEL_COLOR;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
-        ctx.strokeRect(x - margin, y - margin, w + margin * 2, h + margin * 2);
-        ctx.setLineDash([]);
-
-        // Corner handles
-        ctx.fillStyle = '#ffffff';
+        // Selection only: four discreet corner brackets, without a second box
+        // around the graphic. Editing tools render their own actual grips.
+        const margin = 3, arm = Math.min(10, Math.max(5, Math.min(w, h) / 4));
+        const left = x - margin, right = x + w + margin;
+        const top = y - margin, bottom = y + h + margin;
+        ctx.save();
         ctx.strokeStyle = SEL_COLOR;
         ctx.lineWidth = 1.5;
-        const corners = [
-          [x - margin, y - margin],
-          [x + w + margin, y - margin],
-          [x - margin, y + h + margin],
-          [x + w + margin, y + h + margin],
-        ];
-        for (const [cx, cy] of corners) {
-          ctx.fillRect(cx - SEL_HANDLE_SIZE, cy - SEL_HANDLE_SIZE, SEL_HANDLE_SIZE * 2, SEL_HANDLE_SIZE * 2);
-          ctx.strokeRect(cx - SEL_HANDLE_SIZE, cy - SEL_HANDLE_SIZE, SEL_HANDLE_SIZE * 2, SEL_HANDLE_SIZE * 2);
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        for (const [cx, cy, dx, dy] of [[left, top, 1, 1], [right, top, -1, 1],
+          [left, bottom, 1, -1], [right, bottom, -1, -1]]) {
+          ctx.moveTo(cx + arm * dx, cy);
+          ctx.lineTo(cx, cy);
+          ctx.lineTo(cx, cy + arm * dy);
         }
+        ctx.stroke();
+        ctx.restore();
       };
 
       switch (selectedAnnotation.type) {
@@ -1644,16 +1641,21 @@ export function Drawing2DCanvas({
         case 'polygon': {
           const result = polygonAreaResults.find((r) => r.id === selectedAnnotation.id);
           if (result && result.points.length >= 3) {
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            for (const pt of result.points) {
-              const sx = drawingToScreenX(pt.x);
-              const sy = drawingToScreenY(pt.y);
-              if (sx < minX) minX = sx;
-              if (sy < minY) minY = sy;
-              if (sx > maxX) maxX = sx;
-              if (sy > maxY) maxY = sy;
-            }
-            drawSelectionRect(minX, minY, maxX - minX, maxY - minY);
+            ctx.save();
+            ctx.beginPath();
+            result.points.forEach((point, index) => {
+              const sx = drawingToScreenX(point.x), sy = drawingToScreenY(point.y);
+              if (index === 0) ctx.moveTo(sx, sy);
+              else ctx.lineTo(sx, sy);
+            });
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(25, 118, 210, 0.09)';
+            ctx.fill();
+            ctx.strokeStyle = SEL_COLOR;
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([4, 3]);
+            ctx.stroke();
+            ctx.restore();
           }
           break;
         }

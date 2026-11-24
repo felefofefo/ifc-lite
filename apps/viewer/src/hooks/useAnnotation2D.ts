@@ -20,6 +20,7 @@ import type {
 } from '@/store/slices/drawing2DSlice';
 import { computePolygonArea, computePolygonPerimeter } from '@/components/viewer/tools/computePolygonArea';
 import { nearestPointOnSegment, hitTestAnnotations as hitTestAnnotationsPure } from '@/hooks/annotation2DHitTest';
+import { useDrawingDirection } from '@/hooks/useDrawingDirection';
 
 // ─── Public interfaces ──────────────────────────────────────────────────────
 
@@ -34,6 +35,8 @@ export interface UseAnnotation2DParams {
   setActiveTool: (tool: Annotation2DTool) => void;
   // Polygon area state
   polygonArea2DPoints: Point2D[];
+  /** Respect the Endpoint switch for draft polygon vertices. */
+  areaEndpointSnaps?: boolean;
   addPolygonArea2DPoint: (pt: Point2D) => void;
   completePolygonArea2D: (area: number, perimeter: number) => void;
   cancelPolygonArea2D: () => void;
@@ -90,6 +93,7 @@ export function useAnnotation2D({
   activeTool,
   setActiveTool,
   polygonArea2DPoints,
+  areaEndpointSnaps = true,
   addPolygonArea2DPoint,
   completePolygonArea2D,
   cancelPolygonArea2D,
@@ -292,6 +296,32 @@ export function useAnnotation2D({
     return Math.sqrt(dx * dx + dy * dy) < threshold;
   }, [polygonArea2DPoints]);
 
+  const { resolve: resolveAreaDirection } = useDrawingDirection(
+    activeTool === 'polygon-area' && polygonArea2DPoints.length ? 'drawing-area' : null, angularSnap);
+
+  function resolveAreaPoint(raw: Point2D, shift: boolean): { point: Point2D; reference: Point2D | null } {
+    const anchor = polygonArea2DPoints[polygonArea2DPoints.length - 1] ?? null;
+    // Closure wins even when the closing edge is not an angular increment.
+    if (isNearFirstVertex(raw)) {
+      const first = polygonArea2DPoints[0];
+      return { point: first, reference: first };
+    }
+    let own: Point2D | null = null;
+    if (areaEndpointSnaps && polygonArea2DPoints.length > 2 && scaleRef.current > 0) {
+      let closest = CLOSE_POLYGON_THRESHOLD_PX / scaleRef.current;
+      // Do not re-snap to the last point and create a zero-length edge.
+      for (let i = 1; i < polygonArea2DPoints.length - 1; i++) {
+        const vertex = polygonArea2DPoints[i];
+        const distance = Math.hypot(vertex.x - raw.x, vertex.y - raw.y);
+        if (distance < closest) { closest = distance; own = vertex; }
+      }
+    }
+    const reference = own ?? findSnapPoint(raw);
+    const directed = resolveAreaDirection(anchor, raw, reference, shift);
+    const point = directed ?? reference ?? (shift && anchor ? applyShiftConstraint(anchor, raw) : raw);
+    return { point, reference: reference ?? (directed && angularSnap !== 'off' ? directed : null) };
+  }
+
   // ── Keyboard shortcuts ────────────────────────────────────────────────
 
   useEffect(() => {
@@ -330,17 +360,15 @@ export function useAnnotation2D({
 
     // ── Tool-specific placement ─────────────────────────────────────────
     if (activeTool !== 'none' && activeTool !== 'measure') {
-      const snapPoint = findSnapPoint(drawingCoord);
+      const snapPoint = activeTool === 'polygon-area' ? null : findSnapPoint(drawingCoord);
       let point = snapPoint || drawingCoord;
 
       switch (activeTool) {
         case 'polygon-area': {
-          if (!snapPoint && shiftHeldRef.current && polygonArea2DPoints.length > 0) {
-            point = applyShiftConstraint(polygonArea2DPoints[polygonArea2DPoints.length - 1], point);
-          }
-          if (isNearFirstVertex(point)) {
+          point = resolveAreaPoint(drawingCoord, e.shiftKey || shiftHeldRef.current).point;
+          if (isNearFirstVertex(drawingCoord)) {
             completePolygonArea2D(computePolygonArea(polygonArea2DPoints), computePolygonPerimeter(polygonArea2DPoints));
-          } else {
+          } else if (!polygonArea2DPoints.some(previous => Math.hypot(previous.x - point.x, previous.y - point.y) < 1e-8)) {
             addPolygonArea2DPoint(point);
           }
           return true;
@@ -403,7 +431,7 @@ export function useAnnotation2D({
     applyShiftConstraint, polygonArea2DPoints, addPolygonArea2DPoint, completePolygonArea2D,
     addTextAnnotation2D, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, addCloudAnnotation2DPoint, completeCloudAnnotation2D,
-    hitTestAnnotations, getAnnotationOrigin, setSelectedAnnotation2D, editableAnnotationId]);
+    hitTestAnnotations, getAnnotationOrigin, setSelectedAnnotation2D, editableAnnotationId, resolveAreaPoint]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -437,13 +465,16 @@ export function useAnnotation2D({
     // ── Tool preview ────────────────────────────────────────────────────
     if (activeTool === 'none' || activeTool === 'measure') return;
 
+    if (activeTool === 'polygon-area') {
+      const area = resolveAreaPoint(drawingCoord, e.shiftKey || shiftHeldRef.current);
+      setMeasure2DSnapPoint(area.reference);
+      setAnnotation2DCursorPos(area.point);
+      return;
+    }
     const snapPoint = findSnapPoint(drawingCoord);
     setMeasure2DSnapPoint(snapPoint);
     let point = snapPoint || drawingCoord;
 
-    if (!snapPoint && shiftHeldRef.current && activeTool === 'polygon-area' && polygonArea2DPoints.length > 0) {
-      point = applyShiftConstraint(polygonArea2DPoints[polygonArea2DPoints.length - 1], point);
-    }
     if (!snapPoint && shiftHeldRef.current && activeTool === 'cloud' && cloudAnnotation2DPoints.length === 1) {
       const firstPt = cloudAnnotation2DPoints[0];
       const dx = point.x - firstPt.x;
@@ -455,7 +486,7 @@ export function useAnnotation2D({
     setAnnotation2DCursorPos(point);
   }, [activeTool, containerRef, screenToDrawing, findSnapPoint, setMeasure2DSnapPoint,
     setAnnotation2DCursorPos, applyShiftConstraint, polygonArea2DPoints, cloudAnnotation2DPoints,
-    commitDragPosition, snapForDrag, angularSnap]);
+    commitDragPosition, snapForDrag, angularSnap, resolveAreaPoint]);
 
   const endDrag = useCallback(() => {
     isDraggingRef.current = false;

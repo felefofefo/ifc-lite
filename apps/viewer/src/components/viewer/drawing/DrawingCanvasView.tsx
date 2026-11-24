@@ -13,6 +13,10 @@ import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useRef } from 'react';
+import { createLineworkSource } from '@/lib/snap/sources/linework';
+import { solveSnap } from '@/lib/snap/solve';
+import type { SnapKind, SnapProfile, SnapResult } from '@/lib/snap/types';
+import { snapDrawingAngle } from '@/lib/drawing/dimension-line';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
@@ -35,7 +39,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
   const selection = useDrawingModelSelection(vm,
-    status === 'ready' && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing);
+    status === 'ready' && !vm.selectOnly2D && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing);
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
   const editingAnnotation = vm.textAnnotation2DEditing
     ? vm.styledNotes.find((a) => a.id === vm.textAnnotation2DEditing) ?? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
@@ -212,16 +216,59 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
 function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const area = vm.polygonArea2DResults.find(item => item.id === id);
   const drag = useRef<{ pointerId: number; index: number; original: {x:number;y:number} } | null>(null);
+  const heldSnap = useRef<SnapResult | null>(null);
   if (!area || !(vm.markupTransform.scale > 0)) return null;
   const { x, y, scale } = vm.markupTransform;
   const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
   const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
   const toScreen = (p: {x:number;y:number}) => ({x:p.x*sx+x,y:p.y*sy+y});
   function setVertex(index: number, clientX: number, clientY: number) {
+    if (!area) return; // Narrow the captured area inside this nested handler.
     const rect = vm.containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const raw = {x:(clientX-rect.left-x)/sx,y:(clientY-rect.top-y)/sy};
-    vm.updateAreaVertex(id,index,vm.findSnapPoint(raw) ?? raw);
+    // Reuse the exact drawing snap solver for the polygon's *other* vertices
+    // and edges. Excluding edges incident to the dragged node prevents it from
+    // repeatedly snapping back to its original location.
+    const vertices = area.points.flatMap((p, i) => i === index ? [] : [[p.x, p.y] as const]);
+    const segments = area.points.flatMap((p, i) => {
+      const next = (i + 1) % area.points.length;
+      return i === index || next === index ? [] : [
+        [[p.x, p.y], [area.points[next].x, area.points[next].y]] as const,
+      ];
+    });
+    const tiers: SnapProfile['tiers'] = [
+      ...(vm.objectSnaps.endpoint ? [['endpoint', 'vertex'] as const] : []),
+      ...(vm.objectSnaps.intersection ? [['intersection'] as const] : []),
+      ...(vm.objectSnaps.midpoint ? [['midpoint'] as const] : []),
+      ...(vm.objectSnaps.nearest ? [['edge'] as const] : []),
+    ];
+    const profile: SnapProfile = { radiusPx: 12, hysteresisPx: 4, sources: ['linework'], tiers };
+    const source = createLineworkSource({ vertices, segments, midpoints: vm.objectSnaps.midpoint });
+    const result = solveSnap({
+      cursor: [raw.x, raw.y], metresPerPixel: 1 / scale,
+      anchor: null, chain: [], modifiers: { shift: false, alt: false }, locks: {},
+    }, [source], profile, heldSnap.current ?? undefined);
+    heldSnap.current = result.winner ? result : null;
+    const own = result.winner ? { x: result.local[0], y: result.local[1] } : null;
+    const model = vm.findSnapPoint(raw);
+    const priority = (kind: SnapKind | null) => kind === 'endpoint' || kind === 'vertex' ? 0
+      : kind === 'intersection' ? 1 : kind === 'midpoint' ? 2 : kind === 'edge' ? 3 : 4;
+    const ownTier = priority(result.winner?.kind ?? null);
+    const modelTier = priority(vm.snapKindFor(model));
+    const snapped = own && (!model || ownTier < modelTier || (ownTier === modelTier
+      && Math.hypot(raw.x - own.x, raw.y - own.y) <= Math.hypot(raw.x - model.x, raw.y - model.y)))
+      ? own : model;
+    const anchor = area.points[(index + area.points.length - 1) % area.points.length];
+    const increment = vm.angularSnap === 'off' ? 0 : Number(vm.angularSnap);
+    const angled = increment ? snapDrawingAngle(anchor, raw, 0, increment) : null;
+    const onAngle = snapped && increment
+      ? snapDrawingAngle(anchor, snapped, 0, increment) : null;
+    // Same contract as Move: a geometric reference wins only if it is on
+    // the active angular direction; otherwise keep the angular constraint.
+    const point = snapped && (!onAngle || Math.hypot(snapped.x - onAngle.x, snapped.y - onAngle.y) < 1e-8)
+      ? snapped : angled ?? snapped ?? raw;
+    vm.updateAreaVertex(id,index,point);
   }
   return <svg aria-label="Edit area vertices" className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
     {area.points.map((point,index) => {
@@ -242,6 +289,7 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
           if (event.button!==0) return;
           event.preventDefault();event.stopPropagation();
           drag.current={pointerId:event.pointerId,index,original:{...point}};
+          heldSnap.current = null;
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={event=>{
@@ -251,9 +299,9 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
         onPointerUp={event=>{
           if (drag.current?.pointerId!==event.pointerId || drag.current.index!==index) return;
           event.stopPropagation();setVertex(index,event.clientX,event.clientY);
-          drag.current=null;event.currentTarget.releasePointerCapture(event.pointerId);
+          drag.current=null;heldSnap.current=null;event.currentTarget.releasePointerCapture(event.pointerId);
         }}
-        onPointerCancel={event=>{if(drag.current?.pointerId===event.pointerId){event.stopPropagation();vm.updateAreaVertex(id,index,drag.current.original);drag.current=null;}}}
+        onPointerCancel={event=>{if(drag.current?.pointerId===event.pointerId){event.stopPropagation();vm.updateAreaVertex(id,index,drag.current.original);drag.current=null;heldSnap.current=null;}}}
       />;
     })}
   </svg>;

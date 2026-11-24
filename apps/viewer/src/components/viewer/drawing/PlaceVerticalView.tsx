@@ -180,9 +180,16 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       onPointerUp={event => finishDrag(event)}
       onPointerCancel={event => finishDrag(event, true)}
       onLostPointerCapture={event => finishDrag(event, true)}
-      onMouseDown={event => event.stopPropagation()}
+      onMouseDown={event => {
+        event.stopPropagation();
+        if (event.button === 1) vm.canvasMouseHandlers.onMouseDown(event);
+      }}
       onMouseUp={event => event.stopPropagation()}
-      onMouseMove={event => { event.stopPropagation(); if (!end) setCursor(point(event)); }}
+      onMouseMove={event => {
+        event.stopPropagation();
+        if (event.buttons & 4) { vm.canvasMouseHandlers.onMouseMove(event); return; }
+        if (!end) setCursor(point(event));
+      }}
       onMouseLeave={() => { if (!drag.current) setSnap(null); }}
       onClick={event => {
         if (edit || naming || !(scale > 0)) return;

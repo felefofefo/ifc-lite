@@ -85,6 +85,11 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
             textAnchor="middle" dominantBaseline="middle">{text}</text>
         ))}
       </g>
+      {selected && <circle
+        cx={p.x + ((graphic?.width ?? Math.max(1, text.length) * 1.5) - (graphic?.anchor.x ?? 0)) * tags.paperUnit + 4}
+        cy={p.y + ((graphic?.height ?? 2.5) - (graphic?.anchor.y ?? 0)) * tags.paperUnit + 4}
+        r={3.5} fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={1.8}
+        pointerEvents="none" />}
       {preview && tags.canResizeGrid && draft?.tag.id === tag.id && (['start', 'end'] as const).map(endpoint => {
         const at = endpoint === 'start' ? a : p;
         return <circle key={endpoint} cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)"
@@ -116,6 +121,29 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
             tags.cancelGridResize();
           }} />;
       })}
+      {editing && tag.leader && !tag.free && !tag.gridStart && <circle
+        cx={a.x} cy={a.y} r={5} fill="var(--paper, #fff)" stroke="currentColor"
+        strokeWidth={2} className="pointer-events-auto cursor-grab touch-none text-primary active:cursor-grabbing"
+        role="button" tabIndex={0}
+        aria-label={`${t('section2d.tools.edit')} · ${t('section2d.tags.leader')}`}
+        onMouseDown={event => event.stopPropagation()}
+        onClick={event => event.stopPropagation()}
+        onPointerDown={event => {
+          if (event.button !== 0 || !tags.beginLeaderBaseDrag()) return;
+          event.preventDefault(); event.stopPropagation();
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          event.stopPropagation(); tags.dragLeaderBase(event.clientX, event.clientY);
+        }}
+        onPointerUp={event => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          event.stopPropagation(); tags.dragLeaderBase(event.clientX, event.clientY, true);
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={event => { event.stopPropagation(); tags.cancelLeaderBaseDrag(); }}
+        onLostPointerCapture={tags.cancelLeaderBaseDrag} />}
     </g>;
     if (!interactive) return graphicElement;
     return <ContextMenu key={tag.id}>
