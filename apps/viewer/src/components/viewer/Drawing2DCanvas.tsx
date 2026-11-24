@@ -1261,6 +1261,19 @@ export function Drawing2DCanvas({
     const drawingToScreenY = (y: number) => y * annotScaleY + markupTransform.y;
     const markupToScreen = (point: Point2D) => ({ x: drawingToScreenX(point.x), y: drawingToScreenY(point.y) });
     const paperUnit = activeSheet && sheetEnabled ? transform.scale : markupTransform.scale * (publicationScale || 100) / 1000;
+    // The drawn text and its selection bounds must use identical font metrics.
+    const measureTextAnnotation = (annotation: TextAnnotation2D) => {
+      const textSize = annotation.appearance?.textHeight ? annotation.appearance.textHeight * paperUnit : annotation.fontSize;
+      const bold = annotation.bold ?? annotation.appearance?.bold ?? false;
+      const italic = annotation.italic ?? annotation.appearance?.italic ?? false;
+      ctx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${textSize}px ${annotation.appearance?.font ?? 'system-ui, sans-serif'}`;
+      const lines = annotation.text.split('\n');
+      const lineHeight = textSize * 1.3;
+      let maxWidth = 0;
+      for (const line of lines) maxWidth = Math.max(maxWidth, ctx.measureText(line).width);
+      const padding = 6;
+      return { lines, lineHeight, padding, bgW: maxWidth + padding * 2, bgH: lines.length * lineHeight + padding * 2 };
+    };
     const drawMeasureLine = (
       start: Point2D, end: Point2D, distance: number, fallback: string,
       placed?: Measure2DResultData['dimension'], isActive = false, id?: string,
@@ -1484,21 +1497,7 @@ export function Drawing2DCanvas({
       const sx = drawingToScreenX(textAnnotation.position.x);
       const sy = drawingToScreenY(textAnnotation.position.y);
 
-      const textSize = textAnnotation.appearance?.textHeight ? textAnnotation.appearance.textHeight * paperUnit : textAnnotation.fontSize;
-      const bold = textAnnotation.bold ?? textAnnotation.appearance?.bold ?? false;
-      const italic = textAnnotation.italic ?? textAnnotation.appearance?.italic ?? false;
-      ctx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${textSize}px ${textAnnotation.appearance?.font ?? 'system-ui, sans-serif'}`;
-      const lines = textAnnotation.text.split('\n');
-      const lineHeight = textSize * 1.3;
-      let maxWidth = 0;
-      for (const line of lines) {
-        const m = ctx.measureText(line);
-        if (m.width > maxWidth) maxWidth = m.width;
-      }
-
-      const padding = 6;
-      const bgW = maxWidth + padding * 2;
-      const bgH = lines.length * lineHeight + padding * 2;
+      const { lines, lineHeight, padding, bgW, bgH } = measureTextAnnotation(textAnnotation);
 
       // Background
       ctx.fillStyle = textAnnotation.backgroundColor;
@@ -1666,17 +1665,7 @@ export function Drawing2DCanvas({
           if (annotation && annotation.text.trim()) {
             const sx = drawingToScreenX(annotation.position.x);
             const sy = drawingToScreenY(annotation.position.y);
-            ctx.font = `${annotation.fontSize}px system-ui, sans-serif`;
-            const lines = annotation.text.split('\n');
-            const lineHeight = annotation.fontSize * 1.3;
-            const padding = 6;
-            let maxWidth = 0;
-            for (const line of lines) {
-              const m = ctx.measureText(line);
-              if (m.width > maxWidth) maxWidth = m.width;
-            }
-            const bgW = maxWidth + padding * 2;
-            const bgH = lines.length * lineHeight + padding * 2;
+            const { bgW, bgH } = measureTextAnnotation(annotation);
             drawSelectionRect(sx, sy, bgW, bgH);
           }
           break;
