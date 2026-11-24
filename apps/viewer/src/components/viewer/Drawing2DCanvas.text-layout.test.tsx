@@ -11,6 +11,8 @@ import { createRoot } from 'react-dom/client';
 import { GraphicOverrideEngine, type Drawing2D } from '@ifc-lite/drawing-2d';
 import type { TextAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { Drawing2DCanvas } from './Drawing2DCanvas.js';
+import { TextAnnotationEditor } from './TextAnnotationEditor.js';
+import { textAnnotationScreenSize } from '@/lib/drawing/annotation-types';
 
 installLayout();
 
@@ -106,5 +108,31 @@ describe('Drawing2DCanvas text selection bounds', () => {
     assert.equal(selection.width, background.width + 8);
     assert.equal(selection.height, background.height + 8);
     assert.equal(texts.find(item => item.text === 'Note')?.font, '14px system-ui, sans-serif');
+  });
+
+  it('edits a styled note at its rendered zoom-dependent font size', () => {
+    const annotation: TextAnnotation2D = {
+      id: 'styled', text: 'Hello', position: { x: 0, y: 0 },
+      fontSize: 14, color: '#111111', backgroundColor: '#ffffff', borderColor: '#333333',
+      appearance: { textHeight: 2, font: 'serif' },
+    };
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      const fontSize = textAnnotationScreenSize(annotation, 10);
+      assert.equal(fontSize, 20);
+      act(() => root.render(<TextAnnotationEditor annotation={annotation}
+        screenX={0} screenY={0} fontSize={fontSize} onConfirm={() => {}} onCancel={() => {}} />));
+      const textarea = container.querySelector('textarea');
+      assert.ok(textarea);
+      assert.equal(textarea.style.fontSize, '20px');
+      assert.equal(textarea.style.fontFamily, 'serif');
+      assert.equal(textAnnotationScreenSize(annotation, 50), 100);
+      assert.equal(textAnnotationScreenSize({ ...annotation, appearance: undefined }, 50), 14);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
   });
 });

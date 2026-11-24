@@ -17,6 +17,8 @@ interface TextAnnotationEditorProps {
   /** Screen position (top-left of the editor) */
   screenX: number;
   screenY: number;
+  /** Font size in screen pixels, consistent with the drawing canvas. */
+  fontSize?: number;
   /** Called with the new text when user confirms (Enter) */
   onConfirm: (id: string, text: string, format?: Pick<TextAnnotation2D, 'bold' | 'italic' | 'align'>) => void;
   /** Called when user cancels (Escape) or submits empty text */
@@ -27,6 +29,7 @@ export function TextAnnotationEditor({
   annotation,
   screenX,
   screenY,
+  fontSize,
   onConfirm,
   onCancel,
 }: TextAnnotationEditorProps): React.ReactElement {
@@ -125,7 +128,8 @@ export function TextAnnotationEditor({
         className="min-w-[120px] max-w-[300px] min-h-[32px] px-2 py-1 text-sm border-2 border-blue-500 rounded resize shadow-lg outline-none"
         rows={2}
         style={{
-          fontSize: annotation.fontSize,
+          fontSize: fontSize ?? annotation.fontSize,
+          fontFamily: annotation.appearance?.font ?? 'system-ui, sans-serif',
           fontWeight: bold ? 'bold' : 'normal', fontStyle: italic ? 'italic' : 'normal', textAlign: align,
           backgroundColor: '#ffffff',
           color: '#000000',

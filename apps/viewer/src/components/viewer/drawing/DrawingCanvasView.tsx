@@ -22,6 +22,7 @@ import { DrawingElementTags } from './DrawingElementTags';
 import { useDrawingModelSelection } from './DrawingModelSelection';
 import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
 import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
+import { textAnnotationScreenSize } from '@/lib/drawing/annotation-types';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
 
@@ -172,9 +173,12 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       {displayOptions.showAnnotations && editingAnnotation && (() => {
         const scaleX = drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale;
         const scaleY = drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale;
+        const paperUnit = vm.sheetEnabled && vm.activeSheet ? viewTransform.scale
+          : markupTransform.scale * (vm.publicationScale || 100) / 1000;
         return (
           <TextAnnotationEditor
             annotation={editingAnnotation}
+            fontSize={textAnnotationScreenSize(editingAnnotation, paperUnit)}
             screenX={editingAnnotation.position.x * scaleX + markupTransform.x}
             screenY={editingAnnotation.position.y * scaleY + markupTransform.y}
             onConfirm={vm.handleTextConfirm}

@@ -34,6 +34,7 @@ import { type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useDrawingElementPropertiesLookup } from '@/hooks/useDrawingElementPropertiesLookup';
 import { markActiveDrawingCanvasRendered, registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
+import { textAnnotationScreenSize } from '@/lib/drawing/annotation-types';
 import { resolveCutPolygonStyle } from './drawing/cut-polygon-style';
 import { resolveDrawingPaperTheme, type DrawingPaperTheme } from './drawing/paper-theme';
 
@@ -1263,7 +1264,7 @@ export function Drawing2DCanvas({
     const paperUnit = activeSheet && sheetEnabled ? transform.scale : markupTransform.scale * (publicationScale || 100) / 1000;
     // The drawn text and its selection bounds must use identical font metrics.
     const measureTextAnnotation = (annotation: TextAnnotation2D) => {
-      const textSize = annotation.appearance?.textHeight ? annotation.appearance.textHeight * paperUnit : annotation.fontSize;
+      const textSize = textAnnotationScreenSize(annotation, paperUnit);
       const bold = annotation.bold ?? annotation.appearance?.bold ?? false;
       const italic = annotation.italic ?? annotation.appearance?.italic ?? false;
       ctx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${textSize}px ${annotation.appearance?.font ?? 'system-ui, sans-serif'}`;

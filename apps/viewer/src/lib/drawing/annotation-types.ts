@@ -21,6 +21,11 @@ export type AnnotationSymbolStyle = {
   weight?: typeof LINEWEIGHT_PRESETS[number];
 };
 
+/** Match the canvas text size in the inline editor, including paper scale. */
+export function textAnnotationScreenSize(annotation: { fontSize: number; appearance?: Pick<AnnotationSymbolStyle, 'textHeight'> }, paperUnit: number): number {
+  return annotation.appearance?.textHeight ? annotation.appearance.textHeight * paperUnit : annotation.fontSize;
+}
+
 export function validAnnotationStyles(styles: unknown): boolean {
   if (!styles || typeof styles !== 'object' || Array.isArray(styles)) return false;
   return Object.entries(styles).every(([kind, style]) => {
