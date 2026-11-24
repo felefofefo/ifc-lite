@@ -68,6 +68,7 @@ export interface UseAnnotation2DParams {
 }
 
 export interface UseAnnotation2DResult {
+  hitTestAnnotations: (screenX: number, screenY: number) => SelectedAnnotation2D | null;
   /** Returns true if the click hit an annotation (consumed the event). */
   handleMouseDown: (e: React.MouseEvent) => boolean;
   handleMouseMove: (e: React.MouseEvent) => void;
@@ -522,6 +523,7 @@ export function useAnnotation2D({
     hitTestAnnotations, setSelectedAnnotation2D, setTextAnnotation2DEditing]);
 
   return {
+    hitTestAnnotations,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,

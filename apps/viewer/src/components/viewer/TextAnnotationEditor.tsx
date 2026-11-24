@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import type { TextAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { useTranslation } from '@/i18n';
+import { Button } from '@/components/ui/button';
 import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 
 interface TextAnnotationEditorProps {
@@ -119,6 +120,9 @@ export function TextAnnotationEditor({
       // Prevent mousedown from propagating to canvas (which would place another annotation)
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget)) handleBlur();
+      }}
     >
        <div className="absolute bottom-full left-0 mb-1 flex w-max items-center gap-1 rounded border bg-popover p-1 text-xs shadow-sm"
          role="toolbar" aria-label="Text formatting" onMouseDown={event => event.preventDefault()}>
@@ -133,13 +137,14 @@ export function TextAnnotationEditor({
              className={align === value ? 'rounded bg-accent p-1.5' : 'rounded p-1.5'}
              onClick={() => setAlign(value)}><Icon aria-hidden="true" className="size-4" /></button>;
          })}
+         <Button type="button" size="sm" className="shrink-0" disabled={!text.trim()}
+           onClick={handleBlur}>{t('section2d.tags.apply')}</Button>
        </div>
       <textarea
         ref={textareaRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
-        onBlur={handleBlur}
         placeholder={t('textAnnotationEditor.placeholder')}
         aria-label={t('textAnnotationEditor.inputLabel')}
         className="block box-border resize-none overflow-hidden border-0 outline outline-1 outline-primary"

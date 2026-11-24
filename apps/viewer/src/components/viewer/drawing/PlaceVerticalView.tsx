@@ -145,9 +145,11 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       const point = { x: grip.x + delta.x, y: grip.y + delta.y };
       const reference = vm.findSnapPoint(point);
       const constrained = resolveDirection(anchor, point, reference, event.shiftKey);
-      setSnap(reference && (!constrained || (constrained.x === reference.x && constrained.y === reference.y)) ? reference : null);
-      setSnapKind(vm.snapKindFor(reference));
-      if (constrained) offset = { x: constrained.x - grip.x, y: constrained.y - grip.y };
+      const resolved = constrained ?? reference ?? point;
+      const accepted = reference && Math.hypot(resolved.x - reference.x, resolved.y - reference.y) < 1e-8;
+      setSnap(accepted ? reference : null);
+      setSnapKind(accepted ? vm.snapKindFor(reference) : null);
+      offset = { x: resolved.x - grip.x, y: resolved.y - grip.y };
     }
     const trace = dragVerticalViewTrace(current.trace, current.grip, offset);
     if (trace) {
@@ -204,13 +206,34 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
         <line x1={a.x + offset.x} y1={a.y + offset.y} x2={b.x + offset.x} y2={b.y + offset.y}
           stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 5" />
       </g>}
-      {edit && a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth="22" pointerEvents="none" />}
+      {edit && a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+        stroke="transparent" strokeWidth="22" pointerEvents="stroke"
+        className="cursor-grab touch-none" onPointerDown={event => beginDrag(event, 'line')} />}
       {arrow && <path transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}
         d="M0 0H24m-7-5 7 5-7 5" stroke="currentColor" strokeWidth="2" fill="none" className="pointer-events-none" />}
+      {edit && a && b && (['start', 'end'] as const).map(grip => {
+        const at = grip === 'start' ? a : b;
+        return <circle key={grip} cx={at.x} cy={at.y} r={6}
+          fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={2}
+          className="cursor-crosshair touch-none" pointerEvents="all"
+          role="button" tabIndex={0}
+          aria-label={`${t('section2d.tools.edit')} · ${grip === 'start' ? '1' : '2'}`}
+          onPointerDown={event => beginDrag(event, grip)}
+          onKeyDown={event => {
+            if (!start || !end || dragging) return;
+            const step = event.shiftKey ? 10 : 1;
+            const dx = event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0;
+            const dy = event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0;
+            if (!dx && !dy) return;
+            event.preventDefault(); event.stopPropagation();
+            if (!(scale > 0)) return;
+            const trace = dragVerticalViewTrace([start, end], grip, { x: dx / scale, y: dy / scale });
+            if (trace) { setStart(trace[0]); setEnd(trace[1]); }
+          }} />;
+      })}
       {snap && <g pointerEvents="none" transform={`translate(${toScreen(snap).x} ${toScreen(snap).y})`}>
         <DrawingSnapGlyph kind={snapKind} />
       </g>}
-      {/* Endpoint grips belong to Select/Move, not the properties editor. */}
     </svg>
     <div role="toolbar" aria-label={t(edit ? 'section2d.tools.edit' : 'section2d.create.trace')}
       className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
@@ -243,7 +266,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
         if (!start || !end || useSavedSectionCuts.getState().projectId !== project) return;
         editSavedViewTrace(edit.id, [world(start), world(end)], drawnPlane.flipped !== reverse, distant);
         close();
-      }}>{t('section2d.views.save')}</Button>
+      }}>{t('section2d.tags.apply')}</Button>
 
     </div>
     {naming && start && end && custom && <ViewIdentityDialog name={t(`section2d.views.type.${kind}`)}

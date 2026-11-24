@@ -43,7 +43,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
     const highlighted = selected || editing || hovered;
     const weakHighlight = hovered && !selected && !editing;
     const highlightFilter = highlighted ? `url(#${filterId}-${weakHighlight ? 'hover' : 'selected'})` : undefined;
-    const graphicElement = <g key={tag.id}
+    const graphicElement = <g key={tag.id} style={{ outline: 'none' }}
       className={dragging ? 'pointer-events-auto cursor-grab touch-none text-primary'
         : highlighted || preview ? 'text-primary' : 'text-foreground'}
       onPointerDown={dragging ? event => {
@@ -65,11 +65,11 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       onPointerCancel={dragging ? event => { event.stopPropagation(); tags.cancelEditDrag(); } : undefined}
       onLostPointerCapture={dragging ? () => tags.cancelEditDrag() : undefined}>
       {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={highlighted || preview ? "currentColor" : style?.color ?? "currentColor"}
-        strokeOpacity={weakHighlight ? 0.65 : 1}
+        strokeOpacity={weakHighlight ? 0.55 : 1}
         strokeWidth={highlighted ? Math.max(1.5, (lineWidth ?? 0) * tags.paperUnit) : lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
       {editing && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
         stroke="transparent" strokeWidth={14} pointerEvents="stroke" />}
-      <g role={interactive ? 'button' : undefined}
+      <g role={interactive ? 'button' : undefined} style={{ outline: 'none' }}
         tabIndex={interactive ? 0 : undefined}
         aria-label={interactive ? `${t('section2d.tools.select')}: ${text}` : undefined}
         className={interactive ? 'pointer-events-auto cursor-pointer' : undefined}
@@ -92,7 +92,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
             y={p.y - graphic.anchor.y * tags.paperUnit}
             width={graphic.width * tags.paperUnit} height={graphic.height * tags.paperUnit} />
         ) : (
-          <text x={p.x} y={p.y} fill="currentColor" fillOpacity={weakHighlight ? 0.65 : 1} stroke="var(--paper, #fff)" strokeWidth={3}
+          <text x={p.x} y={p.y} fill="currentColor" fillOpacity={weakHighlight ? 0.55 : 1} stroke="var(--paper, #fff)" strokeWidth={3}
             paintOrder="stroke" fontFamily={style?.font ?? "Arial, sans-serif"} fontSize={style?.textHeight ? style.textHeight * tags.paperUnit : tags.fontSize}
             textAnchor="middle" dominantBaseline="middle">{text}</text>
         ))}
@@ -126,10 +126,11 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
           onPointerCancel={event => {
             event.stopPropagation();
             tags.cancelGridResize();
-          }} />;
+          }}
+          onLostPointerCapture={tags.cancelGridResize} />;
       })}
       {editing && tag.leader && !tag.free && !tag.gridStart && <circle
-        cx={a.x} cy={a.y} r={5} fill="var(--paper, #fff)" stroke="currentColor"
+        cx={a.x} cy={a.y} r={6} fill="var(--paper, #fff)" stroke="currentColor"
         strokeWidth={2} className="pointer-events-auto cursor-grab touch-none text-primary active:cursor-grabbing"
         role="button" tabIndex={0}
         aria-label={`${t('section2d.tools.edit')} · ${t('section2d.tags.leader')}`}
@@ -215,7 +216,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
           {tags.gridStyles.map(style => <SelectItem key={style.id} value={style.id}>{style.name}</SelectItem>)}
         </SelectContent>
       </Select>
-      <Button size="sm" disabled={!draft.tag.field.trim()} onClick={tags.apply}>{t('section2d.views.save')}</Button>
+      <Button size="sm" className="shrink-0" disabled={!draft.tag.field.trim()} onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
       <Button size="sm" variant="ghost" onClick={tags.close}>{t('section2d.create.cancel')}</Button>
       {tags.failed && <span role="alert" className="px-2 text-xs text-destructive">{t('section2d.tags.writeFailed')}</span>}
     </div>}

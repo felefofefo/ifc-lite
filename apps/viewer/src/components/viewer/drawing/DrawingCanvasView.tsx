@@ -111,6 +111,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           cloudAnnotationPoints={vm.cloudAnnotation2DPoints}
           cloudAnnotations={vm.styledClouds}
           selectedAnnotation={vm.selectedAnnotation2D}
+          hoveredAnnotation={placement ? null : selection.annotationHover}
           ifcAnnotationLines={layers.ifcAnnotationData.lines}
           ifcAnnotationTexts={layers.ifcAnnotationData.texts}
           ifcAnnotationFills={layers.ifcAnnotationData.fills}
@@ -180,7 +181,10 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
             onClick={vm.editSelectedAnnotation}>{t('section2d.tools.edit')}</Button>}
-          <Button size="sm" variant="ghost" onClick={vm.clearAnnotationSelection}>{t('section2d.tags.close')}</Button>
+          {vm.editableAnnotationId === vm.selectedAnnotation2D.id
+            && (vm.selectedAnnotation2D.type === 'polygon' || vm.selectedAnnotation2D.type === 'cloud')
+            ? <Button size="sm" className="shrink-0" onClick={vm.clearAnnotationSelection}>{t('section2d.tags.apply')}</Button>
+            : <Button size="sm" variant="ghost" onClick={vm.clearAnnotationSelection}>{t('section2d.tags.close')}</Button>}
         </div>}
 
       {displayOptions.showAnnotations && editingAnnotation && (() => {

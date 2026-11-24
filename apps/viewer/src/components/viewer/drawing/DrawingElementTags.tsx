@@ -369,6 +369,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   function beginLeaderBaseDrag() {
     if (draft?.mode !== 'edit' || draft.tag.free || !draft.tag.leader || draft.tag.gridStart || !target) return false;
     leaderBaseRef.current = { tag: structuredClone(draft.tag) };
+    setCursor(null);
     return true;
   }
 
@@ -472,7 +473,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       ...(drag.tag.gridStart && { gridStart: translate(drag.tag.gridStart) }),
       ...(!drag.tag.free && { anchorOffset: translate(drag.tag.anchorOffset) }) };
     if (!finish) {
-      setCursor({ point: next.position, reference: reference ?? (directed && angularSnap !== 'off' ? final : null) });
+      const accepted = reference && Math.hypot(reference.x - next.position.x, reference.y - next.position.y) < 1e-8;
+      setCursor({ point: next.position, reference: accepted ? reference
+        : directed && angularSnap !== 'off' ? next.position : null });
       setDragPreviewTag(next);
     } else {
       saveMovedTag(next);
@@ -539,7 +542,8 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     const adjusted = angled ?? snapped ?? position;
     const constrained = plane.axis === 'y' && !plane.customPlane
       ? adjusted : { x: resize.tag.position.x, y: adjusted.y };
-    const indicated = snapped || (angled && angularSnap !== 'off') ? constrained : null;
+    const accepted = snapped && Math.hypot(snapped.x - constrained.x, snapped.y - constrained.y) < 1e-8;
+    const indicated = accepted ? snapped : angled && angularSnap !== 'off' ? constrained : null;
     const change = endpoint === 'start' ? { gridStart: constrained } : { position: constrained };
     const next = { ...draft.tag, ...change };
     if (!finish) {
@@ -575,7 +579,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
     resizeFrame.current = null;
     pendingResize.current = null;
-    const original = resizingRef.current?.tag ?? stored.find(tag => tag.id === draft?.tag.id);
+    const original = resizingRef.current?.tag;
     resizingRef.current = null;
     setCursor(null);
     if (original) setSession(current => current ? { ...current, tag: original } : current);
@@ -624,7 +628,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       catch (error) { console.warn('Could not delete grid', error); setFailed(true); }
     },
     canPlace: !!view && !!drawing,
-    snapReference: placing || freeTemplate || !!dragRef.current || !!resizingRef.current ? cursor?.reference : null,
+    snapReference: placing || freeTemplate || !!dragRef.current || !!resizingRef.current || !!leaderBaseRef.current ? cursor?.reference : null,
     fontSize: Math.max(11, 2.5 * transform.scale * (scale || 100) / 1000),
     click,
     move(e: MouseEvent) { if (!active) return false; if (placing || freeTemplate) setCursor(placementPoint(e)); return true; },

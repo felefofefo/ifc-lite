@@ -1,7 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -16,13 +16,15 @@ import type { DrawingViewModel } from './useDrawingViewModel';
 export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string>();
+  const [hoveredId, setHoveredId] = useState<string>();
+  const filterId = useId().replace(/:/g, '');
   const [editId, setEditId] = useState<string>();
   const [failed, setFailed] = useState(false);
   const views = useSavedSectionCuts(s => s.cuts);
   const { templates, markerStyles } = useSavedSectionCuts(s => s.tagLibrary);
   const annotationView = useSavedSectionCuts(selectActiveSavedView);
   const { drawing, viewTransform, drawnPlane } = vm;
-  useEffect(() => { setSelectedId(undefined); setEditId(undefined); setFailed(false); vm.setSelectedMarker(null); }, [annotationView?.id]);
+  useEffect(() => { setSelectedId(undefined); setHoveredId(undefined); setEditId(undefined); setFailed(false); vm.setSelectedMarker(null); }, [annotationView?.id]);
   useEffect(() => { if (!vm.selectedMarker) setSelectedId(undefined); }, [vm.selectedMarker?.id]);
   const bounds = vm.runtime.geometryResult?.coordinateInfo.shiftedBounds;
   const markers = useMemo(() => {
@@ -40,7 +42,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   }, [views, annotationView, bounds, drawnPlane.axis, drawnPlane.custom, drawnPlane.flipped, templates, markerStyles]);
   if (!drawing || !bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return null;
   // A Move command needs unobstructed clicks on the drawing surface.
-  const placingDimension = vm.annotation2DActiveTool === 'measure' || vm.annotation2DActiveTool === 'move';
+  const placingDimension = vm.annotation2DActiveTool !== 'none' || vm.tags.active;
   const editing = placingDimension ? undefined : markers.find(marker => marker.id === editId);
   if (editing) {
     const dx = editing.end.x - editing.start.x, dy = editing.end.y - editing.start.y;
@@ -59,8 +61,19 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const selected = placingDimension ? undefined : markers.find(mark => mark.id === selectedId);
   return <>
   <svg className="pointer-events-none absolute inset-0 h-full w-full text-primary">
+    <defs>
+      {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${filterId}-${state}`} colorInterpolationFilters="sRGB">
+        <feFlood floodColor="currentColor" floodOpacity={state === 'hover' ? 0.55 : 1} result="tint" />
+        <feBlend in="SourceGraphic" in2="tint" mode="screen" result="highlight" />
+        <feComposite in="highlight" in2="SourceAlpha" operator="in" />
+      </filter>)}
+    </defs>
     {markers.map(mark => {
       const { kind, angle, heads, line } = mark;
+      const isSelected = !placingDimension && selectedId === mark.id;
+      const isHovered = !placingDimension && !isSelected && hoveredId === mark.id;
+      const highlighted = isSelected || isHovered;
+      const highlightFilter = highlighted ? `url(#${filterId}-${isSelected ? 'selected' : 'hover'})` : undefined;
       const x1 = mark.start.x * scale + tx, x2 = mark.end.x * scale + tx;
       const y1 = mark.start.y * scale + ty, y2 = mark.end.y * scale + ty;
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
@@ -77,7 +90,12 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
           reverse: -dy * mark.direction.x + dx * mark.direction.y < 0, distant });
       };
       return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={placingDimension ? -1 : 0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={selectedId === mark.id}
-        className="cursor-pointer outline-none focus-visible:opacity-60"
+        style={{ outline: 'none' }}
+        className={`cursor-pointer outline-none ${highlighted ? 'text-primary' : 'text-foreground'}`}
+        onPointerEnter={() => { if (!placingDimension) setHoveredId(mark.id); }}
+        onPointerLeave={() => setHoveredId(id => id === mark.id ? undefined : id)}
+        onFocus={() => { if (!placingDimension) setHoveredId(mark.id); }}
+        onBlur={() => setHoveredId(id => id === mark.id ? undefined : id)}
         onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); select(); }} onDoubleClick={e => { e.stopPropagation(); open(); }}
         onKeyDown={e => {
@@ -92,22 +110,23 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
         <line className={placingDimension ? undefined : "pointer-events-auto"} x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="20" />
         {markerTraceLines(mark, paperUnit / scale, line).map(([a, b], index) => (
           <line key={index} x1={a.x * scale + tx} y1={a.y * scale + ty} x2={b.x * scale + tx} y2={b.y * scale + ty}
-            stroke={selectedId === mark.id ? 'currentColor' : line?.color ?? 'currentColor'}
-            strokeWidth={line ? Math.max(0.65, markerLineWidth(line, vm.lineweights) * paperUnit) + (selectedId === mark.id ? 1 : 0) : selectedId === mark.id ? 2.5 : 1.5}
+            stroke={highlighted ? 'currentColor' : line?.color ?? 'currentColor'}
+            strokeOpacity={isHovered ? 0.55 : 1}
+            strokeWidth={line ? Math.max(0.65, markerLineWidth(line, vm.lineweights) * paperUnit) + (highlighted ? 1 : 0) : highlighted ? 2.5 : 1.5}
             strokeDasharray={line ? markerLineDash(line, kind).map(value => value * paperUnit).join(' ') || undefined
               : kind === 'elevation' ? '4 4' : '12 4'} />
         ))}
         {heads.length ? heads.map(({ slot, graphic }) => {
           const point = markerHeadPoint(mark, slot);
-          return <image key={slot} href={graphic.href}
+          return <image key={slot} href={graphic.href} filter={highlightFilter}
             className={placingDimension ? undefined : 'pointer-events-auto'}
             transform={`translate(${point.x * scale + tx} ${point.y * scale + ty}) rotate(${graphic.directional ? 0 : angle})`}
             x={-graphic.anchor.x * paperUnit} y={-graphic.anchor.y * paperUnit}
             width={graphic.width * paperUnit} height={graphic.height * paperUnit} />;
         }) : <>
-          <path transform={`translate(${mx} ${my}) rotate(${angle})`} d="M0 0H19m-6-4 6 4-6 4" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          <path transform={`translate(${mx} ${my}) rotate(${angle})`} d="M0 0H19m-6-4 6 4-6 4" stroke="currentColor" strokeOpacity={isHovered ? 0.55 : 1} strokeWidth="1.5" fill="none" />
           <text className={`fill-current stroke-background [paint-order:stroke] [stroke-width:3px] text-xs font-semibold ${placingDimension ? '' : 'pointer-events-auto'}`}
-            x={mx + mark.direction.x * 25} y={my + mark.direction.y * 25} textAnchor="middle" dominantBaseline="central">{mark.code}</text>
+            fillOpacity={isHovered ? 0.55 : 1} x={mx + mark.direction.x * 25} y={my + mark.direction.y * 25} textAnchor="middle" dominantBaseline="central">{mark.code}</text>
         </>}
       </g></ContextMenuTrigger>
         <ContextMenuContent>

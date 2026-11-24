@@ -224,6 +224,7 @@ interface Drawing2DCanvasProps {
   cloudAnnotations?: CloudAnnotation2D[];
   // Selection
   selectedAnnotation?: SelectedAnnotation2D | null;
+  hoveredAnnotation?: SelectedAnnotation2D | null;
   // IFC annotation overlay (issue #812)
   ifcAnnotationLines?: readonly DrawingLine2D[];
   ifcAnnotationTexts?: readonly AnnotationText2D[];
@@ -283,6 +284,7 @@ export function Drawing2DCanvas({
   cloudAnnotationPoints = [],
   cloudAnnotations = [],
   selectedAnnotation = null,
+  hoveredAnnotation = null,
   ifcAnnotationLines,
   ifcAnnotationTexts,
   ifcAnnotationFills,
@@ -1306,7 +1308,7 @@ export function Drawing2DCanvas({
         ctx.rotate(angle * Math.PI / 180);
         ctx.fillText(label, 0, 0);
         if (labelSelected) {
-          ctx.strokeStyle = '#1976D2';
+          ctx.strokeStyle = getComputedStyle(canvas).color;
           ctx.lineWidth = 1;
           ctx.strokeRect(-width / 2, -height / 2, width, height);
         }
@@ -1593,14 +1595,19 @@ export function Drawing2DCanvas({
 
     // 8. RENDER SELECTION HIGHLIGHT
     // ═══════════════════════════════════════════════════════════════════════
-    if (selectedAnnotation) {
-      const SEL_COLOR = '#1976D2';
-      const SEL_FILL = 'rgba(25, 118, 210, 0.18)';
+    // Hover and selection share the same geometry and differ only in intensity.
+    const primaryColor = getComputedStyle(canvas).color;
+    const highlightAnnotation = (target: SelectedAnnotation2D, opacity: number) => {
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      const SEL_COLOR = primaryColor;
 
-      switch (selectedAnnotation.type) {
+      switch (target.type) {
         case 'measure': {
-          if (selectedAnnotation.dimensionLabel) break;
-          const result = measureResults.find((r) => r.id === selectedAnnotation.id);
+          // Hover the full dimension even when the hit is on its editable label.
+          // Preserve the label-only selection state for label manipulation.
+          if (target.dimensionLabel && opacity === 1) break;
+          const result = measureResults.find((r) => r.id === target.id);
           if (result) {
             const chainId = result.dimension?.chainId;
             if (!chainId) {
@@ -1616,7 +1623,7 @@ export function Drawing2DCanvas({
           break;
         }
         case 'polygon': {
-          const result = polygonAreaResults.find((r) => r.id === selectedAnnotation.id);
+          const result = polygonAreaResults.find((r) => r.id === target.id);
           if (result && result.points.length >= 3) {
             ctx.save();
             ctx.beginPath();
@@ -1626,8 +1633,10 @@ export function Drawing2DCanvas({
               else ctx.lineTo(sx, sy);
             });
             ctx.closePath();
-            ctx.fillStyle = SEL_FILL;
+            ctx.fillStyle = SEL_COLOR;
+            ctx.globalAlpha = opacity * 0.18;
             ctx.fill();
+            ctx.globalAlpha = opacity;
             ctx.strokeStyle = SEL_COLOR;
             ctx.lineWidth = 2.5;
             ctx.setLineDash([]);
@@ -1637,7 +1646,7 @@ export function Drawing2DCanvas({
           break;
         }
         case 'text': {
-          const annotation = textAnnotations.find((a) => a.id === selectedAnnotation.id);
+          const annotation = textAnnotations.find((a) => a.id === target.id);
           if (annotation && annotation.id !== textAnnotationEditing && annotation.text.trim()) {
             const sx = drawingToScreenX(annotation.position.x);
             const sy = drawingToScreenY(annotation.position.y);
@@ -1652,7 +1661,7 @@ export function Drawing2DCanvas({
           break;
         }
         case 'cloud': {
-          const cloud = cloudAnnotations.find((a) => a.id === selectedAnnotation.id);
+          const cloud = cloudAnnotations.find((a) => a.id === target.id);
           if (cloud && cloud.points.length >= 2) {
             const [p1, p2] = cloud.points;
             const arcRadius = Math.min(Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y)) * 0.15 || 0.2;
@@ -1667,14 +1676,17 @@ export function Drawing2DCanvas({
           break;
         }
       }
-    }
+      ctx.restore();
+    };
+    if (hoveredAnnotation && hoveredAnnotation.id !== selectedAnnotation?.id) highlightAnnotation(hoveredAnnotation, 0.55);
+    if (selectedAnnotation) highlightAnnotation(selectedAnnotation, 1);
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-full"
+      className="w-full h-full text-primary"
       style={CANVAS_STYLE}
     />
   );

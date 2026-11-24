@@ -7,6 +7,7 @@ import type { Point2D } from '@ifc-lite/drawing-2d';
 import { createDrawingModelIndex } from '@/lib/drawing/drawing-model-pick';
 import { useViewerStore } from '@/store';
 import type { DrawingViewModel } from './useDrawingViewModel';
+import type { SelectedAnnotation2D } from '@/store/slices/drawing2DSlice';
 
 const PICK_RADIUS_PX = 6;
 const DRAG_THRESHOLD_PX = 4;
@@ -18,6 +19,9 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean)
   const primary = useViewerStore(s => s.selectedEntityId);
   const selectedIds = useViewerStore(s => s.selectedEntityIds);
   const [hover, setHover] = useState<number>();
+  const [annotationHover, setAnnotationHover] = useState<SelectedAnnotation2D | null>(null);
+  const annotationEnabled = vm.status === 'ready' && vm.annotation2DActiveTool === 'none'
+    && !vm.textAnnotation2DEditing && !vm.tags.active && vm.displayOptions.showAnnotations;
   const candidates = useRef<number[]>([]);
   const cycled = useRef<number | undefined>(undefined);
   const press = useRef<{ x: number; y: number; dragged: boolean } | null>(null);
@@ -26,6 +30,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean)
     candidates.current = [];
     cycled.current = undefined;
     setHover(undefined);
+    setAnnotationHover(null);
   }
 
   useEffect(() => {
@@ -33,7 +38,8 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean)
     cycled.current = undefined;
     press.current = null;
     setHover(undefined);
-  }, [enabled, index, drawnPlane.id]);
+    setAnnotationHover(null);
+  }, [enabled, annotationEnabled, index, drawnPlane.id]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -84,7 +90,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean)
       if (!press.current) clearHover();
     },
     onMouseMoveCapture(event: MouseEvent<HTMLDivElement>) {
-      if (!isCanvas(event) && candidates.current.length) clearHover();
+      if (!isCanvas(event)) clearHover();
     },
     onMouseMove(event: MouseEvent<HTMLDivElement>) {
       mouse.onMouseMove(event);
@@ -93,11 +99,20 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean)
         down.dragged = true;
       }
       if (event.buttons === 1 && down && !down.dragged) return;
-      if (!enabled || !isCanvas(event) || event.buttons) {
+      if (!isCanvas(event) || event.buttons) {
         clearHover();
         return;
       }
-      setHover(pick(event));
+      const rect = event.currentTarget.getBoundingClientRect();
+      const hit = annotationEnabled ? vm.hitTestAnnotations(event.clientX - rect.left, event.clientY - rect.top) : null;
+      setAnnotationHover(previous => previous?.id === hit?.id && previous?.type === hit?.type
+        && previous?.dimensionLabel === hit?.dimensionLabel ? previous : hit);
+      if (hit) {
+        candidates.current = [];
+        cycled.current = undefined;
+        setHover(undefined);
+      } else if (enabled) setHover(pick(event));
+      else clearHover();
     },
     onMouseLeave() {
       mouse.onMouseLeave();
@@ -143,6 +158,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean)
 
   return {
     mouseHandlers,
+    annotationHover: annotationEnabled ? annotationHover : null,
     overlay: index && (ids.size > 0 || (enabled && hover !== undefined)) ? (
       <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full">
         {Array.from(ids, id => highlight(id, false))}

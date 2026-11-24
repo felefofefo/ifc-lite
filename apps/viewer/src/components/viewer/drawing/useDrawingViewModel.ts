@@ -866,7 +866,7 @@ export function useDrawingViewModel() {
     isPinned, togglePinned, containerRef, cachedSheetTransformRef,
     openDrawer, toggleDrawer, closeDrawer,
     viewTransform, markupTransform, zoomIn, zoomOut, fitToView,
-    tags, canvasMouseHandlers: {
+    tags, hitTestAnnotations: annotationHandlers.hitTestAnnotations, canvasMouseHandlers: {
       ...canvasMouseHandlers,
       onMouseDown: (e: React.MouseEvent) => {
         // Middle-button Pan must work even while a drawing tool or tag editor is active.
