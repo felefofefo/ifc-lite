@@ -12,7 +12,7 @@ import { Spinner } from '@/components/ui/spinner';
 
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { createLineworkSource } from '@/lib/snap/sources/linework';
 import { solveSnap } from '@/lib/snap/solve';
 import type { SnapKind, SnapProfile, SnapResult } from '@/lib/snap/types';
@@ -217,6 +217,7 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const area = vm.polygonArea2DResults.find(item => item.id === id);
   const drag = useRef<{ pointerId: number; index: number; original: {x:number;y:number} } | null>(null);
   const heldSnap = useRef<SnapResult | null>(null);
+  const [feedback, setFeedback] = useState<{ point: { x: number; y: number }; kind: SnapKind | null } | null>(null);
   if (!area || !(vm.markupTransform.scale > 0)) return null;
   const { x, y, scale } = vm.markupTransform;
   const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
@@ -268,6 +269,8 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
     // the active angular direction; otherwise keep the angular constraint.
     const point = snapped && (!onAngle || Math.hypot(snapped.x - onAngle.x, snapped.y - onAngle.y) < 1e-8)
       ? snapped : angled ?? snapped ?? raw;
+    const kind = snapped === own ? result.winner?.kind ?? null : vm.snapKindFor(model);
+    setFeedback(point === snapped && kind ? { point, kind } : null);
     vm.updateAreaVertex(id,index,point);
   }
   return <svg aria-label="Edit area vertices" className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
@@ -299,11 +302,13 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
         onPointerUp={event=>{
           if (drag.current?.pointerId!==event.pointerId || drag.current.index!==index) return;
           event.stopPropagation();setVertex(index,event.clientX,event.clientY);
-          drag.current=null;heldSnap.current=null;event.currentTarget.releasePointerCapture(event.pointerId);
+          drag.current=null;heldSnap.current=null;setFeedback(null);event.currentTarget.releasePointerCapture(event.pointerId);
         }}
-        onPointerCancel={event=>{if(drag.current?.pointerId===event.pointerId){event.stopPropagation();vm.updateAreaVertex(id,index,drag.current.original);drag.current=null;heldSnap.current=null;}}}
+        onPointerCancel={event=>{if(drag.current?.pointerId===event.pointerId){event.stopPropagation();vm.updateAreaVertex(id,index,drag.current.original);drag.current=null;heldSnap.current=null;setFeedback(null);}}}
+        onLostPointerCapture={()=>{drag.current=null;heldSnap.current=null;setFeedback(null);}}
       />;
     })}
+    {feedback && <g transform={`translate(${toScreen(feedback.point).x} ${toScreen(feedback.point).y})`}><DrawingSnapGlyph kind={feedback.kind} /></g>}
   </svg>;
 }
 
@@ -313,6 +318,7 @@ function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const cloud = vm.cloudAnnotations2D.find(item => item.id === id);
   const drag = useRef<{ pointerId: number; opposite: { x: number; y: number };
     original: [{ x: number; y: number }, { x: number; y: number }] } | null>(null);
+  const [feedback, setFeedback] = useState<{ point: { x: number; y: number }; kind: SnapKind | null } | null>(null);
   if (!cloud || cloud.points.length < 2 || !(vm.markupTransform.scale > 0)) return null;
 
   const [a, b] = cloud.points;
@@ -330,7 +336,10 @@ function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
     const rect = vm.containerRef.current?.getBoundingClientRect();
     if (!rect) return null;
     const raw = { x: (clientX - rect.left - x) / sx, y: (clientY - rect.top - y) / sy };
-    return vm.findSnapPoint(raw) ?? raw;
+    const snapped = vm.findSnapPoint(raw);
+    const kind = vm.snapKindFor(snapped);
+    setFeedback(snapped && kind ? { point: snapped, kind } : null);
+    return snapped ?? raw;
   };
   const resize = (clientX: number, clientY: number) => {
     const current = drag.current;
@@ -374,14 +383,17 @@ function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
           if (drag.current?.pointerId !== event.pointerId) return;
           event.stopPropagation(); resize(event.clientX, event.clientY);
           drag.current = null;
+          setFeedback(null);
           event.currentTarget.releasePointerCapture(event.pointerId);
         }}
         onPointerCancel={event => {
           if (drag.current?.pointerId !== event.pointerId) return;
           event.stopPropagation(); vm.resizeRevisionCloud(id, drag.current.original);
           drag.current = null;
+          setFeedback(null);
         }}
-        onLostPointerCapture={() => { drag.current = null; }} />;
+        onLostPointerCapture={() => { drag.current = null; setFeedback(null); }} />;
     })}
+    {feedback && <g transform={`translate(${screen(feedback.point).x} ${screen(feedback.point).y})`}><DrawingSnapGlyph kind={feedback.kind} /></g>}
   </svg>;
 }

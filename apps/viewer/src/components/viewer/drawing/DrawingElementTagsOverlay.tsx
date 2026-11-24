@@ -6,6 +6,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useId, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import type { ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
 import type { DrawingViewModel } from './useDrawingViewModel';
@@ -13,6 +14,8 @@ import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 
 export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
   const { t } = useTranslation();
+  const filterId = useId().replace(/:/g, '');
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const tags = vm.tags;
   const draft = tags.draft;
   const snap = tags.snapReference && tags.screen(tags.snapReference);
@@ -36,9 +39,13 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
     const editing = preview && draft?.mode === 'edit' && draft.tag.id === tag.id;
     const selected = !preview && tags.selected?.id === tag.id;
     const dragging = selected && tags.tool === 'none';
+    const hovered = interactive && hoveredId === tag.id;
+    const highlighted = selected || editing || hovered;
+    const weakHighlight = hovered && !selected && !editing;
+    const highlightFilter = highlighted ? `url(#${filterId}-${weakHighlight ? 'hover' : 'selected'})` : undefined;
     const graphicElement = <g key={tag.id}
       className={dragging ? 'pointer-events-auto cursor-grab touch-none text-primary'
-        : editing ? 'text-primary' : preview ? 'text-primary' : 'text-foreground'}
+        : highlighted || preview ? 'text-primary' : 'text-foreground'}
       onPointerDown={dragging ? event => {
         if (event.button !== 0 || !tags.beginEditDrag(event.clientX, event.clientY)) return;
         event.preventDefault(); event.stopPropagation();
@@ -57,39 +64,39 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       } : undefined}
       onPointerCancel={dragging ? event => { event.stopPropagation(); tags.cancelEditDrag(); } : undefined}
       onLostPointerCapture={dragging ? () => tags.cancelEditDrag() : undefined}>
-      {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={preview ? "currentColor" : style?.color ?? "currentColor"}
-        strokeWidth={lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
+      {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={highlighted || preview ? "currentColor" : style?.color ?? "currentColor"}
+        strokeOpacity={weakHighlight ? 0.65 : 1}
+        strokeWidth={highlighted ? Math.max(1.5, (lineWidth ?? 0) * tags.paperUnit) : lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
       {editing && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
         stroke="transparent" strokeWidth={14} pointerEvents="stroke" />}
       <g role={interactive ? 'button' : undefined}
         tabIndex={interactive ? 0 : undefined}
         aria-label={interactive ? `${t('section2d.tools.select')}: ${text}` : undefined}
-        className={interactive ? 'pointer-events-auto cursor-pointer hover:fill-primary focus-visible:fill-primary' : undefined}
+        className={interactive ? 'pointer-events-auto cursor-pointer' : undefined}
+        onPointerEnter={interactive ? () => setHoveredId(tag.id) : undefined}
+        onPointerLeave={interactive ? () => setHoveredId(current => current === tag.id ? null : current) : undefined}
+        onFocus={interactive ? () => setHoveredId(tag.id) : undefined}
+        onBlur={interactive ? () => setHoveredId(current => current === tag.id ? null : current) : undefined}
         onMouseDown={interactive ? e => e.stopPropagation() : undefined}
         onClick={interactive ? e => { e.stopPropagation(); tags.choose(tag); } : undefined}
         onKeyDown={interactive ? e => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); tags.choose(tag); }
         } : undefined}>
-        {interactive && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
+        {interactive && (tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
           stroke="transparent" strokeWidth={12} pointerEvents="stroke" />}
-        {startGraphic && <image href={startGraphic.href}
+        {startGraphic && <image href={startGraphic.href} filter={highlightFilter}
           x={a.x - startGraphic.anchor.x * tags.paperUnit} y={a.y - startGraphic.anchor.y * tags.paperUnit}
           width={startGraphic.width * tags.paperUnit} height={startGraphic.height * tags.paperUnit} />}
         {!hideEnd && (graphic ? (
-          <image href={graphic.href} x={p.x - graphic.anchor.x * tags.paperUnit}
+          <image href={graphic.href} filter={highlightFilter} x={p.x - graphic.anchor.x * tags.paperUnit}
             y={p.y - graphic.anchor.y * tags.paperUnit}
             width={graphic.width * tags.paperUnit} height={graphic.height * tags.paperUnit} />
         ) : (
-          <text x={p.x} y={p.y} fill="currentColor" stroke="var(--paper, #fff)" strokeWidth={3}
+          <text x={p.x} y={p.y} fill="currentColor" fillOpacity={weakHighlight ? 0.65 : 1} stroke="var(--paper, #fff)" strokeWidth={3}
             paintOrder="stroke" fontFamily={style?.font ?? "Arial, sans-serif"} fontSize={style?.textHeight ? style.textHeight * tags.paperUnit : tags.fontSize}
             textAnchor="middle" dominantBaseline="middle">{text}</text>
         ))}
       </g>
-      {selected && <circle
-        cx={p.x + ((graphic?.width ?? Math.max(1, text.length) * 1.5) - (graphic?.anchor.x ?? 0)) * tags.paperUnit + 4}
-        cy={p.y + ((graphic?.height ?? 2.5) - (graphic?.anchor.y ?? 0)) * tags.paperUnit + 4}
-        r={3.5} fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={1.8}
-        pointerEvents="none" />}
       {preview && tags.canResizeGrid && draft?.tag.id === tag.id && (['start', 'end'] as const).map(endpoint => {
         const at = endpoint === 'start' ? a : p;
         return <circle key={endpoint} cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)"
@@ -157,6 +164,13 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
 
   return <>
     {!!(shown.length || tags.preview || snap) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
+      <defs className="text-primary">
+        {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${filterId}-${state}`} colorInterpolationFilters="sRGB">
+          <feFlood floodColor="currentColor" floodOpacity={state === 'hover' ? 0.55 : 1} result="tint" />
+          <feBlend in="SourceGraphic" in2="tint" mode="screen" result="highlight" />
+          <feComposite in="highlight" in2="SourceAlpha" operator="in" />
+        </filter>)}
+      </defs>
       {shown.map(item => paint(item, false))}
       {tags.preview && paint(tags.preview, true)}
       {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`}>

@@ -7,10 +7,11 @@
  * Positioned absolutely over the canvas at the annotation's screen coordinates.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import type { TextAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { useTranslation } from '@/i18n';
+import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 
 interface TextAnnotationEditorProps {
   /** The text annotation being edited */
@@ -38,8 +39,20 @@ export function TextAnnotationEditor({
 
   const [bold, setBold] = useState(annotation.bold ?? annotation.appearance?.bold ?? false);
   const [italic, setItalic] = useState(annotation.italic ?? annotation.appearance?.italic ?? false);
-  const [align, setAlign] = useState<'left'|'center'|'right'>(annotation.align ?? annotation.appearance?.align ?? 'left');  const [text, setText] = useState(annotation.text);
+  const [align, setAlign] = useState<'left'|'center'|'right'>(annotation.align ?? annotation.appearance?.align ?? 'left');
+  const [text, setText] = useState(annotation.text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Match the same paper-space layout used to paint the final annotation.
+  const paperUnit = fontSize === undefined ? 0 : fontSize / (annotation.appearance?.textHeight ?? 2.5);
+  const measureContext = useMemo(() => typeof document === 'undefined' ? null
+    : document.createElement('canvas').getContext('2d'), []);
+  const layout = textAnnotationLayout({ ...annotation, text, bold, italic }, paperUnit,
+    (line, font) => {
+      if (!measureContext) return undefined;
+      measureContext.font = font;
+      return measureContext.measureText(line).width;
+    });
+  const textColor = annotation.appearance?.color ?? annotation.color;
   // Guard against blur firing during the initial click that created this editor.
   // Without this, the mouseup from the placement click can steal focus from the
   // textarea before the user has a chance to type, causing an immediate cancel.
@@ -107,7 +120,7 @@ export function TextAnnotationEditor({
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-       <div className="flex flex-wrap items-center gap-1 rounded-t border bg-popover p-1 text-xs"
+       <div className="absolute bottom-full left-0 mb-1 flex w-max items-center gap-1 rounded border bg-popover p-1 text-xs shadow-sm"
          role="toolbar" aria-label="Text formatting" onMouseDown={event => event.preventDefault()}>
          <button type="button" title="Bold" aria-pressed={bold} className={bold ? 'rounded bg-accent px-2 py-1 font-bold' : 'rounded px-2 py-1 font-bold'}
            onClick={() => setBold(value => !value)}>B</button>
@@ -129,18 +142,22 @@ export function TextAnnotationEditor({
         onBlur={handleBlur}
         placeholder={t('textAnnotationEditor.placeholder')}
         aria-label={t('textAnnotationEditor.inputLabel')}
-        className="min-w-[120px] max-w-[300px] min-h-[32px] px-2 py-1 text-sm border-2 border-blue-500 rounded resize shadow-lg outline-none"
-        rows={2}
+        className="block box-border resize-none overflow-hidden border-0 outline outline-1 outline-primary"
+        wrap="off"
+        rows={1}
         style={{
-          fontSize: fontSize ?? annotation.fontSize,
-          fontFamily: annotation.appearance?.font ?? 'system-ui, sans-serif',
-          fontWeight: bold ? 'bold' : 'normal', fontStyle: italic ? 'italic' : 'normal', textAlign: align,
-          backgroundColor: '#ffffff',
-          color: '#000000',
-          caretColor: '#000000',
+          width: Math.max(text ? 1 : 80, layout.bgW + 1),
+          height: Math.max(1, layout.bgH),
+          padding: layout.padding,
+          font: layout.font,
+          lineHeight: `${layout.lineHeight}px`,
+          textAlign: align,
+          backgroundColor: annotation.backgroundColor,
+          color: textColor,
+          caretColor: textColor,
         }}
       />
-      <div className="text-2xs text-muted-foreground mt-0.5 bg-popover/80 px-1 rounded">
+      <div className="absolute left-0 top-full mt-1 w-max text-2xs text-muted-foreground bg-popover/80 px-1 rounded">
         {t('textAnnotationEditor.hint')}
       </div>
     </div>

@@ -1595,28 +1595,7 @@ export function Drawing2DCanvas({
     // ═══════════════════════════════════════════════════════════════════════
     if (selectedAnnotation) {
       const SEL_COLOR = '#1976D2';
-      // Selection is a light, non-interactive outline. Actual edit handles are
-      // rendered by each tool only while editing, not during simple selection.
-      const drawSelectionRect = (x: number, y: number, w: number, h: number) => {
-        // Selection only: four discreet corner brackets, without a second box
-        // around the graphic. Editing tools render their own actual grips.
-        const margin = 3, arm = Math.min(10, Math.max(5, Math.min(w, h) / 4));
-        const left = x - margin, right = x + w + margin;
-        const top = y - margin, bottom = y + h + margin;
-        ctx.save();
-        ctx.strokeStyle = SEL_COLOR;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        for (const [cx, cy, dx, dy] of [[left, top, 1, 1], [right, top, -1, 1],
-          [left, bottom, 1, -1], [right, bottom, -1, -1]]) {
-          ctx.moveTo(cx + arm * dx, cy);
-          ctx.lineTo(cx, cy);
-          ctx.lineTo(cx, cy + arm * dy);
-        }
-        ctx.stroke();
-        ctx.restore();
-      };
+      const SEL_FILL = 'rgba(25, 118, 210, 0.18)';
 
       switch (selectedAnnotation.type) {
         case 'measure': {
@@ -1624,10 +1603,8 @@ export function Drawing2DCanvas({
           const result = measureResults.find((r) => r.id === selectedAnnotation.id);
           if (result) {
             const chainId = result.dimension?.chainId;
-            const start = markupToScreen(result.start);
-            const end = markupToScreen(result.end);
             if (!chainId) {
-              drawSelectionRect(Math.min(start.x, end.x), Math.min(start.y, end.y), Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+              drawMeasureLine(result.start, result.end, result.distance, SEL_COLOR, result.dimension);
               break;
             }
             for (const segment of measureResults) {
@@ -1649,11 +1626,11 @@ export function Drawing2DCanvas({
               else ctx.lineTo(sx, sy);
             });
             ctx.closePath();
-            ctx.fillStyle = 'rgba(25, 118, 210, 0.09)';
+            ctx.fillStyle = SEL_FILL;
             ctx.fill();
             ctx.strokeStyle = SEL_COLOR;
             ctx.lineWidth = 2.5;
-            ctx.setLineDash([4, 3]);
+            ctx.setLineDash([]);
             ctx.stroke();
             ctx.restore();
           }
@@ -1661,24 +1638,31 @@ export function Drawing2DCanvas({
         }
         case 'text': {
           const annotation = textAnnotations.find((a) => a.id === selectedAnnotation.id);
-          if (annotation && annotation.text.trim()) {
+          if (annotation && annotation.id !== textAnnotationEditing && annotation.text.trim()) {
             const sx = drawingToScreenX(annotation.position.x);
             const sy = drawingToScreenY(annotation.position.y);
             const { bgW, bgH } = measureTextAnnotation(annotation);
-            drawSelectionRect(sx, sy, bgW, bgH);
+            ctx.save();
+            ctx.strokeStyle = SEL_COLOR;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([]);
+            ctx.strokeRect(sx, sy, bgW, bgH);
+            ctx.restore();
           }
           break;
         }
         case 'cloud': {
           const cloud = cloudAnnotations.find((a) => a.id === selectedAnnotation.id);
           if (cloud && cloud.points.length >= 2) {
-            const sp1x = drawingToScreenX(cloud.points[0].x);
-            const sp1y = drawingToScreenY(cloud.points[0].y);
-            const sp2x = drawingToScreenX(cloud.points[1].x);
-            const sp2y = drawingToScreenY(cloud.points[1].y);
-            const minX = Math.min(sp1x, sp2x);
-            const minY = Math.min(sp1y, sp2y);
-            drawSelectionRect(minX, minY, Math.abs(sp2x - sp1x), Math.abs(sp2y - sp1y));
+            const [p1, p2] = cloud.points;
+            const arcRadius = Math.min(Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y)) * 0.15 || 0.2;
+            ctx.save();
+            ctx.strokeStyle = SEL_COLOR;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]);
+            drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
+            ctx.stroke();
+            ctx.restore();
           }
           break;
         }
