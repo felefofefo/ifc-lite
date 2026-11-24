@@ -26,12 +26,16 @@ describe('drawing export omissions (#5850)', () => {
     assert.deepEqual(await omissions(empty, 'dxf'), []);
   });
 
-  it('reports every markup kind for the PDF and DXF writers', async () => {
-    for (const kind of ['measurements', 'areas', 'texts', 'clouds'] as const) {
+  it('reports area/text/cloud omissions only where those writers omit them', async () => {
+    for (const kind of ['areas', 'texts', 'clouds'] as const) {
       const content = { ...empty, markupCounts: { ...empty.markupCounts, [kind]: 1 } };
       assert.deepEqual(await omissions(content, 'pdf'), ['markups'], kind);
       assert.deepEqual(await omissions(content, 'dxf'), ['markups'], kind);
+      assert.deepEqual(await omissions({ ...content, sheetScale: 50 }, 'pdf'), [], kind);
     }
+    const dimensions = { ...empty, markupCounts: { ...empty.markupCounts, measurements: 1 } };
+    assert.deepEqual(await omissions(dimensions, 'pdf'), []);
+    assert.deepEqual(await omissions(dimensions, 'dxf'), []);
   });
 
   it('includes vectors in every format and omits only eligible raster references from DXF (#6615)', async () => {
@@ -40,7 +44,7 @@ describe('drawing export omissions (#5850)', () => {
     assert.deepEqual(await omissions({ ...content, sheetScale: 50 }, 'pdf'), []);
     assert.deepEqual(await omissions({
       ...content, sheetScale: 50, markupCounts: { ...empty.markupCounts, texts: 1 },
-    }, 'pdf'), ['markups']);
+    }, 'pdf'), []);
     assert.deepEqual(await omissions({ ...content, sheetScale: 50 }, 'dxf'), []);
     const raster = { ...content, visibleRasterReferenceCount: 1 };
     assert.deepEqual(await omissions(raster, 'dxf'), ['rasterReferences']);
