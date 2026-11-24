@@ -51,6 +51,7 @@ import { resolveCutPolygonStyle, type CutPolygonStyleContext } from '@/component
 import { publicationCutSvg, svgDash } from '@/lib/export/drawing-publication-svg';
 import { pdfColor } from '@/lib/export/pdf-color';
 import { drawingAnnotationDxf } from '@/lib/export/drawing-annotation-dxf';
+import { drawDrawingAnnotationsPdf, expandDrawingAnnotationBounds } from '@/lib/export/drawing-annotation-pdf';
 import { drawCutPolygonsPdf, isPagePoint, prepareCutPolygonsPdf, type PdfCutPolygon } from '@/lib/export/section-pdf-cut-polygons';
 import { viewMarkersSvg, viewMarkersDxf, drawViewMarkersPdf, viewMarkerExportBounds, useDrawingViewMarkers } from '@/lib/export/drawing-view-markers';
 import { titleBlockWithEffectiveScale } from '@/hooks/titleBlockScaleField';
@@ -1101,7 +1102,10 @@ function useDrawingExport({
     const currentAxis = sectionPlane.axis;
     let layout: PdfScaleLayout;
     try {
-      layout = computePdfSectionLayout(expandDimensionBounds(tagExportBounds(viewMarkerExportBounds(drawing.bounds, markers, effectiveScale), elementTags, effectiveScale), effectiveScale), currentAxis, effectiveScale, 10);
+      layout = computePdfSectionLayout(expandDrawingAnnotationBounds(
+         expandDimensionBounds(tagExportBounds(viewMarkerExportBounds(drawing.bounds, markers, effectiveScale), elementTags, effectiveScale), effectiveScale),
+         polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, effectiveScale,
+       ), currentAxis, effectiveScale, 10);
     } catch (err) {
       if (destination) throw err;
       toast.error(err instanceof Error ? t('section2d.export.invalidScaleDetail', { error: err.message }) : t('section2d.export.invalidScale'));
@@ -1200,6 +1204,8 @@ function useDrawingExport({
           doc.setTextColor(style.textColor ?? '#000000');
           doc.text(label, position.x, position.y, { align: 'center', baseline: 'middle', angle: -angle });
         }
+        drawDrawingAnnotationsPdf(doc, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D,
+          mapPoint, effectiveScale, lineweightTable);
         doc.setLineDashPattern([], 0);
         // v1 has no title block, so this filename is the SOLE record of the
         // sheet's scale — round-tripping through Math.round() here would
@@ -1221,7 +1227,8 @@ function useDrawingExport({
       if (destination) throw err;
       toast.error(err instanceof Error ? t('section2d.export.pdfFailed', { error: err.message }) : t('section2d.export.pdfFailedGeneric'));
     });
-  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers, expandDimensionBounds, dimensionGraphics, elementTags, lineweightTable]);
+  }, [drawing, dxfUnderlays, displayOptions.scale, displayOptions.showHiddenLines, sectionPlane, sheetEnabled, activeSheet, generateSheetSVG, cutPolygonStyleContext, t, markers, expandDimensionBounds, dimensionGraphics, elementTags, lineweightTable,
+     polygonArea2DResults, textAnnotations2D, cloudAnnotations2D]);
 
   // Print handler
   const handlePrint = useCallback(() => {

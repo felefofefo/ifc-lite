@@ -45,19 +45,26 @@ export function resolveCutPolygonStyle(
       fills: ctx.fills?.(polygon, '#666666') ?? [],
     };
   }
-  const override = ctx.overridesEnabled
+  const overrideResult = ctx.overridesEnabled
     ? ctx.overrideEngine.applyOverrides({
       expressId: polygon.entityId,
       ifcType: polygon.ifcType,
       properties: ctx.getElementProperties(polygon.entityId),
-    }).style
+    })
     : null;
+  const override = overrideResult?.style;
+  // An explicitly authored rule wins over IFC material/type colours. The
+  // resolved style alone is insufficient: it also contains default values
+  // even when no matching rule specified a fill or opacity.
+  const fillRule = overrideResult?.matchedRules.some(rule => rule.style.fillColor !== undefined);
+  const opacityRule = overrideResult?.matchedRules.some(rule => rule.style.opacity !== undefined);
   const pen = ctx.stroke?.(polygon, 'cut');
   const weight = pen?.lineWeight ?? override?.lineWeight;
   const material = ctx.useIfcMaterials ? (polygon.color ?? polygon.sourceColor ?? ctx.entityColorMap.get(polygon.entityId)) : undefined;
-  const fillColor = material ? rgbaToHex(material)
-    : override && !ctx.useIfcMaterials ? override.fillColor : getFillColorForType(polygon.ifcType, ctx.darkPaper);
-  const fillOpacity = material?.[3] ?? (override && !ctx.useIfcMaterials ? override.opacity : 1);
+  const fillColor = (fillRule ? override?.fillColor : undefined) ?? (material ? rgbaToHex(material)
+    : override && !ctx.useIfcMaterials ? override.fillColor : getFillColorForType(polygon.ifcType, ctx.darkPaper));
+  const fillOpacity = (opacityRule ? override?.opacity : undefined)
+    ?? material?.[3] ?? (override && !ctx.useIfcMaterials ? override.opacity : 1);
   return {
     fillColor, fillOpacity,
     strokeColor: pen?.color ?? override?.strokeColor ?? '#000000',

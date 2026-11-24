@@ -30,13 +30,9 @@ export function drawingExportOmissions(
   format: DrawingExportFormat,
 ): DrawingExportOmission[] {
   const omissions: DrawingExportOmission[] = [];
-  const { markupCounts, visibleRasterReferenceCount = 0, sheetScale, requestedScale } = content;
-  // PDF views without a sheet still omit area/text/cloud. DXF exports them
-  // natively as TEXT and polylines; sheet PDF includes them via sheet SVG.
-  if (format === 'pdf' && sheetScale === null &&
-      markupCounts.areas + markupCounts.texts + markupCounts.clouds > 0) {
-    omissions.push('markups');
-  }
+  const { visibleRasterReferenceCount = 0, sheetScale, requestedScale } = content;
+  // All drawing markups are supported by both writers. DXF still cannot
+  // embed raster reference files and a sheet PDF ignores requested scale.
   if (visibleRasterReferenceCount > 0 && format === 'dxf') {
     omissions.push('rasterReferences');
   }

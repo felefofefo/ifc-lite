@@ -51,7 +51,7 @@ function sheet(): DrawingSheet {
 }
 
 describe('drawing export notices (#5850)', () => {
-  it('lists omitted markups while including vector/raster underlays in PDF (#6615)', () => {
+  it('does not warn about markups now included in vector PDF (#6615)', () => {
     const scales: Array<number | undefined> = [];
     render(<DrawingExportMenu {...props({
       markupCounts: { ...emptyCounts, texts: 1 }, visibleUnderlayCount: 1, visibleRasterReferenceCount: 1,
@@ -61,7 +61,7 @@ describe('drawing export notices (#5850)', () => {
     selectItem('Download PDF');
     const dialog = document.body.querySelector('[role="dialog"]');
     assert.ok(dialog);
-    assert.match(dialog.textContent ?? '', /drawing markups/);
+    assert.doesNotMatch(dialog.textContent ?? '', /drawing markups/);
     assert.doesNotMatch(dialog.textContent ?? '', /reference underlays/);
     const exportButton = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Export');
     assert.ok(exportButton);
