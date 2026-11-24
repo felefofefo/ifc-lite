@@ -26,6 +26,28 @@ export function textAnnotationScreenSize(annotation: { fontSize: number; appeara
   return annotation.appearance?.textHeight ? annotation.appearance.textHeight * paperUnit : annotation.fontSize;
 }
 
+/** Shared text bounds for canvas painting, selection and click hit-testing. */
+export function textAnnotationLayout(annotation: {
+  text: string; fontSize: number; bold?: boolean; italic?: boolean;
+  appearance?: Pick<AnnotationSymbolStyle, 'textHeight' | 'font' | 'bold' | 'italic'>;
+}, paperUnit: number, measureWidth?: (text: string, font: string) => number | undefined) {
+  const size = textAnnotationScreenSize(annotation, paperUnit);
+  const bold = annotation.bold ?? annotation.appearance?.bold ?? false;
+  const italic = annotation.italic ?? annotation.appearance?.italic ?? false;
+  const font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${size}px ${annotation.appearance?.font ?? 'system-ui, sans-serif'}`;
+  const lines = annotation.text.split('\n');
+  let maxWidth = 0;
+  for (const line of lines) {
+    const measured = measureWidth?.(line, font);
+    const width = measured !== undefined && Number.isFinite(measured) && measured >= 0
+      ? measured : line.length * size * 0.6;
+    maxWidth = Math.max(maxWidth, width);
+  }
+  const padding = 6;
+  const lineHeight = size * 1.3;
+  return { font, lines, lineHeight, padding, bgW: maxWidth + padding * 2, bgH: lines.length * lineHeight + padding * 2 };
+}
+
 export function validAnnotationStyles(styles: unknown): boolean {
   if (!styles || typeof styles !== 'object' || Array.isArray(styles)) return false;
   return Object.entries(styles).every(([kind, style]) => {

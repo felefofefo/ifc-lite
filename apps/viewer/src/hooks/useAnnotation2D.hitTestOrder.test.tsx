@@ -28,6 +28,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useRef } from 'react';
 import { useAnnotation2D } from './useAnnotation2D.js';
+import { hitTestAnnotations } from './annotation2DHitTest.js';
 import type {
   SelectedAnnotation2D, TextAnnotation2D, CloudAnnotation2D,
   Measure2DResult, PolygonArea2DResult,
@@ -41,10 +42,11 @@ interface ProbeProps {
   cloudAnnotations2D: CloudAnnotation2D[];
   measure2DResults?: Measure2DResult[];
   polygonArea2DResults?: PolygonArea2DResult[];
+  paperUnit?: number;
 }
 
 function Probe({
-  textAnnotations2D, cloudAnnotations2D,
+  textAnnotations2D, cloudAnnotations2D, paperUnit,
   measure2DResults = [], polygonArea2DResults = [],
 }: ProbeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +55,7 @@ function Probe({
     viewTransform: { x: 0, y: 0, scale: 1 },
     sectionAxis: 'down',
     containerRef,
+    paperUnit,
     activeTool: 'none',
     setActiveTool: () => {},
     polygonArea2DPoints: [],
@@ -390,6 +393,34 @@ describe('useAnnotation2D hitTestAnnotations — top-most wins (#4195)', () => {
     );
     assert.equal(lastSelected?.id, 'measure-near');
 
+    unmount();
+  });
+});
+
+describe('styled text bounds for hit-testing', () => {
+  const note: TextAnnotation2D = {
+    id: 'styled-note', position: { x: 0, y: 0 }, text: 'WW\nMMMM',
+    fontSize: 14, color: '#000000', backgroundColor: '#ffffff', borderColor: '#333333',
+    appearance: { textHeight: 2, font: 'serif', bold: true, italic: true },
+  };
+
+  it('uses measured glyph widths, multiline height, text style and paper scale', () => {
+    const fonts: string[] = [];
+    const params = {
+      screenX: 105, screenY: 60, threshold: 10,
+      drawingToScreen: (point: { x: number; y: number }) => point,
+      texts: [note], clouds: [], polys: [], measures: [], paperUnit: 10,
+      measureText: (line: string, font: string) => { fonts.push(font); return line.length * 25; },
+    };
+    assert.deepEqual(hitTestAnnotations(params), { type: 'text', id: note.id });
+    assert.deepEqual(fonts, ['italic bold 20px serif', 'italic bold 20px serif']);
+    assert.equal(hitTestAnnotations({ ...params, screenX: 120 }), null);
+  });
+
+  it('wires paper scale into the mounted selection tool when canvas metrics are unavailable', () => {
+    mount({ textAnnotations2D: [note], cloudAnnotations2D: [], paperUnit: 10 });
+    act(() => { click(55, 59); });
+    assert.deepEqual(lastSelected, { type: 'text', id: note.id });
     unmount();
   });
 });

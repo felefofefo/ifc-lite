@@ -36,6 +36,7 @@ import type {
   Measure2DResult, PolygonArea2DResult, CloudAnnotation2D,
 } from '@/store/slices/drawing2DSlice';
 import { computePolygonCentroid } from '@/components/viewer/tools/computePolygonArea';
+import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 
 /** Nearest point on segment a-b to p, in drawing coordinates. */
 export function nearestPointOnSegment(
@@ -79,6 +80,8 @@ export interface HitTestAnnotationsParams {
   clouds: CloudAnnotation2D[];
   polys: PolygonArea2DResult[];
   measures: Measure2DResult[];
+  paperUnit?: number;
+  measureText?: (text: string, font: string) => number | undefined;
 }
 
 /** A padded-tier candidate: a hit that only registers via click tolerance. */
@@ -89,6 +92,7 @@ interface PaddedCandidate {
 
 export function hitTestAnnotations({
   screenX, screenY, threshold, drawingToScreen, texts, clouds, polys, measures,
+  paperUnit = 1, measureText,
 }: HitTestAnnotationsParams): SelectedAnnotation2D | null {
   // ── Pass 1: genuine hits, reverse paint order (topmost wins) ───────────
   // Paint order: measure -> polygon -> text -> cloud, so the reverse
@@ -112,16 +116,9 @@ export function hitTestAnnotations({
     const annotation = texts[i];
     if (!annotation.text.trim()) continue;
     const sp = drawingToScreen(annotation.position);
-    const fontSize = annotation.fontSize;
-    const lines = annotation.text.split('\n');
-    const lineHeight = fontSize * 1.3;
-    const padding = 6;
-    const approxCharWidth = fontSize * 0.6;
-    const maxLineLen = Math.max(...lines.map((l) => l.length));
-    const w = maxLineLen * approxCharWidth + padding * 2;
-    const h = lines.length * lineHeight + padding * 2;
-    if (screenX >= sp.x - 2 && screenX <= sp.x + w + 2 &&
-        screenY >= sp.y - 2 && screenY <= sp.y + h + 2) {
+    const { bgW, bgH } = textAnnotationLayout(annotation, paperUnit, measureText);
+    if (screenX >= sp.x - 2 && screenX <= sp.x + bgW + 2 &&
+        screenY >= sp.y - 2 && screenY <= sp.y + bgH + 2) {
       return { type: 'text', id: annotation.id };
     }
   }

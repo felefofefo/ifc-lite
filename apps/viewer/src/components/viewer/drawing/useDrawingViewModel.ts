@@ -305,12 +305,17 @@ export function useDrawingViewModel() {
     findSnapPoint: measureHandlers.findSnapPoint, angularSnap, lineweights, roomContours: ifcSpaceRooms,
   });
 
+  // Hit-testing and canvas painting use the same styled, visible text annotations.
+  const styledNotes = styledMarkup('text', textAnnotations2D);
+  const textPaperUnit = sheetEnabled && activeSheet ? viewTransform.scale
+    : markupTransform.scale * (publicationScale || 100) / 1000;
   const annotationHandlers = useAnnotation2D({
     drawing, viewTransform: markupTransform, sectionAxis: drawnPlane.axis, containerRef,
+    paperUnit: textPaperUnit,
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
     polygonArea2DPoints, addPolygonArea2DPoint,
     completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, defaultAnnotationStyles?.area); }, cancelPolygonArea2D,
-    textAnnotations2D: displayOptions.showAnnotations ? textAnnotations2D : [],
+    textAnnotations2D: displayOptions.showAnnotations ? styledNotes : [],
     addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey, appearanceId: defaultAnnotationStyles?.text }); }, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint,
     completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey, defaultAnnotationStyles?.cloud); }, cancelCloudAnnotation2D,
@@ -828,7 +833,6 @@ export function useDrawingViewModel() {
     });
   }
   const styledAreas = styledMarkup('area', polygonArea2DResults);
-  const styledNotes = styledMarkup('text', textAnnotations2D);
   const styledClouds = styledMarkup('cloud', cloudAnnotations2D);
 
   return {

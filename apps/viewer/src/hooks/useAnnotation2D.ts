@@ -28,6 +28,8 @@ export interface UseAnnotation2DParams {
   viewTransform: { x: number; y: number; scale: number };
   sectionAxis: 'down' | 'front' | 'side';
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** Same paper-unit conversion used by Drawing2DCanvas for text styles. */
+  paperUnit?: number;
   activeTool: Annotation2DTool;
   setActiveTool: (tool: Annotation2DTool) => void;
   // Polygon area state
@@ -84,6 +86,7 @@ export function useAnnotation2D({
   viewTransform,
   sectionAxis,
   containerRef,
+  paperUnit = 1,
   activeTool,
   setActiveTool,
   polygonArea2DPoints,
@@ -228,6 +231,19 @@ export function useAnnotation2D({
 
   // ── Hit-testing for annotation selection ──────────────────────────────
 
+  // One measuring context per mounted drawing; actual glyph widths match canvas painting.
+  const textMeasureContext = useRef<CanvasRenderingContext2D | null>(null);
+  const measureAnnotationText = useCallback((text: string, font: string): number | undefined => {
+    let ctx = textMeasureContext.current;
+    if (!ctx) {
+      ctx = containerRef.current?.ownerDocument.createElement('canvas').getContext('2d') ?? null;
+      if (!ctx) return undefined; // Non-canvas environments use the layout's size-aware fallback.
+      textMeasureContext.current = ctx;
+    }
+    ctx.font = font;
+    return ctx.measureText(text).width;
+  }, [containerRef]);
+
   const hitTestAnnotations = useCallback((screenX: number, screenY: number): SelectedAnnotation2D | null => {
     const { textAnnotations2D: texts, cloudAnnotations2D: clouds,
       polygonArea2DResults: polys, measure2DResults: measures } = storeRef.current;
@@ -235,9 +251,9 @@ export function useAnnotation2D({
     if (label) return { type: 'measure', id: label, dimensionLabel: true };
     return hitTestAnnotationsPure({
       screenX, screenY, threshold: HIT_TEST_RADIUS_PX, drawingToScreen,
-      texts, clouds, polys, measures,
+      texts, clouds, polys, measures, paperUnit, measureText: measureAnnotationText,
     });
-  }, [drawingToScreen, pickDimensionLabel]); // stable — reads annotation data from storeRef
+  }, [drawingToScreen, pickDimensionLabel, paperUnit, measureAnnotationText]); // reads annotation data from storeRef
 
   // ── Get annotation origin (reads latest data from refs) ───────────────
 
