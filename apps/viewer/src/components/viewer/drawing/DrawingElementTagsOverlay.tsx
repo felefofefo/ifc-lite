@@ -136,7 +136,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       </g>}
     </svg>}
     {tags.selected && !tags.active && <div role="toolbar" aria-label={t('section2d.tools.select')}
-      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
       <span className="max-w-36 truncate px-2 font-medium" title={tags.selected.field}>
         {t(`section2d.annotationKind.${tags.selectedKind ?? 'ifc'}`)}
@@ -159,7 +159,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       {tags.failed && <span className="text-destructive" role="alert">{t('section2d.tags.writeFailed')}</span>}
     </div>}
     {draft && kind === 'grid' && draft.mode === 'edit' && <div role="toolbar" tabIndex={-1} aria-label={t('section2d.grid.edit')}
-      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
       <span className="px-2 font-medium">{t('section2d.annotationKind.grid')}</span>
       <Input aria-label={t('section2d.symbols.gridName')} className="h-7 w-20 text-xs" value={draft.tag.field} maxLength={32}
@@ -178,62 +178,53 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       {tags.failed && <span role="alert" className="px-2 text-xs text-destructive">{t('section2d.tags.writeFailed')}</span>}
     </div>}
     {draft && draft.mode === 'edit' && kind !== 'grid' && <div role="toolbar" aria-label={t('section2d.tags.edit')} tabIndex={-1}
-      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
-      <span className="max-w-36 truncate px-2 font-medium">{t(`section2d.annotationKind.${kind ?? 'ifc'}`)}</span>
+      <span className="max-w-32 shrink-0 truncate px-2 font-medium">{t(`section2d.annotationKind.${kind ?? 'ifc'}`)}</span>
       {!draft.tag.svg && !draft.tag.templateId && <Select value={draft.tag.field} onValueChange={field => tags.change({ field })}>
-        <SelectTrigger className="h-7 w-44 text-xs" aria-label={t('section2d.tags.field')}><SelectValue /></SelectTrigger>
+        <SelectTrigger className="h-7 w-32 text-xs" aria-label={t('section2d.tags.field')}><SelectValue /></SelectTrigger>
         <SelectContent>
           {!tags.fields.some(field => field.key === draft.tag.field) &&
             <SelectItem value={draft.tag.field}>{t('section2d.tags.fieldMissing')}</SelectItem>}
           {tags.fields.map(field => <SelectItem key={field.key} value={field.key}>{field.label}</SelectItem>)}
         </SelectContent>
       </Select>}
-      {tags.mode && <Input className="h-7 w-28 text-xs" aria-label={t(tags.mode === 'slope' ? 'section2d.symbols.manualSlope' : 'section2d.symbols.manualElevation')}
+      {tags.mode && <Input className="h-7 w-20 shrink-0 text-xs" aria-label={t(tags.mode === 'slope' ? 'section2d.symbols.manualSlope' : 'section2d.symbols.manualElevation')}
         value={tags.overrideText} inputMode="decimal" maxLength={32}
         placeholder={tags.modelLabel ?? t('section2d.symbols.automaticValue')}
         onChange={event => tags.setOverride(event.currentTarget.value)} />}
       {!draft.tag.free && tags.selectedIfcTemplates.length > 0 && <Select
         value={draft.tag.templateId ?? ''} onValueChange={id => tags.change({ templateId:id, svg: undefined })}>
-        <SelectTrigger className="h-7 w-40 text-xs" aria-label="IFC tag template"><SelectValue placeholder="IFC tag" /></SelectTrigger>
+        <SelectTrigger className="h-7 w-32 text-xs" aria-label="IFC tag template"><SelectValue placeholder="IFC tag" /></SelectTrigger>
         <SelectContent>{tags.selectedIfcTemplates.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
       </Select>}
-      {!draft.tag.free && <label className="flex items-center gap-1 px-1">
+      {!draft.tag.free && <label className="flex shrink-0 items-center gap-1 px-1">
         <input type="checkbox" checked={draft.tag.leader} onChange={event => tags.change({ leader: event.currentTarget.checked })} />
         {t('section2d.tags.leader')}
       </label>}
       {tags.selectedKind && <Select disabled={tags.selectedStyleLocked}
         value={tags.selectedStyleLocked ? tags.selectedStyleId : draft.tag.appearanceId ?? 'original'}
         onValueChange={id => tags.change({ appearanceId: id === 'original' ? undefined : id })}>
-        <SelectTrigger className="h-7 w-36 text-xs" aria-label={t('section2d.annotationStyles.title')}><SelectValue /></SelectTrigger>
+        <SelectTrigger className="h-7 w-28 text-xs" aria-label={t('section2d.annotationStyles.title')}><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value="original">{t('section2d.annotationStyles.fromSymbol')}</SelectItem>
           {tags.selectedStyles.map(style => <SelectItem key={style.id} value={style.id}>{style.name}</SelectItem>)}
         </SelectContent>
       </Select>}
-      <Button size="sm" onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
-      <Button size="sm" variant="ghost" onClick={tags.close}>{t('section2d.tags.close')}</Button>
+      <Button size="sm" className="shrink-0" onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
+      <Button size="sm" variant="ghost" className="shrink-0" onClick={tags.close}>{t('section2d.tags.close')}</Button>
       {tags.failed && <span role="alert" className="px-2 text-xs text-destructive">{t('section2d.tags.writeFailed')}</span>}
     </div>}
-    {tags.active && !(draft && draft.mode === 'edit') && <div role="toolbar" aria-label={t('section2d.tags.edit')} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); tags.close(); } }} className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
+    {tags.active && !(draft && draft.mode === 'edit') && <div role="toolbar" aria-label={t('section2d.tags.edit')} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); tags.close(); } }} className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={e => e.stopPropagation()} onMouseMove={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      <div className="flex items-center justify-between gap-2">
-        <strong>{kind && kind !== 'section' && kind !== 'elevation' ? t(`section2d.annotationKind.${kind}`) : t('section2d.tools.tag')}</strong>
-        <Button variant="ghost" size="sm" className="h-6 px-2" onClick={tags.close}>{t('section2d.tags.close')}</Button>
-      </div>
-      <output className="text-muted-foreground">{hint}</output>
-      {kind === 'grid' && <label className="grid gap-1">
-        {t('section2d.symbols.gridName')}
-        <Input className="h-8 text-xs" value={draft?.tag.field ?? tags.symbolValue} maxLength={32}
-          onChange={event => draft ? tags.change({ field: event.currentTarget.value }) : tags.setSymbolValue(event.currentTarget.value)} />
-      </label>}
-      {tags.mode && <label className="grid gap-1">
-        {t(tags.mode === 'slope' ? 'section2d.symbols.manualSlope' : 'section2d.symbols.manualElevation')}
-        <Input className="h-8 text-xs" value={tags.overrideText} maxLength={32} inputMode="decimal"
-          placeholder={tags.modelLabel ?? t('section2d.symbols.automaticValue')}
-          onChange={event => tags.setOverride(event.currentTarget.value)} />
-      </label>}
-      {!draft && tags.template && <p className="truncate font-medium">{tags.template.name}</p>}
+      <strong className="shrink-0 px-2">{kind && kind !== 'section' && kind !== 'elevation' ? t(`section2d.annotationKind.${kind}`) : t('section2d.tools.tag')}</strong>
+      {kind === 'grid' && <Input className="h-7 w-20 text-xs" aria-label={t('section2d.symbols.gridName')}
+        value={draft?.tag.field ?? tags.symbolValue} maxLength={32}
+        onChange={event => draft ? tags.change({ field: event.currentTarget.value }) : tags.setSymbolValue(event.currentTarget.value)} />}
+      {tags.mode && <Input className="h-7 w-28 text-xs" aria-label={t(tags.mode === 'slope' ? 'section2d.symbols.manualSlope' : 'section2d.symbols.manualElevation')}
+        value={tags.overrideText} maxLength={32} inputMode="decimal"
+        placeholder={tags.modelLabel ?? t('section2d.symbols.automaticValue')}
+        onChange={event => tags.setOverride(event.currentTarget.value)} />}
       {draft && <>
         {draft.mode === 'edit' && tags.selectedKind && <Select disabled={tags.selectedStyleLocked}
           value={tags.selectedStyleLocked ? tags.selectedStyleId : draft.tag.appearanceId ?? 'original'}
@@ -244,8 +235,8 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
             {tags.selectedStyles.map(style => <SelectItem key={style.id} value={style.id}>{style.name}</SelectItem>)}
           </SelectContent>
         </Select>}
-        {!draft.tag.svg && !draft.tag.templateId && <div className="grid gap-1">
-          <label htmlFor="drawing-tag-field">{t('section2d.tags.field')}</label>
+        {!draft.tag.svg && !draft.tag.templateId && <div className="flex items-center gap-1">
+          <label htmlFor="drawing-tag-field" className="sr-only">{t('section2d.tags.field')}</label>
           <Select value={draft.tag.field} onValueChange={field => tags.change({ field })}>
             <SelectTrigger id="drawing-tag-field" className="h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent className="max-w-[min(28rem,calc(100vw-2rem))]">
@@ -266,6 +257,8 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
           <Button size="sm" variant="ghost" className="text-destructive" onClick={tags.remove}>{t('section2d.tags.remove')}</Button>
         </div>}
       </>}
+      <output className="min-w-0 max-w-52 flex-1 truncate text-muted-foreground" title={hint}>{hint}</output>
+      <Button variant="ghost" size="sm" className="shrink-0" onClick={tags.close}>{t('section2d.tags.close')}</Button>
       {tags.failed && <p role="alert" className="text-destructive">{t('section2d.tags.writeFailed')}</p>}
     </div>}
   </>;

@@ -21,9 +21,13 @@ export type AnnotationSymbolStyle = {
   weight?: typeof LINEWEIGHT_PRESETS[number];
 };
 
-/** Match the canvas text size in the inline editor, including paper scale. */
-export function textAnnotationScreenSize(annotation: { fontSize: number; appearance?: Pick<AnnotationSymbolStyle, 'textHeight'> }, paperUnit: number): number {
-  return annotation.appearance?.textHeight ? annotation.appearance.textHeight * paperUnit : annotation.fontSize;
+/** Keep styled text a fixed, readable size on screen while zooming. The
+ * physical text height in mm is still used by the SVG, DXF and PDF exporters. */
+export function textAnnotationScreenSize(annotation: { fontSize: number; appearance?: Pick<AnnotationSymbolStyle, 'textHeight'> }, _paperUnit: number): number {
+  const heightMm = annotation.appearance?.textHeight;
+  return heightMm && Number.isFinite(heightMm) && heightMm > 0
+    ? Math.max(8, annotation.fontSize * heightMm / 2.5)
+    : annotation.fontSize;
 }
 
 /** Shared text bounds for canvas painting, selection and click hit-testing. */

@@ -510,7 +510,11 @@ function useDrawingExport({
   const generateExportSVG = useCallback((): string | null => {
     if (!drawing) return null;
 
-    const bounds = expandDimensionBounds(tagExportBounds(viewMarkerExportBounds(drawing.bounds, markers, displayOptions.scale), elementTags, displayOptions.scale), displayOptions.scale || 100);
+    // Reuse the PDF's annotation extents so notes, areas and clouds outside
+    // the IFC model do not disappear beyond the standalone SVG viewBox.
+    const drawingBounds = expandDrawingAnnotationBounds(drawing.bounds,
+      polygonArea2DResults, textAnnotations2D, cloudAnnotations2D, displayOptions.scale || 100);
+    const bounds = expandDimensionBounds(tagExportBounds(viewMarkerExportBounds(drawingBounds, markers, displayOptions.scale), elementTags, displayOptions.scale), displayOptions.scale || 100);
 
     // World-metres -> paper-mm arithmetic for the direct SVG export,
     // extracted to svgExportViewport.ts (see that file's docstring for why

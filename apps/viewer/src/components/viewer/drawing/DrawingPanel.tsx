@@ -226,7 +226,7 @@ export function DrawingPanel(): React.ReactElement {
         selected3D={selected3D}
         onExportSvg={layers.handleExportSVG} onExportDxf={layers.handleExportDXF}
         onExportPdf={layers.handleExportPDF} onPrint={layers.handlePrint}
-        displayedScale={displayOptions.scale || 100}
+        displayedScale={vm.publicationScale || 100}
         sheetEnabled={vm.sheetEnabled} activeSheet={vm.activeSheet}
         markupCounts={vm.markupCounts}
         visibleRasterReferenceCount={vm.visibleRasterReferenceCount}

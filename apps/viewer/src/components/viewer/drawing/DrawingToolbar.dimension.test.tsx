@@ -36,7 +36,8 @@ it('chooses a dimension via the arrow and remembers the choice for the main butt
   press(choose, 'ArrowDown');
   await advance(20);
   const choices = [...document.querySelectorAll('[role="menuitemradio"]')];
-  assert.deepEqual(choices.map(item => item.textContent), ['Aligned dimension', 'Horizontal dimension', 'Vertical dimension']);
+  assert.deepEqual(choices.map(item => item.textContent), ['Aligned dimension', 'Horizontal dimension', 'Vertical dimension',
+    'Angular dimension', 'Radius dimension', 'Diameter dimension']);
   click(choices[2]);
   assert.equal(main.getAttribute('aria-checked'), 'true');
 

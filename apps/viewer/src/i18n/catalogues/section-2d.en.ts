@@ -365,7 +365,7 @@ export const section2dEn = {
   'section2d.underlay.nonFiniteDrawing': "Couldn't centre this underlay: the drawing bounds are not finite.",
   'section2d.pdf.invalid': 'Invalid scale "{input}". Enter a positive number, e.g. 100 for 1:100.',
   'section2d.pdf.dialogTitle': 'Export PDF',
-  'section2d.pdf.dialogDescription': 'Choose the scale the PDF is drawn at.',
+  'section2d.pdf.dialogDescription': 'The PDF uses the current view scale.',
   'section2d.pdf.dialogDescriptionSheet': 'The active sheet sets the scale and paper for this PDF.',
   'section2d.pdf.scaleLabel': 'Scale',
   'section2d.pdf.asDisplayed': 'As displayed (1:{scale})',

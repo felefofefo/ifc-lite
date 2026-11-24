@@ -147,9 +147,9 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       {status === 'ready' && vm.selectedAnnotation2D && !vm.tags.selected && !vm.selectedMarker
         && vm.annotation2DActiveTool === 'none' && <div role="toolbar"
           aria-label={t('section2d.tools.select')}
-          className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
+          className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
           onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
-          <span className="max-w-36 truncate px-2 font-medium">
+          <span className="max-w-36 shrink-0 truncate px-2 font-medium">
             {vm.selectedAnnotation2D.type === 'measure' ? t('section2d.dimensionStyle.title')
               : vm.selectedAnnotation2D.type === 'polygon' ? t('section2d.annotationKind.area')
               : vm.selectedAnnotation2D.type === 'cloud' ? t('section2d.annotationKind.cloud')
@@ -157,16 +157,16 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           </span>
           {vm.selectedAnnotationStyle && <Select disabled={vm.selectedAnnotationStyle.locked}
             value={vm.selectedAnnotationStyle.value} onValueChange={vm.changeSelectedAnnotationStyle}>
-            <SelectTrigger className="h-7 w-36 text-xs" aria-label={t('section2d.annotationStyles.title')}><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-7 w-32 text-xs" aria-label={t('section2d.annotationStyles.title')}><SelectValue /></SelectTrigger>
             <SelectContent>
               {vm.selectedAnnotationStyle.kind !== 'dimensions' &&
                 <SelectItem value="original">{t('section2d.annotationStyles.fromSymbol')}</SelectItem>}
               {vm.selectedAnnotationStyle.choices.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
             </SelectContent>
           </Select>}
-          <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
+          {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
-            onClick={vm.editSelectedAnnotation}>{t('section2d.tools.edit')}</Button>
+            onClick={vm.editSelectedAnnotation}>{t('section2d.tools.edit')}</Button>}
           <Button size="sm" variant="ghost" onClick={vm.clearAnnotationSelection}>{t('section2d.tags.close')}</Button>
         </div>}
 

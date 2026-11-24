@@ -193,9 +193,9 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       {/* Endpoint grips belong to Select/Move, not the properties editor. */}
     </svg>
     <div role="toolbar" aria-label={t(edit ? 'section2d.tools.edit' : 'section2d.create.trace')}
-      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-md border bg-background p-1 text-xs shadow-sm"
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
-      <span aria-live="polite">{t(edit ? 'section2d.create.editLine'
+      <span className="shrink-0 px-2 font-medium" aria-live="polite">{t(edit ? 'section2d.create.editLine'
         : end ? 'section2d.create.confirmLine' : start ? 'section2d.create.second' : 'section2d.create.first')}</span>
       {edit && <Select disabled={!!annotationView?.annotationOptions?.styleIds?.[kind]}
         value={annotationView?.annotationOptions?.styleIds?.[kind] ?? markerView?.markerStyleId ?? 'default'}
@@ -203,7 +203,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
           try { setViewMarkerStyle(edit.id, value === 'default' ? undefined : value); setStyleFailed(false); }
           catch (error) { console.warn('Could not change marker style', error); setStyleFailed(true); }
         }}>
-        <SelectTrigger className="h-7 w-36 text-xs" aria-label={t('section2d.markerStyles.title')}><SelectValue /></SelectTrigger>
+        <SelectTrigger className="h-7 w-24 text-xs" aria-label={t('section2d.markerStyles.title')}><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>
           {markerStyles?.filter(style => style.kind === kind).map(style => (
@@ -212,13 +212,13 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
         </SelectContent>
       </Select>}
       {styleFailed && <span role="alert" className="text-destructive">{t('section2d.tagLibrary.saveFailed')}</span>}
-      {edit && <label className="flex items-center gap-1">
+      {edit && <label className="flex shrink-0 items-center gap-1">
         <input type="checkbox" checked={!!distant} onChange={e => setDistant(e.target.checked ? { ...DEFAULT_DISTANT } : null)} />
         {distant ? t('section2d.distant.offsetLabel', { offset: distant.offset.toFixed(2) }) : t('section2d.distant.label')}
       </label>}
-      <Button size="sm" variant="outline" disabled={!start} onClick={() => setReverse(value => !value)}>{t('sectionPlanes.flip.label')}</Button>
-      <Button size="sm" variant="ghost" onClick={close}>{t('section2d.create.cancel')}</Button>
-      <Button size="sm" disabled={!custom || naming || dragging} onClick={() => {
+      <Button size="sm" variant="outline" className="shrink-0" disabled={!start} onClick={() => setReverse(value => !value)}>{t('sectionPlanes.flip.label')}</Button>
+      <Button size="sm" variant="ghost" className="shrink-0" onClick={close}>{t('section2d.create.cancel')}</Button>
+      <Button size="sm" className="shrink-0" disabled={!custom || naming || dragging} onClick={() => {
         if (!edit) { setNaming(true); return; }
         if (!start || !end || useSavedSectionCuts.getState().projectId !== project) return;
         editSavedViewTrace(edit.id, [world(start), world(end)], drawnPlane.flipped !== reverse, distant);

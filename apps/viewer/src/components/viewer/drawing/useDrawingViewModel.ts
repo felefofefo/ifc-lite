@@ -746,8 +746,9 @@ export function useDrawingViewModel() {
     if (!selection) return null;
     if (selection.type === 'measure') {
       const result = measure2DResults.find(item => item.id === selection.id);
-      return { kind: 'dimensions' as const, value: result?.dimension?.styleId ?? dimensionSettings.library.defaultId,
-        choices: dimensionSettings.library.types.map(type => ({ id: type.id, name: type.name })),
+      return { kind: 'dimensions' as const, value: viewAnnotationOptions?.styleIds?.dimensions ?? result?.dimension?.styleId ?? dimensionSettings.library.defaultId,
+        choices: dimensionSettings.library.types.map(type => ({ id: type.id,
+          name: type.name || (type.id === 'architectural' ? t('section2d.dimensionStyle.architectural') : type.id) })),
         locked: !!viewAnnotationOptions?.styleIds?.dimensions };
     }
     const kind = selection.type === 'polygon' ? 'area' : selection.type;

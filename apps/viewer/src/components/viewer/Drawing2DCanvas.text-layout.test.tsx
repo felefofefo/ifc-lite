@@ -94,7 +94,7 @@ describe('Drawing2DCanvas text selection bounds', () => {
       assert.equal(selection.width, background.width + 8);
       assert.equal(selection.height, background.height + 8);
       assert.deepEqual(texts.find(item => item.text === 'Note'), {
-        text: 'Note', font: `italic bold ${scale * 0.2}px serif`, align: 'right',
+        text: 'Note', font: 'italic bold 11.2px serif', align: 'right',
       });
     }
   });
@@ -110,7 +110,7 @@ describe('Drawing2DCanvas text selection bounds', () => {
     assert.equal(texts.find(item => item.text === 'Note')?.font, '14px system-ui, sans-serif');
   });
 
-  it('edits a styled note at its rendered zoom-dependent font size', () => {
+  it('edits a styled note at the same font size at every zoom', () => {
     const annotation: TextAnnotation2D = {
       id: 'styled', text: 'Hello', position: { x: 0, y: 0 },
       fontSize: 14, color: '#111111', backgroundColor: '#ffffff', borderColor: '#333333',
@@ -121,15 +121,18 @@ describe('Drawing2DCanvas text selection bounds', () => {
     const root = createRoot(container);
     try {
       const fontSize = textAnnotationScreenSize(annotation, 10);
-      assert.equal(fontSize, 20);
+      assert.equal(fontSize, 11.2);
       act(() => root.render(<TextAnnotationEditor annotation={annotation}
         screenX={0} screenY={0} fontSize={fontSize} onConfirm={() => {}} onCancel={() => {}} />));
       const textarea = container.querySelector('textarea');
       assert.ok(textarea);
-      assert.equal(textarea.style.fontSize, '20px');
+      assert.equal(textarea.style.fontSize, '11.2px');
       assert.equal(textarea.style.fontFamily, 'serif');
-      assert.equal(textAnnotationScreenSize(annotation, 50), 100);
+      assert.equal(textAnnotationScreenSize(annotation, 50), 11.2);
       assert.equal(textAnnotationScreenSize({ ...annotation, appearance: undefined }, 50), 14);
+      for (const align of ['left', 'center', 'right']) {
+        assert.ok(container.querySelector(`button[aria-label="Align ${align}"] svg`), `${align} uses a real icon`);
+      }
     } finally {
       act(() => root.unmount());
       container.remove();

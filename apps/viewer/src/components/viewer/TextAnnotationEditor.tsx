@@ -8,6 +8,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import type { TextAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { useTranslation } from '@/i18n';
 
@@ -112,10 +113,13 @@ export function TextAnnotationEditor({
            onClick={() => setBold(value => !value)}>B</button>
          <button type="button" title="Italic" aria-pressed={italic} className={italic ? 'rounded bg-accent px-2 py-1 italic' : 'rounded px-2 py-1 italic'}
            onClick={() => setItalic(value => !value)}>I</button>
-         {(['left','center','right'] as const).map(value => <button key={value} type="button"
-           aria-label={`Align ${value}`} aria-pressed={align===value} title={`Align ${value}`}
-           className={align===value?'rounded bg-accent px-2 py-1':'rounded px-2 py-1'}
-           onClick={() => setAlign(value)}>{value==='left'?'⫷':value==='center'?'≡':'⫸'}</button>)}
+         {(['left','center','right'] as const).map(value => {
+           const Icon = value === 'left' ? AlignLeft : value === 'center' ? AlignCenter : AlignRight;
+           return <button key={value} type="button" aria-label={`Align ${value}`}
+             aria-pressed={align === value} title={`Align ${value}`}
+             className={align === value ? 'rounded bg-accent p-1.5' : 'rounded p-1.5'}
+             onClick={() => setAlign(value)}><Icon aria-hidden="true" className="size-4" /></button>;
+         })}
        </div>
       <textarea
         ref={textareaRef}

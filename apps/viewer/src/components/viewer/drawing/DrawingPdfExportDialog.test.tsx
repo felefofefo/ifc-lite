@@ -2,40 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/**
- * The PDF scale dialog (#5496) replaces `window.prompt`, but the thing that
- * actually matters is unchanged: the scale the user picks must reach
- * `handleExportPDF` unmodified, because that function is what proves the
- * exported PDF is byte-identical to before (see
- * `useDrawingExport.pdfVectorPaths.test.tsx`). Every assertion here reads the
- * argument the dialog's `onExport` seam was actually called with, following
- * `PdfViewExportDialog.test.tsx`'s "what the dialog SENDS" pattern rather than
- * a presence check.
- */
+/** Export PDF uses only the view or sheet scale, never a selected override. */
 
 import '@/test/setup-dom.js';
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { act } from 'react';
-import { render, cleanup, click, type as typeInto } from '@/test/render';
+import { render, cleanup, click } from '@/test/render';
 import { DrawingPdfExportDialog } from './DrawingPdfExportDialog';
 import type { DrawingSheet } from '@ifc-lite/drawing-2d';
 
 afterEach(() => cleanup());
-
-/** Radix Select opens on ArrowDown and portals its listbox to `document.body`. */
-function chooseScale(optionLabel: string): void {
-  const trigger = document.body.querySelector('#pdf-export-scale, [role="combobox"]');
-  assert.ok(trigger, 'the scale select must render');
-  act(() => {
-    trigger.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
-  });
-  const option = [...document.body.querySelectorAll('[role="option"]')].find((o) => o.textContent?.startsWith(optionLabel));
-  assert.ok(option, `the "${optionLabel}" option must be offered, got ${JSON.stringify([...document.body.querySelectorAll('[role="option"]')].map((o) => o.textContent))}`);
-  act(() => {
-    option.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  });
-}
 
 function exportButton(): HTMLButtonElement {
   const button = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Export');
@@ -58,7 +34,7 @@ function sheetFixture(): DrawingSheet {
 }
 
 describe('DrawingPdfExportDialog (#5496)', () => {
-  it('"As displayed" sends undefined, matching the old prompt\'s blank-input behaviour', () => {
+  it('exports at the current view scale', () => {
     const calls: Array<number | undefined> = [];
     render(
       <DrawingPdfExportDialog
@@ -68,55 +44,17 @@ describe('DrawingPdfExportDialog (#5496)', () => {
       />,
     );
     click(exportButton());
-    assert.deepEqual(calls, [undefined]);
+    assert.deepEqual(calls, [100]);
   });
 
-  it('a preset scale sends its exact factor', () => {
+  it('locks a non-sheet export to the current view scale without exposing scale controls', () => {
     const calls: Array<number | undefined> = [];
-    render(
-      <DrawingPdfExportDialog
-        open onOpenChange={() => {}} displayedScale={100}
-        sheetEnabled={false} activeSheet={null}
-        onExport={(n) => calls.push(n)}
-      />,
-    );
-    chooseScale('1:50');
+    render(<DrawingPdfExportDialog open onOpenChange={() => {}} displayedScale={75}
+      sheetEnabled={false} activeSheet={null} onExport={n => calls.push(n)} />);
+    assert.equal(document.body.querySelector('[role="combobox"]'), null);
+    assert.match(document.body.textContent ?? '', /1:75/);
     click(exportButton());
-    assert.deepEqual(calls, [50]);
-  });
-
-  it('a custom scale sends the number the user typed, not the mount-time default', () => {
-    const calls: Array<number | undefined> = [];
-    render(
-      <DrawingPdfExportDialog
-        open onOpenChange={() => {}} displayedScale={100}
-        sheetEnabled={false} activeSheet={null}
-        onExport={(n) => calls.push(n)}
-      />,
-    );
-    chooseScale('Custom');
-    const input = document.body.querySelector('input') as HTMLInputElement;
-    assert.ok(input, 'the custom scale input must render');
-    typeInto(input, '250');
-    click(exportButton());
-    assert.deepEqual(calls, [250]);
-  });
-
-  it('an invalid custom scale blocks export instead of sending NaN or 0', () => {
-    const calls: Array<number | undefined> = [];
-    render(
-      <DrawingPdfExportDialog
-        open onOpenChange={() => {}} displayedScale={100}
-        sheetEnabled={false} activeSheet={null}
-        onExport={(n) => calls.push(n)}
-      />,
-    );
-    chooseScale('Custom');
-    const input = document.body.querySelector('input') as HTMLInputElement;
-    typeInto(input, '0');
-    click(exportButton());
-    assert.deepEqual(calls, [], 'a scale of 0 must not reach the exporter');
-    assert.match(document.body.textContent ?? '', /Invalid scale/, 'the error must be stated');
+    assert.deepEqual(calls, [75]);
   });
 
   it('sheet mode ignores the scale controls and exports with no scale argument, letting the sheet decide', () => {
@@ -138,9 +76,9 @@ describe('DrawingPdfExportDialog (#5496)', () => {
     assert.deepEqual(calls, [undefined]);
   });
 
-  it('only asks the user to choose a scale when there is a scale to choose (#8663)', () => {
+  it('shows the fixed view or sheet scale rather than offering alternate scales', () => {
     const headline = () => document.body.querySelector('[role="dialog"] p')?.textContent;
-    const chooser = 'Choose the scale the PDF is drawn at.';
+    const chooser = 'The PDF uses the current view scale.';
     const confirmation = 'The active sheet sets the scale and paper for this PDF.';
 
     render(
@@ -163,8 +101,7 @@ describe('DrawingPdfExportDialog (#5496)', () => {
     assert.equal(headline(), chooser);
     cleanup();
 
-    // A disabled sheet keeps its settings, but the export no longer uses them
-    // and the scale select is back, so the copy must follow the controls.
+    // A disabled sheet uses the active view scale, never the inactive sheet.
     render(
       <DrawingPdfExportDialog
         open onOpenChange={() => {}} displayedScale={100}
@@ -173,7 +110,7 @@ describe('DrawingPdfExportDialog (#5496)', () => {
       />,
     );
     assert.equal(headline(), chooser);
-    assert.ok(document.body.querySelector('[role="combobox"]'), 'the scale select must be offered');
+    assert.equal(document.body.querySelector('[role="combobox"]'), null, 'the view scale is fixed');
   });
 
   it('states the paper the PDF will use for both sheet and non-sheet mode', () => {

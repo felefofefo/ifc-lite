@@ -63,71 +63,80 @@ it('the markup tool segmented control writes annotation2DActiveTool', () => {
   assert.equal(useViewerStore.getState().annotation2DActiveTool, 'none');
 });
 
-it('the display chips write drawing2DDisplayOptions', () => {
+// Display controls moved from the toolbar to the inspector. They are labelled
+// switches, not aria-pressed header chips.
+function displaySwitch(ui: ParentNode, name: string): HTMLButtonElement {
+  const inspector = ui.querySelector('[data-drawing-inspector]') ?? ui;
+  const label = [...inspector.querySelectorAll('label')].find(item => item.textContent?.trim() === name);
+  assert.ok(label, `a display setting labelled "${name}"`);
+  const control = inspector.querySelector<HTMLButtonElement>(`button[role="switch"][id="${label.htmlFor}"]`);
+  assert.ok(control, `a switch for "${name}"`);
+  return control;
+}
+
+it('the inspector display switches and print preview update their settings', () => {
+  seed({ drawingInspectorTab: 'display' });
   const ui = render(<DrawingPanel />);
   const before = useViewerStore.getState().drawing2DDisplayOptions;
-  click(byLabel(ui, '3D overlay'));
+  click(displaySwitch(ui, '3D overlay'));
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.show3DOverlay, !before.show3DOverlay);
-  assert.equal(byLabel(ui, '3D overlay').getAttribute('aria-pressed'), String(!before.show3DOverlay));
-  click(byLabel(ui, 'Annotations'));
-  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showIfcAnnotations, !before.showIfcAnnotations);
-  // Projection's shown state follows the cut until the user chooses (#8802): the
-  // chip flips what is SHOWN, and stores that as an explicit choice.
-  const projectionShown = byLabel(ui, 'Projection').getAttribute('aria-pressed') === 'true';
-  click(byLabel(ui, 'Projection'));
+  assert.equal(displaySwitch(ui, '3D overlay').getAttribute('aria-checked'), String(!before.show3DOverlay));
+  // Projection's shown state follows the plane until the user chooses.
+  const projectionShown = displaySwitch(ui, 'Projection').getAttribute('aria-checked') === 'true';
+  click(displaySwitch(ui, 'Projection'));
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showConstructionProjection, !projectionShown);
-  assert.equal(byLabel(ui, 'Projection').getAttribute('aria-pressed'), String(!projectionShown));
-  click(byLabel(ui, 'Symbolic'));
+  assert.equal(displaySwitch(ui, 'Projection').getAttribute('aria-checked'), String(!projectionShown));
+  click(displaySwitch(ui, 'Symbolic'));
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.useSymbolicRepresentations, !before.useSymbolicRepresentations);
   click(byLabel(ui, 'Print preview'));
   assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showPrintPreview, !before.showPrintPreview);
   assert.equal(byLabel(ui, 'Print preview').getAttribute('aria-pressed'), String(!before.showPrintPreview));
 });
 
-it('a plan cut shows projection on and a front cut off, until the user chooses (#8802)', () => {
+it('the inspector shows plan projection on and front projection off by default (#8802)', () => {
+  seed({ drawingInspectorTab: 'display' });
   const ui = render(<DrawingPanel />);
-  const pressed = () => byLabel(ui, 'Projection').getAttribute('aria-pressed');
-  assert.equal(pressed(), 'true', 'a plan cut opens with projection on');
+  const checked = () => displaySwitch(ui, 'Projection').getAttribute('aria-checked');
+  assert.equal(checked(), 'true');
   const s = useViewerStore.getState();
   act(() => { useViewerStore.setState({ sectionPlane: { ...s.sectionPlane, axis: 'front' } }); });
-  assert.equal(pressed(), 'false', 'a front section keeps projection off');
+  assert.equal(checked(), 'false');
   act(() => { useViewerStore.setState({ sectionPlane: { ...s.sectionPlane, axis: 'down' } }); });
-  assert.equal(pressed(), 'true');
+  assert.equal(checked(), 'true');
 });
 
 it("the user's Projection choice survives a switch between plan and section (#8802)", () => {
+  seed({ drawingInspectorTab: 'display' });
   const ui = render(<DrawingPanel />);
-  const pressed = () => byLabel(ui, 'Projection').getAttribute('aria-pressed');
+  const checked = () => displaySwitch(ui, 'Projection').getAttribute('aria-checked');
   const setAxis = (axis: 'down' | 'front') => act(() => {
     useViewerStore.setState({ sectionPlane: { ...useViewerStore.getState().sectionPlane, axis } });
   });
-  // On a plan the user turns projection OFF: it stays off on a section and back on the plan.
-  click(byLabel(ui, 'Projection'));
-  assert.equal(pressed(), 'false', 'the click turns the shown projection off');
-  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showConstructionProjection, false, 'stored as an explicit choice');
+  click(displaySwitch(ui, 'Projection'));
+  assert.equal(checked(), 'false');
+  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showConstructionProjection, false);
   setAxis('front');
-  assert.equal(pressed(), 'false');
+  assert.equal(checked(), 'false');
   setAxis('down');
-  assert.equal(pressed(), 'false', 'the plan default does not override the choice');
-  // On a section the user turns it ON: it stays on everywhere.
+  assert.equal(checked(), 'false');
   setAxis('front');
-  click(byLabel(ui, 'Projection'));
-  assert.equal(pressed(), 'true');
+  click(displaySwitch(ui, 'Projection'));
+  assert.equal(checked(), 'true');
   setAxis('down');
-  assert.equal(pressed(), 'true');
+  assert.equal(checked(), 'true');
   setAxis('front');
-  assert.equal(pressed(), 'true', 'the section default does not override the choice');
+  assert.equal(checked(), 'true');
 });
 
-it('IFC annotations are offered on plan cuts only, and projection never on a custom plane', () => {
+it('nonvertical custom planes do not offer incompatible projection or symbolic controls', () => {
   const s = useViewerStore.getState();
-  seed({ sectionPlane: { ...s.sectionPlane, axis: 'front', enabled: true, custom: { normal: [1, 0, 0], distance: 1, pickedAt: [1, 0, 0], tangent: [0, 1, 0], bitangent: [0, 0, 1] } } });
+  seed({ drawingInspectorTab: 'display', sectionPlane: { ...s.sectionPlane, axis: 'front', enabled: true,
+    custom: { normal: [0, 1, 0], distance: 1, pickedAt: [0, 1, 0], tangent: [1, 0, 0], bitangent: [0, 0, 1] } } });
   const ui = render(<DrawingPanel />);
-  assert.ok((byLabel(ui, 'Annotations') as HTMLButtonElement).disabled, 'annotations chip is disabled on a Front cut');
-  assert.ok((byLabel(ui, 'Projection') as HTMLButtonElement).disabled, 'projection chip is disabled on a custom plane');
-  const before = useViewerStore.getState().drawing2DDisplayOptions;
-  click(byLabel(ui, 'Annotations'));
-  assert.equal(useViewerStore.getState().drawing2DDisplayOptions.showIfcAnnotations, before.showIfcAnnotations, 'a disabled chip writes nothing');
+  const labels = [...ui.querySelectorAll('label')].map(item => item.textContent?.trim());
+  assert.ok(!labels.includes('Projection'), 'a nonvertical custom plane has no projection switch');
+  assert.ok(!labels.includes('Symbolic'), 'symbolic geometry applies to plan cuts only');
+  assert.ok(labels.includes('3D overlay'), 'the other display controls remain accessible');
 });
 
 it("the status line shows the active tool's hint, and idle Select keeps its pan hint in a tooltip", () => {
@@ -178,24 +187,31 @@ function openExport(ui: HTMLElement): void {
   click(trigger);
 }
 
-it('the export items are disabled without a drawing', () => {
+const DIRECT_EXPORT_LABELS = ['Download SVG', 'Download DXF', 'Download PDF (to scale)', 'Print'];
+function directExports(items: ReturnType<typeof exportItems>) {
+  return items.filter(item => DIRECT_EXPORT_LABELS.includes(item.label.trim()));
+}
+
+it('the direct export items are disabled without a drawing', () => {
   const ui = render(<DrawingPanel />);
   openExport(ui);
   const items = exportItems();
-  const files = items.filter((i) => /SVG|DXF|PDF|Print/.test(i.label));
-  assert.equal(files.length, 4, `four file exports, got ${JSON.stringify(items)}`);
-  assert.ok(files.every((i) => i.disabled), 'all four file exports are disabled');
-  assert.ok(items.some((i) => /Save Markup to Model/.test(i.label)), 'saving markup into the model is in the same menu');
+  const files = directExports(items);
+  assert.deepEqual(files.map(item => item.label.trim()), DIRECT_EXPORT_LABELS);
+  assert.ok(files.every(item => item.disabled), 'all direct exports are disabled');
+  assert.equal(items.filter(item => item.label.startsWith('Export All Views')).length, 3,
+    'batch exports remain separate from the four direct exports');
+  assert.ok(items.some(item => /Save Markup to Model/.test(item.label)));
 });
 
-it('the export items are enabled once the drawing is ready', async () => {
+it('the direct export items are enabled once the drawing is ready', async () => {
   const ui = render(<><DrawingRuntimeHost mergedGeometry={geometry} /><DrawingPanel /></>);
   for (let i = 0; i < 150 && useViewerStore.getState().drawing2DStatus !== 'ready'; i++) {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   }
   assert.ok(useViewerStore.getState().drawing2D, 'the host generated a drawing');
   openExport(ui);
-  const files = exportItems().filter((i) => /SVG|DXF|PDF|Print/.test(i.label));
-  assert.equal(files.length, 4);
-  assert.ok(files.every((i) => !i.disabled), 'all four file exports are enabled');
+  const files = directExports(exportItems());
+  assert.deepEqual(files.map(item => item.label.trim()), DIRECT_EXPORT_LABELS);
+  assert.ok(files.every(item => !item.disabled), 'all direct exports are enabled');
 });

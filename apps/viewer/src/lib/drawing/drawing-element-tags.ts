@@ -379,6 +379,42 @@ export function tagExportBounds(bounds: Drawing2D['bounds'], tags: readonly Reso
   return result;
 }
 
+/** Inline the already-sanitized tag artwork in exported SVGs. SVG-as-image resources
+ * cannot reliably load another SVG-as-image, so <image href="data:image/svg+xml">
+ * renders the leader but often drops the tag or grid heads in standalone files. */
+function inlineDrawingTagGraphic(graphic: NonNullable<ResolvedDrawingTag['graphic']>, point: Point2D, unit: number): string {
+  const prefix = 'data:image/svg+xml;charset=utf-8,';
+  if (!graphic.href.startsWith(prefix)) return '';
+  const x = point.x - graphic.anchor.x * unit;
+  const y = point.y - graphic.anchor.y * unit;
+  const width = graphic.width * unit;
+  const height = graphic.height * unit;
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return '';
+  try {
+    // renderTagSvg has already sanitized this source and substituted its fields.
+    const source = decodeURIComponent(graphic.href.slice(prefix.length));
+    const document = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const svg = document.documentElement;
+    if (svg.namespaceURI !== 'http://www.w3.org/2000/svg' || svg.localName !== 'svg'
+      || document.querySelector('parsererror')) return '';
+    // Artwork authored without a viewBox uses CSS pixels as its coordinates.
+    // Preserve that coordinate system when replacing its paper dimensions.
+    if (!svg.hasAttribute('viewBox')) {
+      const originalWidth = Number(svg.getAttribute('width'));
+      const originalHeight = Number(svg.getAttribute('height'));
+      if (!(originalWidth > 0 && originalHeight > 0)) return '';
+      svg.setAttribute('viewBox', `0 0 ${originalWidth} ${originalHeight}`);
+    }
+    svg.setAttribute('x', String(x));
+    svg.setAttribute('y', String(y));
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    return new XMLSerializer().serializeToString(svg);
+  } catch {
+    return '';
+  }
+}
+
 export function drawingTagsSvg(tags: readonly ResolvedDrawingTag[], map: Mapper, unit: number, escape: (s: string) => string) {
   if (!tags.length) return '';
   return '<g id="ifc-tags" fill="' + ink + '" font-family="Arial,sans-serif" font-size="' + tagHeight * unit + '">' +
@@ -386,13 +422,9 @@ export function drawingTagsSvg(tags: readonly ResolvedDrawingTag[], map: Mapper,
       const p = map(tag.position.x, tag.position.y), a = map(anchor.x, anchor.y);
       const leader = tag.leader || tag.gridStart ? '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + p.x + '" y2="' + p.y +
         '" stroke="' + (style?.color ?? ink) + '" stroke-width="' + (lineWidth ?? 0.18) * unit + '"/>' : '';
-      function image(image: NonNullable<ResolvedDrawingTag['graphic']>, point: Point2D) {
-        return '<image x="' + (point.x - image.anchor.x * unit) + '" y="' + (point.y - image.anchor.y * unit) +
-          '" width="' + (image.width * unit) + '" height="' + (image.height * unit) + '" href="' + escape(image.href) + '"/>';
-      }
-      const start = startGraphic ? image(startGraphic, a) : '';
+      const start = startGraphic ? inlineDrawingTagGraphic(startGraphic, a, unit) : '';
       if (hideEnd) return leader + start;
-      if (graphic) return leader + start + image(graphic, p);
+      if (graphic) return leader + start + inlineDrawingTagGraphic(graphic, p, unit);
       return leader + '<text font-family="' + (style?.font ?? 'sans-serif') + '" font-size="' + ((style?.textHeight ?? tagHeight) * unit) + '" x="' + p.x + '" y="' + p.y + '" text-anchor="middle" dominant-baseline="middle">' + escape(text) + '</text>';
     }).join('') + '</g>\n';
 }

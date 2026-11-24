@@ -55,6 +55,7 @@ describe('drawing export notices (#5850)', () => {
     const scales: Array<number | undefined> = [];
     render(<DrawingExportMenu {...props({
       markupCounts: { ...emptyCounts, texts: 1 }, visibleUnderlayCount: 1, visibleRasterReferenceCount: 1,
+      displayedScale: 50,
       onExportPdf: (scale) => scales.push(scale),
     })} />);
     openMenu();
@@ -66,7 +67,7 @@ describe('drawing export notices (#5850)', () => {
     const exportButton = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Export');
     assert.ok(exportButton);
     click(exportButton);
-    assert.deepEqual(scales, [undefined]);
+    assert.deepEqual(scales, [50], 'the PDF receives the view publication scale');
   });
 
   it('does not claim sheet PDF omits underlays it embeds; the sheet scale stays fixed', () => {
