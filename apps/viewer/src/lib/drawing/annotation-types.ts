@@ -21,13 +21,11 @@ export type AnnotationSymbolStyle = {
   weight?: typeof LINEWEIGHT_PRESETS[number];
 };
 
-/** Keep styled text a fixed, readable size on screen while zooming. The
- * physical text height in mm is still used by the SVG, DXF and PDF exporters. */
-export function textAnnotationScreenSize(annotation: { fontSize: number; appearance?: Pick<AnnotationSymbolStyle, 'textHeight'> }, _paperUnit: number): number {
-  const heightMm = annotation.appearance?.textHeight;
-  return heightMm && Number.isFinite(heightMm) && heightMm > 0
-    ? Math.max(8, annotation.fontSize * heightMm / 2.5)
-    : annotation.fontSize;
+/** Match the drawing's zoom and paper height (mm). The 2.5 mm default also
+ * matches the SVG, DXF and PDF exports when no text style is assigned. */
+export function textAnnotationScreenSize(annotation: { fontSize: number; appearance?: Pick<AnnotationSymbolStyle, 'textHeight'> }, paperUnit: number): number {
+  const heightMm = annotation.appearance?.textHeight ?? 2.5;
+  return Number.isFinite(paperUnit) && paperUnit > 0 ? heightMm * paperUnit : annotation.fontSize;
 }
 
 /** Shared text bounds for canvas painting, selection and click hit-testing. */
@@ -47,7 +45,7 @@ export function textAnnotationLayout(annotation: {
       ? measured : line.length * size * 0.6;
     maxWidth = Math.max(maxWidth, width);
   }
-  const padding = 6;
+  const padding = Number.isFinite(paperUnit) && paperUnit > 0 ? paperUnit : 6; // 1 mm on paper
   const lineHeight = size * 1.3;
   return { font, lines, lineHeight, padding, bgW: maxWidth + padding * 2, bgH: lines.length * lineHeight + padding * 2 };
 }

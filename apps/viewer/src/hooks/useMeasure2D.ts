@@ -11,18 +11,12 @@ import { axisFlipForSection } from '@/hooks/pdfSectionLayout';
 import { KEYBOARD_PRIORITY, registerKeyboardCommand } from '@/lib/commands/dispatcher';
 import { clickDimension, dimensionSegments, EMPTY_DIMENSION_DRAFT, finishDimensionPoints, isCurvedDimension, type DimensionSegment, type DimensionType, curvedDimension } from '@/lib/drawing/dimension-line';
 import type { Point2D } from '@/store/slices/drawing2DSlice';
+import { createLineworkSource } from '@/lib/snap/sources/linework';
+import { solveSnap } from '@/lib/snap/solve';
+import type { SnapProfile, SnapResult, Vec2 } from '@/lib/snap/types';
 
 export const DEFAULT_OBJECT_SNAPS = { endpoint: true, midpoint: false, intersection: false, nearest: true };
 export type DrawingObjectSnaps = typeof DEFAULT_OBJECT_SNAPS;
-
-function segmentIntersection(a: Point2D, b: Point2D, c: Point2D, d: Point2D): Point2D | null {
-  const dx = b.x - a.x, dy = b.y - a.y, ex = d.x - c.x, ey = d.y - c.y;
-  const det = dx * ey - dy * ex;
-  if (Math.abs(det) <= 1e-12) return null;
-  const x = c.x - a.x, y = c.y - a.y;
-  const t = (x * ey - y * ex) / det, u = (x * dy - y * dx) / det;
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { x: a.x + t * dx, y: a.y + t * dy } : null;
-}
 
 interface UseMeasure2DParams {
   drawing: Drawing2D | null;
@@ -48,6 +42,7 @@ export function useMeasure2D({
   measure2DMode, dimensionType, angularSnap = 'off', showHiddenLines, setMeasure2DSnapPoint, onCancel, onPlace,
 }: UseMeasure2DParams) {
   const pan = useRef<Point2D | null>(null);
+  const previousSnap = useRef<SnapResult | null>(null);
   const [draft, setDraft] = useState(EMPTY_DIMENSION_DRAFT);
   const [cursor, setCursor] = useState<{ point: Point2D; snapped: boolean; alignedAxis?: Point2D } | null>(null);
 
@@ -56,6 +51,7 @@ export function useMeasure2D({
     setCursor(null);
     setMeasure2DSnapPoint(null);
     pan.current = null;
+    previousSnap.current = null;
   }, [setMeasure2DSnapPoint]);
 
   useEffect(reset, [measure2DMode, dimensionType, drawing, drawingKey, sectionAxis, reset]);
@@ -76,82 +72,71 @@ export function useMeasure2D({
     return { x, y };
   }, [viewTransform, sectionAxis]);
 
-  // Find nearest point on a line segment
-  const nearestPointOnSegment = useCallback((
-    p: { x: number; y: number },
-    a: { x: number; y: number },
-    b: { x: number; y: number }
-  ): { point: { x: number; y: number }; dist: number } => {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const lenSq = dx * dx + dy * dy;
-
-    if (lenSq < 0.0001) {
-      // Degenerate segment
-      const d = Math.sqrt((p.x - a.x) ** 2 + (p.y - a.y) ** 2);
-      return { point: a, dist: d };
-    }
-
-    // Parameter t along segment [0,1]
-    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
-    t = Math.max(0, Math.min(1, t));
-
-    const nearest = { x: a.x + t * dx, y: a.y + t * dy };
-    const dist = Math.sqrt((p.x - nearest.x) ** 2 + (p.y - nearest.y) ** 2);
-
-    return { point: nearest, dist };
-  }, []);
-
-  const findSnapPoint = useCallback((cursor: Point2D): Point2D | null => {
-    if (!drawing || !(viewTransform.scale > 0) || !Object.values(objectSnaps).some(Boolean)) return null;
-    const threshold = 10 / viewTransform.scale;
-    let bestFixed: Point2D | null = null;
-    let bestFixedDist = threshold * 0.7;
-    let bestNearest: Point2D | null = null;
-    let bestNearestDist = threshold;
-    const nearby: { a: Point2D; b: Point2D; dist: number }[] = [];
-    function fixed(point: Point2D) {
-      const distance = Math.hypot(point.x - cursor.x, point.y - cursor.y);
-      if (distance < bestFixedDist) {
-        bestFixedDist = distance;
-        bestFixed = point;
-      }
-    }
-    function consider(a: Point2D, b: Point2D) {
-      if (objectSnaps.endpoint) { fixed(a); fixed(b); }
-      if (objectSnaps.midpoint) fixed({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-      if (!(objectSnaps.nearest || objectSnaps.intersection)) return;
-      const { point, dist } = nearestPointOnSegment(cursor, a, b);
-      if (objectSnaps.intersection && dist < threshold) nearby.push({ a, b, dist });
-      if (objectSnaps.nearest && dist < bestNearestDist) {
-        bestNearestDist = dist;
-        bestNearest = point;
-      }
-    }
+  // Geometry is in drawing-local metres, just like the shared snap solver. Build
+  // once per drawing update instead of scanning/rebuilding rings on every move.
+  const snapSource = useMemo(() => {
+    if (!drawing) return null;
+    const segments: (readonly [Vec2, Vec2])[] = [];
+    const seen = new Set<string>();
+    const add = (a: Point2D, b: Point2D) => {
+      if (![a.x, a.y, b.x, b.y].every(Number.isFinite) || (a.x === b.x && a.y === b.y)) return;
+      const ka = `${a.x},${a.y}`, kb = `${b.x},${b.y}`;
+      const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      segments.push([[a.x, a.y], [b.x, b.y]]);
+    };
+    const ring = (points: readonly Point2D[]) => {
+      if (points.length < 2) return;
+      for (let i = 0; i < points.length; i++) add(points[i], points[(i + 1) % points.length]);
+    };
     for (const { polygon } of drawing.cutPolygons) {
-      for (const ring of [polygon.outer, ...polygon.holes]) {
-        ring.forEach((point, index) => consider(point, ring[(index + 1) % ring.length]));
-      }
+      ring(polygon.outer);
+      for (const hole of polygon.holes) ring(hole);
     }
     for (const line of drawing.lines) {
       if (!showHiddenLines && isOccludedDrawingLine(line)) continue;
-      consider(line.line.start, line.line.end);
+      add(line.line.start, line.line.end);
     }
-    for (const ring of extraSnapContours ?? []) {
-      if (ring.length < 2) continue;
-      for (let i = 0; i < ring.length; i++) consider(ring[i], ring[(i + 1) % ring.length]);
-    }
-    const candidates = nearby.sort((a, b) => a.dist - b.dist).slice(0, 64);
-    for (let i = 0; i < candidates.length; i++) {
-      const { a, b } = candidates[i];
-      for (let j = i + 1; j < candidates.length; j++) {
-        const crossing = segmentIntersection(a, b, candidates[j].a, candidates[j].b);
-        if (crossing) fixed(crossing);
-      }
-    }
-    return bestFixed ?? bestNearest;
-  }, [drawing, showHiddenLines, viewTransform.scale, nearestPointOnSegment, objectSnaps, extraSnapContours]);
+    for (const contour of extraSnapContours ?? []) ring(contour);
+    return createLineworkSource({ segments, midpoints: objectSnaps.midpoint });
+  }, [drawing, showHiddenLines, extraSnapContours, objectSnaps.midpoint]);
 
+  // Keep the existing four toggles. Angular constraints stay in useDrawingDirection;
+  // this solver is responsible only for geometric targets and their stability.
+  const snapProfile = useMemo<SnapProfile>(() => ({
+    radiusPx: 12,
+    hysteresisPx: 3,
+    sources: ['linework'],
+    tiers: [
+      ...(objectSnaps.endpoint ? [['endpoint', 'vertex'] as const] : []),
+      ...(objectSnaps.intersection ? [['intersection'] as const] : []),
+      ...(objectSnaps.midpoint ? [['midpoint'] as const] : []),
+      ...(objectSnaps.nearest ? [['edge'] as const] : []),
+    ],
+  }), [objectSnaps.endpoint, objectSnaps.midpoint, objectSnaps.intersection, objectSnaps.nearest]);
+
+  useEffect(() => { previousSnap.current = null; }, [snapSource, snapProfile, drawingKey, sectionAxis]);
+
+  const findSnapPoint = useCallback((cursor: Point2D): Point2D | null => {
+    if (!snapSource || !(viewTransform.scale > 0) || !Number.isFinite(viewTransform.scale) || snapProfile.tiers.length === 0) {
+      previousSnap.current = null;
+      return null;
+    }
+    const result = solveSnap({
+      cursor: [cursor.x, cursor.y], metresPerPixel: 1 / viewTransform.scale,
+      anchor: null, chain: [], modifiers: { shift: false, alt: false }, locks: {},
+    }, [snapSource], snapProfile, previousSnap.current ?? undefined);
+    previousSnap.current = result.winner ? result : null;
+    return result.winner ? { x: result.local[0], y: result.local[1] } : null;
+  }, [snapSource, snapProfile, viewTransform.scale]);
+
+  // UI-only metadata: never attach a snap kind to a Point2D persisted in the project.
+  const snapKindFor = useCallback((point: Point2D | null) => {
+    const result = previousSnap.current;
+    if (!point || !result?.winner || result.local[0] !== point.x || result.local[1] !== point.y) return null;
+    return result.winner.kind;
+  }, []);
 
   useEffect(() => {
     if (!measure2DMode) return;
@@ -250,6 +235,7 @@ export function useMeasure2D({
 
   function handleMouseLeave() {
     pan.current = null;
+    previousSnap.current = null;
     setMeasure2DSnapPoint(null);
   }
 
@@ -267,5 +253,5 @@ export function useMeasure2D({
     );
   }, [choosingAngularSide, cursor, dimensionType, draft, measure2DMode]);
 
-  return { handleClick, handleMouseDown, handleMouseMove, handleMouseUp, handleMouseLeave, findSnapPoint, draft, preview, reset };
+  return { handleClick, handleMouseDown, handleMouseMove, handleMouseUp, handleMouseLeave, findSnapPoint, snapKindFor, draft, preview, reset };
 }

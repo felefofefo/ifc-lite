@@ -871,7 +871,7 @@ export function useDrawingViewModel() {
       },
     }, cursorClass: tags.active ? 'cursor-crosshair' : cursorClass,
     measure2DMode, measure2DResults, displayedMeasurements, styledAreas, styledNotes, styledClouds, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
-    objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, findSnapPoint: measureHandlers.findSnapPoint,
+    objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, findSnapPoint: measureHandlers.findSnapPoint, snapKindFor: measureHandlers.snapKindFor,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,

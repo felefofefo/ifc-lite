@@ -93,24 +93,30 @@ describe('Drawing2DCanvas text selection bounds', () => {
       assert.equal(selection.y, background.y - 4);
       assert.equal(selection.width, background.width + 8);
       assert.equal(selection.height, background.height + 8);
+      // Both the text and the 1 mm background margin track the model zoom.
+      assert.ok(Math.abs(background.width / scale - 0.6) < 1e-9);
+      assert.ok(Math.abs(background.height / scale - 0.46) < 1e-9);
       assert.deepEqual(texts.find(item => item.text === 'Note'), {
-        text: 'Note', font: 'italic bold 11.2px serif', align: 'right',
+        text: 'Note', font: `italic bold ${scale * 0.2}px serif`, align: 'right',
       });
     }
   });
 
-  it('keeps the default pixel-sized text and its selection in sync', () => {
-    const { fills, strokes, texts } = renderNote(100);
-    const background = fills.find(fill => fill.color === '#ffeecc');
-    const selection = strokes.find(stroke => stroke.color === '#1976D2');
-    assert.ok(background);
-    assert.ok(selection);
-    assert.equal(selection.width, background.width + 8);
-    assert.equal(selection.height, background.height + 8);
-    assert.equal(texts.find(item => item.text === 'Note')?.font, '14px system-ui, sans-serif');
+  it('uses the same 2.5 mm default as PDF/SVG and scales its selection', () => {
+    for (const scale of [20, 100]) {
+      const { fills, strokes, texts } = renderNote(scale);
+      const background = fills.find(fill => fill.color === '#ffeecc');
+      const selection = strokes.find(stroke => stroke.color === '#1976D2');
+      assert.ok(background);
+      assert.ok(selection);
+      assert.equal(selection.width, background.width + 8);
+      assert.equal(selection.height, background.height + 8);
+      assert.ok(Math.abs(background.width / scale - 0.7) < 1e-9);
+      assert.equal(texts.find(item => item.text === 'Note')?.font, `${scale * 0.25}px system-ui, sans-serif`);
+    }
   });
 
-  it('edits a styled note at the same font size at every zoom', () => {
+  it('edits a styled note at its printed size after zoom', () => {
     const annotation: TextAnnotation2D = {
       id: 'styled', text: 'Hello', position: { x: 0, y: 0 },
       fontSize: 14, color: '#111111', backgroundColor: '#ffffff', borderColor: '#333333',
@@ -121,15 +127,15 @@ describe('Drawing2DCanvas text selection bounds', () => {
     const root = createRoot(container);
     try {
       const fontSize = textAnnotationScreenSize(annotation, 10);
-      assert.equal(fontSize, 11.2);
+      assert.equal(fontSize, 20);
       act(() => root.render(<TextAnnotationEditor annotation={annotation}
         screenX={0} screenY={0} fontSize={fontSize} onConfirm={() => {}} onCancel={() => {}} />));
       const textarea = container.querySelector('textarea');
       assert.ok(textarea);
-      assert.equal(textarea.style.fontSize, '11.2px');
+      assert.equal(textarea.style.fontSize, '20px');
       assert.equal(textarea.style.fontFamily, 'serif');
-      assert.equal(textAnnotationScreenSize(annotation, 50), 11.2);
-      assert.equal(textAnnotationScreenSize({ ...annotation, appearance: undefined }, 50), 14);
+      assert.equal(textAnnotationScreenSize(annotation, 50), 100);
+      assert.equal(textAnnotationScreenSize({ ...annotation, appearance: undefined }, 50), 125);
       for (const align of ['left', 'center', 'right']) {
         assert.ok(container.querySelector(`button[aria-label="Align ${align}"] svg`), `${align} uses a real icon`);
       }

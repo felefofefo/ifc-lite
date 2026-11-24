@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useTranslation } from '@/i18n';
 import type { ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
 import type { DrawingViewModel } from './useDrawingViewModel';
+import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 
 export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
   const { t } = useTranslation();
@@ -127,12 +128,11 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
   }
 
   return <>
-    {!!(shown.length || tags.preview) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
+    {!!(shown.length || tags.preview || snap) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
       {shown.map(item => paint(item, false))}
       {tags.preview && paint(tags.preview, true)}
-      {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`} fill="none" stroke="#4CAF50" strokeWidth={1.5}>
-        <path d="M -12 0 H 12 M 0 -12 V 12" />
-        <circle r={6} />
+      {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`}>
+       <DrawingSnapGlyph kind={vm.snapKindFor(tags.snapReference ?? null)} />
       </g>}
     </svg>}
     {tags.selected && !tags.active && <div role="toolbar" aria-label={t('section2d.tools.select')}

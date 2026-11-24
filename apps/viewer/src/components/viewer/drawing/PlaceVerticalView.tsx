@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 
 import type { Point2D } from '@ifc-lite/drawing-2d';
 import { useDrawingDirection } from '@/hooks/useDrawingDirection';
 import { DEFAULT_DISTANT, type DistantElements } from '@/lib/drawing/distant-elements';
+import type { SnapKind } from '@/lib/snap/types';
+import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ViewIdentityDialog } from './ViewIdentityFields';
@@ -32,6 +34,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
   const drag = useRef<{ id: number; grip: 'line' | 'start' | 'end' | 'distant'; trace: MarkerTrace; distant: DistantElements | null; x: number; y: number; scale: number; moved: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [snap, setSnap] = useState<Point2D | null>(null);
+  const [snapKind, setSnapKind] = useState<SnapKind | null>(null);
   const [naming, setNaming] = useState(false);
   const { drawing, drawnPlane, viewTransform, sheetEnabled, activeSheet, isPinned, cachedSheetTransformRef } = vm;
   const project = useSavedSectionCuts(s => s.projectId);
@@ -65,7 +68,13 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
     const x = (event.clientX - rect.left - tx) / scale;
     const y = (event.clientY - rect.top - ty) / scale;
     const raw = { x, y };
-    return resolveDirection(start ?? null, raw, vm.findSnapPoint(raw), event.shiftKey) ?? raw;
+    const reference = vm.findSnapPoint(raw);
+    const resolved = resolveDirection(start ?? null, raw, reference, event.shiftKey) ?? raw;
+    // Do not label an angle-constrained point as an object snap.
+    const matches = reference && resolved.x === reference.x && resolved.y === reference.y;
+    setSnap(matches ? reference : null);
+    setSnapKind(matches ? vm.snapKindFor(reference) : null);
+    return resolved;
   }
 
   const second = end ?? cursor;
@@ -118,12 +127,15 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       const candidateA = { x: from.x + delta.x, y: from.y + delta.y };
       const candidateB = { x: to.x + delta.x, y: to.y + delta.y };
       const snapA = vm.findSnapPoint(candidateA);
+      const kindA = vm.snapKindFor(snapA);
       const snapB = vm.findSnapPoint(candidateB);
+      const kindB = vm.snapKindFor(snapB);
       const distanceA = snapA ? Math.hypot(snapA.x - candidateA.x, snapA.y - candidateA.y) : Infinity;
       const distanceB = snapB ? Math.hypot(snapB.x - candidateB.x, snapB.y - candidateB.y) : Infinity;
       const snapped = distanceA <= distanceB ? snapA : snapB;
       const fromPoint = distanceA <= distanceB ? from : to;
       setSnap(snapped);
+      setSnapKind(distanceA <= distanceB ? kindA : kindB);
       if (snapped) offset = { x: snapped.x - fromPoint.x, y: snapped.y - fromPoint.y };
     }
     if (current.grip === 'start' || current.grip === 'end') {
@@ -133,7 +145,8 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       const point = { x: grip.x + delta.x, y: grip.y + delta.y };
       const reference = vm.findSnapPoint(point);
       const constrained = resolveDirection(anchor, point, reference, event.shiftKey);
-      setSnap(reference);
+      setSnap(reference && (!constrained || (constrained.x === reference.x && constrained.y === reference.y)) ? reference : null);
+      setSnapKind(vm.snapKindFor(reference));
       if (constrained) offset = { x: constrained.x - grip.x, y: constrained.y - grip.y };
     }
     const trace = dragVerticalViewTrace(current.trace, current.grip, offset);
@@ -170,6 +183,7 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       onMouseDown={event => event.stopPropagation()}
       onMouseUp={event => event.stopPropagation()}
       onMouseMove={event => { event.stopPropagation(); if (!end) setCursor(point(event)); }}
+      onMouseLeave={() => { if (!drag.current) setSnap(null); }}
       onClick={event => {
         if (edit || naming || !(scale > 0)) return;
         const next = point(event);
@@ -186,9 +200,8 @@ export function PlaceVerticalView({ kind, vm, close, edit }: {
       {edit && a && b && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth="22" pointerEvents="none" />}
       {arrow && <path transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}
         d="M0 0H24m-7-5 7 5-7 5" stroke="currentColor" strokeWidth="2" fill="none" className="pointer-events-none" />}
-      {snap && <g pointerEvents="none" transform={`translate(${toScreen(snap).x} ${toScreen(snap).y})`}
-        stroke="#4CAF50" strokeWidth="1.5" fill="none">
-        <path d="M-12 0H12M0-12V12"/><circle r="6" />
+      {snap && <g pointerEvents="none" transform={`translate(${toScreen(snap).x} ${toScreen(snap).y})`}>
+        <DrawingSnapGlyph kind={snapKind} />
       </g>}
       {/* Endpoint grips belong to Select/Move, not the properties editor. */}
     </svg>

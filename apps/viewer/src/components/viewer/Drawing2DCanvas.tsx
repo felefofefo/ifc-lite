@@ -1502,7 +1502,7 @@ export function Drawing2DCanvas({
 
       // Border
       ctx.strokeStyle = textAnnotation.borderColor;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.15 * paperUnit; // same 0.15 mm stroke as PDF/SVG
       ctx.strokeRect(sx, sy, bgW, bgH);
 
       // Text

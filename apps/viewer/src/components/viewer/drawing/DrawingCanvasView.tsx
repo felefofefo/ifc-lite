@@ -17,6 +17,7 @@ import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
 import { ViewMarkers } from './ViewMarkers';
+import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 import { DrawingMovePreview } from './DrawingMovePreview';
 import { DrawingElementTags } from './DrawingElementTags';
 import { useDrawingModelSelection } from './DrawingModelSelection';
@@ -92,7 +93,6 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           dimensionPreview={vm.dimensionPreview}
           dimensionPoints={vm.dimensionDraft.points}
           measureResults={drawingAnnotationVisible(annotationView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)) : []}
-          measureSnapPoint={vm.measure2DSnapPoint}
           sheetEnabled={vm.sheetEnabled}
           activeSheet={vm.activeSheet}
           sectionAxis={drawnPlane.axis}
@@ -118,6 +118,15 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           paperTheme={vm.paperTheme}
         />
       )}
+
+      {/* Screen-sized snap feedback; unlike model geometry it must not be exported. */}
+      {status === 'ready' && vm.measure2DSnapPoint && !placement
+        && (vm.measure2DMode || ['polygon-area', 'text', 'cloud', 'move'].includes(vm.annotation2DActiveTool))
+        && <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+          <g transform={`translate(${vm.measure2DSnapPoint.x * (drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale) + markupTransform.x} ${vm.measure2DSnapPoint.y * (drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale) + markupTransform.y})`}>
+            <DrawingSnapGlyph kind={vm.snapKindFor(vm.measure2DSnapPoint)} />
+          </g>
+        </svg>}
 
       {status === 'ready' && displayOptions.showAnnotations
         && vm.viewAnnotationOptions?.visibility?.roomBoundaries === true
