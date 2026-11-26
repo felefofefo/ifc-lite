@@ -20,7 +20,7 @@ export type DrawingClipboardPayload =
 
 export interface DrawingEditClipboard {
   projectId?: string;
-  payload: DrawingClipboardPayload;
+  payload: DrawingClipboardPayload | { kind: 'batch'; items: DrawingClipboardPayload[] };
   plane: SectionPlaneConfig;
 }
 
@@ -62,6 +62,39 @@ export function snapshotAnnotation(
   }
   const item = clouds.find(item => item.id === selected.id);
   return item ? { kind: 'cloud', item: structuredClone(item) } : null;
+}
+
+/** Copy complete dimension chains exactly once, retaining local symbol references. */
+export function snapshotWindowClipboard(
+  selection: readonly (SelectedAnnotation2D | { type: 'tag'; id: string } | { type: 'marker'; id: string })[],
+  measurements: readonly Measure2DResult[], areas: readonly PolygonArea2DResult[],
+  texts: readonly TextAnnotation2D[], clouds: readonly CloudAnnotation2D[],
+  tags: readonly DrawingElementTag[], grids: readonly ProjectGrid[],
+): DrawingClipboardPayload[] | null {
+  const items: DrawingClipboardPayload[] = [];
+  const seen = new Set<string>();
+  const dimensions = new Set<string>();
+  for (const selected of selection) {
+    const key = `${selected.type}:${selected.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // A marker is an entire saved view, not a clipboard annotation.
+    if (selected.type === 'marker') return null;
+    if (selected.type === 'tag') {
+      const grid = grids.find(item => item.id === selected.id);
+      if (grid) { items.push({ kind: 'grid', item: structuredClone(grid) }); continue; }
+      const tag = tags.find(item => item.id === selected.id);
+      if (!tag) return null;
+      items.push({ kind: 'tag', item: structuredClone(tag) });
+      continue;
+    }
+    if (selected.type === 'measure' && dimensions.has(selected.id)) continue;
+    const payload = snapshotAnnotation(selected, measurements, areas, texts, clouds);
+    if (!payload) return null;
+    if (payload.kind === 'dimensions') payload.items.forEach(item => dimensions.add(item.id));
+    items.push(payload);
+  }
+  return items.length ? items : null;
 }
 
 /** New internal ids, existing IFC references and style ids. Never copy live store references. */

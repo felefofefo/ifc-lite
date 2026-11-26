@@ -12,7 +12,7 @@ type Entry = Bounds & { id: number; line?: Line; face?: Face; hidden: boolean; p
 type Hit = { id: number; hidden: boolean; priority: number; distance: number; depth: number };
 type Node = Bounds & { entries: Entry[] } | Bounds & { children: [Node, Node] };
 
-function bounds(points: readonly Point2D[]): Bounds {
+export function bounds(points: readonly Point2D[]): Bounds {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const { x, y } of points) {
     minX = Math.min(minX, x); minY = Math.min(minY, y);
@@ -41,7 +41,7 @@ function contains(box: Bounds, point: Point2D, pad: number) {
     point.y >= box.minY - pad && point.y <= box.maxY + pad;
 }
 
-function insideRing(point: Point2D, ring: readonly Point2D[]) {
+export function insideRing(point: Point2D, ring: readonly Point2D[]) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const a = ring[i], b = ring[j];
@@ -80,6 +80,44 @@ function pickDistance(entry: Entry, point: Point2D, tolerance: number) {
   return distance <= tolerance ? { distance, depth: entry.depth } : null;
 }
 
+// Liang-Barsky clipping: a bounding box overlap alone is not a crossing.
+export function segmentCrossesBox(a: Point2D, b: Point2D, box: Bounds): boolean {
+  let lo = 0, hi = 1;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  for (const [p, q] of [[-dx, a.x - box.minX], [dx, box.maxX - a.x],
+    [-dy, a.y - box.minY], [dy, box.maxY - a.y]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) lo = Math.max(lo, t);
+    else hi = Math.min(hi, t);
+    if (lo > hi) return false;
+  }
+  return true;
+}
+
+export function boxesOverlap(a: Bounds, b: Bounds): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+
+export function boxContains(outer: Bounds, inner: Bounds): boolean {
+  return outer.minX <= inner.minX && outer.maxX >= inner.maxX &&
+    outer.minY <= inner.minY && outer.maxY >= inner.maxY;
+}
+
+function entryCrossesBox(entry: Entry, box: Bounds): boolean {
+  if (!boxesOverlap(entry, box)) return false;
+  if (entry.line) return segmentCrossesBox(entry.line.line.start, entry.line.line.end, box);
+  if (!entry.face) return false;
+  const { outer, holes } = entry.face.polygon;
+  // Includes edge contact, polygons inside the box, and boxes inside a face.
+  // A window entirely inside a polygon hole does not select that face.
+  if ([outer, ...holes].some(ring => ring.some((a, i) =>
+    segmentCrossesBox(a, ring[(i + 1) % ring.length], box)))) return true;
+  return [{ x: box.minX, y: box.minY }, { x: box.maxX, y: box.minY },
+    { x: box.maxX, y: box.maxY }, { x: box.minX, y: box.maxY }]
+    .some(point => insideRing(point, outer) && !holes.some(ring => insideRing(point, ring)));
+}
+
 export function createDrawingModelIndex(drawing: Drawing2D, showHidden: boolean) {
   const byId = new Map<number, Geometry>();
   const entries: Entry[] = [];
@@ -105,6 +143,30 @@ export function createDrawingModelIndex(drawing: Drawing2D, showHidden: boolean)
   const tree = build(entries);
   return {
     byId,
+    selectBox(a: Point2D, b: Point2D, crossing: boolean): number[] {
+      if (![a.x, a.y, b.x, b.y].every(Number.isFinite)) return [];
+      const box = bounds([a, b]);
+      const hits = new Set<number>();
+      // Window mode requires ALL visible pieces of an entity to be contained.
+      // Crossing mode requires at least one actual geometry intersection.
+      if (!crossing) {
+        const rejected = new Set<number>();
+        for (const entry of entries) {
+          if (boxContains(box, entry)) hits.add(entry.id);
+          else rejected.add(entry.id);
+        }
+        return Array.from(hits).filter(id => !rejected.has(id));
+      }
+      function visit(node: Node) {
+        if (!boxesOverlap(node, box)) return;
+        if ('children' in node) { node.children.forEach(visit); return; }
+        for (const entry of node.entries) {
+          if (!hits.has(entry.id) && entryCrossesBox(entry, box)) hits.add(entry.id);
+        }
+      }
+      visit(tree);
+      return Array.from(hits);
+    },
     pick(point: Point2D, tolerance: number): number[] {
       const hits = new Map<number, Hit>();
       const compare = (a: Hit, b: Hit) => Number(a.hidden) - Number(b.hidden) || a.priority - b.priority ||

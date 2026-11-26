@@ -12,8 +12,9 @@ import { resolveMarkerHeads } from '@/lib/drawing/drawing-tag-library';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { applySavedSectionCut, setViewMarkerStyle, selectActiveSavedView, drawingAnnotationVisible, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
+import type { DrawingCycleTarget } from './DrawingModelSelection';
 
-export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
+export function ViewMarkers({ vm, cycleTarget }: { vm: DrawingViewModel; cycleTarget?: DrawingCycleTarget | null }) {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string>();
   const [hoveredId, setHoveredId] = useState<string>();
@@ -25,7 +26,7 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
   const annotationView = useSavedSectionCuts(selectActiveSavedView);
   const { drawing, viewTransform, drawnPlane } = vm;
   useEffect(() => { setSelectedId(undefined); setHoveredId(undefined); setEditId(undefined); setFailed(false); vm.setSelectedMarker(null); }, [annotationView?.id]);
-  useEffect(() => { if (!vm.selectedMarker) setSelectedId(undefined); }, [vm.selectedMarker?.id]);
+  useEffect(() => { setSelectedId(vm.selectedMarker?.id); }, [vm.selectedMarker?.id]);
   const bounds = vm.runtime.geometryResult?.coordinateInfo.shiftedBounds;
   const markers = useMemo(() => {
     if (!bounds || drawnPlane.axis !== 'down' || drawnPlane.custom) return [];
@@ -70,8 +71,9 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
     </defs>
     {markers.map(mark => {
       const { kind, angle, heads, line } = mark;
-      const isSelected = !placingDimension && selectedId === mark.id;
-      const isHovered = !placingDimension && !isSelected && hoveredId === mark.id;
+      const isSelected = !placingDimension && (selectedId === mark.id
+        || vm.windowAnnotations.some(item => item.type === 'marker' && item.id === mark.id));
+      const isHovered = !placingDimension && !isSelected && (cycleTarget ? cycleTarget.type === 'marker' && cycleTarget.id === mark.id : hoveredId === mark.id);
       const highlighted = isSelected || isHovered;
       const highlightFilter = highlighted ? `url(#${filterId}-${isSelected ? 'selected' : 'hover'})` : undefined;
       const x1 = mark.start.x * scale + tx, x2 = mark.end.x * scale + tx;
@@ -89,7 +91,8 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
         vm.setSelectedMarker({ id: mark.id, start: mark.start, end: mark.end,
           reverse: -dy * mark.direction.x + dx * mark.direction.y < 0, distant });
       };
-      return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={placingDimension ? -1 : 0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={selectedId === mark.id}
+      return <ContextMenu key={mark.id}><ContextMenuTrigger asChild><g role="button" tabIndex={placingDimension ? -1 : 0} aria-label={`${mark.code} ${mark.name}`} aria-pressed={isSelected}
+        data-window-symbol={placingDimension ? undefined : "marker"} data-window-id={placingDimension ? undefined : mark.id}
         style={{ outline: 'none' }}
         className={`cursor-pointer outline-none ${highlighted ? 'text-primary' : 'text-foreground'}`}
         onPointerEnter={() => { if (!placingDimension) setHoveredId(mark.id); }}
@@ -106,10 +109,10 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
           }
         }}>
         <title>{mark.name}</title>
-        {distant && <line x1={x1 + dx} y1={y1 + dy} x2={x2 + dx} y2={y2 + dy} stroke="currentColor" strokeDasharray="5 5" opacity="0.55" />}
+        {distant && <line data-window-shape="true" x1={x1 + dx} y1={y1 + dy} x2={x2 + dx} y2={y2 + dy} stroke="currentColor" strokeDasharray="5 5" opacity="0.55" />}
         <line className={placingDimension ? undefined : "pointer-events-auto"} x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="20" />
         {markerTraceLines(mark, paperUnit / scale, line).map(([a, b], index) => (
-          <line key={index} x1={a.x * scale + tx} y1={a.y * scale + ty} x2={b.x * scale + tx} y2={b.y * scale + ty}
+          <line data-window-shape="true" key={index} x1={a.x * scale + tx} y1={a.y * scale + ty} x2={b.x * scale + tx} y2={b.y * scale + ty}
             stroke={highlighted ? 'currentColor' : line?.color ?? 'currentColor'}
             strokeOpacity={isHovered ? 0.55 : 1}
             strokeWidth={line ? Math.max(0.65, markerLineWidth(line, vm.lineweights) * paperUnit) + (highlighted ? 1 : 0) : highlighted ? 2.5 : 1.5}
@@ -118,14 +121,14 @@ export function ViewMarkers({ vm }: { vm: DrawingViewModel }) {
         ))}
         {heads.length ? heads.map(({ slot, graphic }) => {
           const point = markerHeadPoint(mark, slot);
-          return <image key={slot} href={graphic.href} filter={highlightFilter}
+          return <image data-window-shape="true" key={slot} href={graphic.href} filter={highlightFilter}
             className={placingDimension ? undefined : 'pointer-events-auto'}
             transform={`translate(${point.x * scale + tx} ${point.y * scale + ty}) rotate(${graphic.directional ? 0 : angle})`}
             x={-graphic.anchor.x * paperUnit} y={-graphic.anchor.y * paperUnit}
             width={graphic.width * paperUnit} height={graphic.height * paperUnit} />;
         }) : <>
-          <path transform={`translate(${mx} ${my}) rotate(${angle})`} d="M0 0H19m-6-4 6 4-6 4" stroke="currentColor" strokeOpacity={isHovered ? 0.55 : 1} strokeWidth="1.5" fill="none" />
-          <text className={`fill-current stroke-background [paint-order:stroke] [stroke-width:3px] text-xs font-semibold ${placingDimension ? '' : 'pointer-events-auto'}`}
+          <path data-window-shape="true" transform={`translate(${mx} ${my}) rotate(${angle})`} d="M0 0H19m-6-4 6 4-6 4" stroke="currentColor" strokeOpacity={isHovered ? 0.55 : 1} strokeWidth="1.5" fill="none" />
+          <text data-window-shape="true" className={`fill-current stroke-background [paint-order:stroke] [stroke-width:3px] text-xs font-semibold ${placingDimension ? '' : 'pointer-events-auto'}`}
             fillOpacity={isHovered ? 0.55 : 1} x={mx + mark.direction.x * 25} y={my + mark.direction.y * 25} textAnchor="middle" dominantBaseline="central">{mark.code}</text>
         </>}
       </g></ContextMenuTrigger>

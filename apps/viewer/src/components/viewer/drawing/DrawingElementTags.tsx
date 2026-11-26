@@ -13,7 +13,7 @@ import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirecti
 import { useViewerStore } from '@/store';
 import { saveProjectGrid, saveGridViewExtents, promoteProjectGrid, drawingAnnotationVisible, updateViewSettings, useSavedSectionCuts, type SavedSectionCut } from '@/store/savedSectionCutsStore';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
-import type { DrawingIfcSpaceRoom } from '@/lib/drawing/ifc-space-rooms';
+import { pickRoomInterior, type DrawingIfcSpaceRoom } from '@/lib/drawing/ifc-space-rooms';
 import { collectTagTargets, drawingHeight, findTagTarget, measureDrawingSymbol, measurementLabel, pickTagTarget, readDrawingTags, resolveDrawingTag, resolveFreeSymbol, tagFields,
   type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 
@@ -57,6 +57,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const [cursor, setCursor] = useState<{ point: Point2D; reference: Point2D | null } | null>(null);
   const [failed, setFailed] = useState(false);
   const [miss, setMiss] = useState(false);
+  const [roomHoverId, setRoomHoverId] = useState<number | undefined>(undefined);
   const [symbolValue, setSymbolValue] = useState('');
   const [override, setOverride] = useState<string | null>(null);
   const [firstPoint, setFirstPoint] = useState<Point2D | null>(null);
@@ -143,6 +144,20 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const targets = useMemo(() => drawing && view && (active || stored.length)
     ? collectTagTargets(drawing, showHidden, roomContours) : [], [drawing, view?.id, active, stored.length, showHidden, roomContours, models, mutationVersion]);
   const pickIndex = useMemo(() => drawing ? createDrawingModelIndex(drawing, showHidden) : undefined, [drawing, showHidden]);
+  // One picker for preview and placement, so the highlighted room is the
+  // same target that receives the IFC Tag on click.
+  function pickIfcTarget(p: Point2D) {
+    if (!template || symbolUse(template) !== 'ifc' || !(transform.scale > 0)) return undefined;
+    const eligible = targets.filter(item => template.classes.includes(item.ifcClass));
+    const ids = pickIndex?.pick(p, 9 / transform.scale) ?? [];
+    const roomOnly = template.classes.length > 0 && template.classes.every(type => type === 'IfcSpace');
+    const indexed = ids.map(id => eligible.find(item => item.id === id)).find(item => !!item);
+    return (roomOnly ? pickRoomInterior(eligible, p) : indexed)
+      ?? pickTagTarget(eligible, p, 9 / transform.scale);
+  }
+  useEffect(() => {
+    setRoomHoverId(undefined);
+  }, [active, view?.id, projectId, template?.id, drawing, transform.x, transform.y, transform.scale]);
   const selectedTarget = selected && !selected.free ? findTagTarget(targets, selected) : undefined;
   const selectedIfcTemplates = selectedTarget ? templates.filter(item =>
     symbolUse(item) === 'ifc' && item.classes.includes(selectedTarget.ifcClass)) : [];
@@ -157,6 +172,11 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     return target ? [resolveDrawingTag(tag, target, undefined, templates)] : [];
   }), [stored, targets, templates, drawing, resolveSymbol]);
   const target = draft ? findTagTarget(targets, draft.tag) : undefined;
+  const roomHighlight = active && view && drawing && axis === 'down'
+    ? (draft ? (draft.mode === 'new' ? target : undefined)
+      : template && symbolUse(template) === 'ifc' && template.classes.includes('IfcSpace')
+        ? targets.find(item => item.id === roomHoverId) : undefined)
+    : undefined;
   const fields = useMemo(() => target ? tagFields(target) : [], [target, mutationVersion]);
   const resolvedDraft = useMemo(() => {
     if (!draft) return previewFree;
@@ -314,11 +334,12 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       return true;
     }
     if (symbolUse(template) !== 'ifc') return true;
-    const eligible = targets.filter(item => template.classes.includes(item.ifcClass));
-    const ids = pickIndex?.pick(p, 9 / transform.scale) ?? [];
-    const hit = ids.map(id => eligible.find(item => item.id === id)).find(item => !!item)
-      ?? pickTagTarget(eligible, p, 9 / transform.scale);
-    const field = hit && tagFields(hit)[0];
+    const hit = pickIfcTarget(p);
+    setRoomHoverId(undefined);
+    const availableFields = hit ? tagFields(hit) : [];
+    const field = (hit?.ifcClass === 'IfcSpace'
+      ? availableFields.find(item => item.key === 'long-name') ?? availableFields.find(item => item.key === 'name')
+      : undefined) ?? availableFields[0];
     if (!hit || !field) { setMiss(true); return true; }
     setMiss(false);
     setCursor({ point: p, reference: null });
@@ -614,6 +635,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       setMiss(false);
     },
     paperUnit: transform.scale * (scale || 100) / 1000,
+    roomHighlight: roomHighlight?.ifcClass === 'IfcSpace' ? roomHighlight.polygons : undefined,
     active, items: items.filter(({ tag }) => {
       const source = templates.find(item => item.id === tag.templateId);
       const kind = source ? symbolUse(source) : 'ifc';
@@ -631,8 +653,21 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     snapReference: placing || freeTemplate || !!dragRef.current || !!resizingRef.current || !!leaderBaseRef.current ? cursor?.reference : null,
     fontSize: Math.max(11, 2.5 * transform.scale * (scale || 100) / 1000),
     click,
-    move(e: MouseEvent) { if (!active) return false; if (placing || freeTemplate) setCursor(placementPoint(e)); return true; },
+    move(e: MouseEvent) {
+      if (!active) return false;
+      if (placing || freeTemplate) setCursor(placementPoint(e));
+      if (!draft && axis === 'down' && template && symbolUse(template) === 'ifc'
+        && template.classes.includes('IfcSpace') && e.buttons === 0
+        && (e.target as Element).tagName === 'CANVAS') {
+        const p = placementPoint(e)?.point;
+        const hit = p ? pickIfcTarget(p) : undefined;
+        // React skips updates when the pointer remains in the same room.
+        setRoomHoverId(hit?.ifcClass === 'IfcSpace' ? hit.id : undefined);
+      } else setRoomHoverId(undefined);
+      return true;
+    },
     leave() {
+      setRoomHoverId(undefined);
       if (freeTemplate) setCursor(null);
       else if (cursor?.reference) setCursor({ ...cursor, reference: null });
     },

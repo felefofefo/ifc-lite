@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SectionPlaneConfig } from '@ifc-lite/drawing-2d';
 import type { MeshOutlineProvider } from '@/hooks/meshOutlineProvider';
-import { readIfcSpaceRooms, roomContourPolygons } from './ifc-space-rooms';
+import { readIfcSpaceRooms, roomContourPolygons, roomFootprintArea, pickRoomInterior } from './ifc-space-rooms';
 
 const outer = [0, 0, 10, 0, 10, 10, 0, 10];
 const hole = [2, 2, 8, 2, 8, 8, 2, 8];
@@ -13,6 +13,36 @@ const island = [3, 3, 4, 3, 4, 4, 3, 4];
 const room = { ifcType: 'IfcSpace', expressId: 32, positions: new Float32Array(9), indices: new Uint32Array(3) };
 const plan: SectionPlaneConfig = { axis: 'y', position: 1.2, flipped: false };
 const outline: MeshOutlineProvider = () => ({ axisMin: 0, axisMax: 3, contours: [new Float32Array(outer), new Float32Array(hole)] });
+
+const ring = (x: number, y: number, width: number, height: number) => [
+  { x, y }, { x: x + width, y }, { x: x + width, y: y + height }, { x, y: y + height },
+];
+const box = (x: number, y: number, width: number, height: number) => ({ outer: ring(x, y, width, height), holes: [] });
+
+describe('IFC space tag area and interior', () => {
+  it('subtracts holes and reports disjoint component areas in square metres', () => {
+    const a = { outer: ring(0, 0, 10, 10), holes: [ring(2, 2, 6, 6)] };
+    assert.equal(roomFootprintArea([a]), 64);
+    assert.equal(roomFootprintArea([a, box(12, 0, 2, 3)]), 70);
+  });
+  it('does not report a misleading area for overlapping fragments', () => {
+    const polygons = roomContourPolygons([ring(0, 0, 10, 10), ring(8, 8, 4, 4)]);
+    assert.equal(polygons.length, 2);
+    assert.equal(roomFootprintArea(polygons), undefined);
+  });
+  it('rejects potentially overlapping holes and empty geometry', () => {
+    assert.equal(roomFootprintArea([{ outer: ring(0, 0, 10, 10), holes: [ring(2, 2, 4, 4), ring(4, 4, 4, 4)] }]), undefined);
+    assert.equal(roomFootprintArea([]), undefined);
+  });
+  it('prefers the smaller containing room and ignores voids', () => {
+    const outer = { id: 1, polygons: [{ outer: ring(0, 0, 10, 10), holes: [ring(2, 2, 2, 2)] }] };
+    const inner = { id: 2, polygons: [box(5, 5, 2, 2)] };
+    assert.equal(pickRoomInterior([outer, inner], { x: 6, y: 6 })?.id, 2);
+    assert.equal(pickRoomInterior([outer, inner], { x: 3, y: 3 }), undefined);
+    assert.equal(pickRoomInterior([outer, inner], { x: 1, y: 1 })?.id, 1);
+    assert.equal(pickRoomInterior([outer, inner], { x: 20, y: 20 }), undefined);
+  });
+});
 
 describe('read-only IFC room footprints', () => {
   it('keeps rooms from the current floor and ignores unrelated meshes', () => {

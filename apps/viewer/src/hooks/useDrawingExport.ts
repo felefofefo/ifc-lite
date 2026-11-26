@@ -51,6 +51,7 @@ import { resolveCutPolygonStyle, type CutPolygonStyleContext } from '@/component
 import { publicationCutSvg, svgDash } from '@/lib/export/drawing-publication-svg';
 import { pdfColor } from '@/lib/export/pdf-color';
 import { drawingAnnotationDxf } from '@/lib/export/drawing-annotation-dxf';
+import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 import { drawDrawingAnnotationsPdf, expandDrawingAnnotationBounds } from '@/lib/export/drawing-annotation-pdf';
 import { drawCutPolygonsPdf, isPagePoint, prepareCutPolygonsPdf, type PdfCutPolygon } from '@/lib/export/section-pdf-cut-polygons';
 import { viewMarkersSvg, viewMarkersDxf, drawViewMarkersPdf, viewMarkerExportBounds, useDrawingViewMarkers } from '@/lib/export/drawing-view-markers';
@@ -458,10 +459,11 @@ function useDrawingExport({
         const pt = mapPoint(annotation.position.x, annotation.position.y);
         const fontSize = mmToTarget(annotation.appearance?.textHeight ?? 2.5);
         const padding = mmToTarget(1);
-        const lines = annotation.text.split('\n');
+        const fixed = annotation.widthMm === undefined ? undefined : textAnnotationLayout(annotation, mmToTarget(1));
+        const lines = fixed?.lines ?? annotation.text.split('\n');
         const lineHeight = fontSize * 1.3;
-        const approxWidth = Math.max(...lines.map(l => l.length * fontSize * 0.6)) + padding * 2;
-        const height = lines.length * lineHeight + padding * 2;
+        const approxWidth = fixed?.bgW ?? Math.max(...lines.map(l => l.length * fontSize * 0.6)) + padding * 2;
+        const height = fixed?.bgH ?? lines.length * lineHeight + padding * 2;
         const align = annotation.align ?? annotation.appearance?.align ?? 'left';
         const textAnchor = align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start';
         const textX = align === 'center' ? pt.x + approxWidth / 2 : align === 'right' ? pt.x + approxWidth - padding : pt.x + padding;

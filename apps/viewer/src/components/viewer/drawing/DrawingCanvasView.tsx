@@ -39,7 +39,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
   const selection = useDrawingModelSelection(vm,
-    status === 'ready' && !vm.selectOnly2D && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing);
+    status === 'ready' && !vm.selectOnly2D && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing, !placement);
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
   const editingAnnotation = vm.textAnnotation2DEditing
     ? vm.styledNotes.find((a) => a.id === vm.textAnnotation2DEditing) ?? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
@@ -112,6 +112,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           cloudAnnotations={vm.styledClouds}
           selectedAnnotation={vm.selectedAnnotation2D}
           hoveredAnnotation={placement ? null : selection.annotationHover}
+          windowAnnotations={vm.windowCanvasAnnotations}
           ifcAnnotationLines={layers.ifcAnnotationData.lines}
           ifcAnnotationTexts={layers.ifcAnnotationData.texts}
           ifcAnnotationFills={layers.ifcAnnotationData.fills}
@@ -133,15 +134,21 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           </g>
         </svg>}
 
+      {/* A room footprint is a screen-only reference, not an IFC cut/surface fill
+          or an authored Area. Keep it independent of IFC graphic overrides. */}
       {status === 'ready' && displayOptions.showAnnotations
         && vm.viewAnnotationOptions?.visibility?.roomBoundaries === true
         && vm.ifcSpaceRooms.length > 0 && <svg aria-label={t('section2d.viewOptions.roomBoundaries')}
-          className="pointer-events-none absolute inset-0 h-full w-full text-muted-foreground"
-          fill="none" stroke="currentColor" strokeWidth={1} strokeDasharray="5 3" opacity={0.65}>
-          {vm.ifcSpaceRooms.flatMap(room => room.contours.map((ring, index) =>
-            <path key={room.id + ':' + index} d={ring.map((point, i) =>
-              (i === 0 ? 'M' : 'L') + (point.x * markupTransform.scale + markupTransform.x)
-              + ' ' + (point.y * markupTransform.scale + markupTransform.y)).join(' ') + ' Z'} />
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          data-room-boundaries="true" pointerEvents="none"
+          fill="#0d9488" fillOpacity={0.07} fillRule="evenodd"
+          stroke="#0d9488" strokeOpacity={0.65} strokeWidth={1} strokeDasharray="5 3">
+          {vm.ifcSpaceRooms.flatMap(room => room.polygons.map((polygon, index) =>
+            <path key={room.id + ':' + index} d={[polygon.outer, ...polygon.holes].map(ring =>
+              ring.map((point, i) =>
+                (i === 0 ? 'M' : 'L') + (point.x * markupTransform.scale + markupTransform.x)
+                + ' ' + (point.y * markupTransform.scale + markupTransform.y)).join(' ') + ' Z'
+            ).join(' ')} />
           ))}
         </svg>}
       {status === 'ready' && selection.overlay}
@@ -155,9 +162,21 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       {status === 'ready' && vm.annotation2DActiveTool === 'move' && <div
         className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
         role="status">{t(vm.moveBase ? 'section2d.tools.moveTarget' : 'section2d.tools.moveBase')}</div>}
-      {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} />}
-      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags vm={vm} />}
+      {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} cycleTarget={selection.cycleTarget} />}
+      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags vm={vm} cycleTarget={selection.cycleTarget} />}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
+      {status === 'ready' && !placement && vm.windowAnnotations.length > 0 && vm.annotation2DActiveTool === 'none' && <div role="toolbar"
+        aria-label={t('section2d.tools.select')}
+        className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
+        onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+        <span className="px-2 font-medium">{vm.windowAnnotations.length} selected</span>
+        <Button size="sm" variant="ghost" onClick={vm.startMove}>{t('section2d.tools.move')}</Button>
+        <Button size="sm" variant="ghost" disabled={!vm.canCopy} onClick={vm.copySelection}>{t('section2d.tools.copy')}</Button>
+        <Button size="sm" variant="ghost" disabled={!vm.canCut} onClick={vm.cutSelection}>{t('section2d.tools.cut')}</Button>
+        <Button size="sm" variant="ghost" className="text-destructive" disabled={!vm.canDelete}
+          onClick={() => { void vm.requestDeleteSelection(); }}>{t('section2d.tags.remove')}</Button>
+        <Button size="sm" variant="ghost" onClick={vm.clearWindowAnnotations}>{t('section2d.tags.close')}</Button>
+      </div>}
       {status === 'ready' && vm.selectedAnnotation2D && !vm.tags.selected && !vm.selectedMarker
         && vm.annotation2DActiveTool === 'none' && <div role="toolbar"
           aria-label={t('section2d.tools.select')}

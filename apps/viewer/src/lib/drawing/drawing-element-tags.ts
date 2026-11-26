@@ -12,7 +12,7 @@ import { drawingTagClass, isPlacedSymbol, symbolUse, type SymbolUse, type TagCla
 import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle } from './annotation-types';
 import type { LineweightRow } from './lineweight-table';
 import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
-import type { DrawingIfcSpaceRoom } from './ifc-space-rooms';
+import { roomFootprintArea, type DrawingIfcSpaceRoom } from './ifc-space-rooms';
 
 export interface DrawingElementTag {
   id: string;
@@ -45,6 +45,8 @@ export interface TagTarget {
   center: Point2D;
   segments: Segment[];
   polygons: Polygon[];
+  /** Explicitly distinct from NetFloorArea in the IFC. */
+  planArea?: number;
 }
 
 function formattedSymbolValue(input: string, kind: SymbolUse, style?: AnnotationSymbolStyle): string {
@@ -125,7 +127,10 @@ export function collectTagTargets(drawing: Drawing2D, showHidden: boolean, rooms
     }
   }
   // IFC spaces may be hidden from the architectural cut but remain taggable.
+  const roomAreas = new Map<number, number>();
   for (const room of rooms) {
+    const area = roomFootprintArea(room.polygons);
+    if (area !== undefined) roomAreas.set(room.id, area);
     const target = entry(room.id, 'IfcSpace');
     if (!target.polygons.length) target.polygons.push(...room.polygons);
   }
@@ -144,7 +149,7 @@ export function collectTagTargets(drawing: Drawing2D, showHidden: boolean, rooms
     }), { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity });
     const center = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 };
     if (!isPoint(center)) return null;
-    return { id, ref, globalId, projectId, fingerprint, center, ...shape };
+    return { id, ref, globalId, projectId, fingerprint, center, ...shape, planArea: roomAreas.get(id) };
   }).filter((target): target is TagTarget => target !== null);
 }
 
@@ -228,16 +233,31 @@ export function tagFields(target: TagTarget, svgValues?: Map<string, string>): {
     fields.push({ key, label: set.name + ' / ' + prop.name, value });
     svgValues?.set(set.name + '.' + prop.name, value);
   }
-  // Display original IFC quantities, without inventing a calculated room area.
+  // Keep IFC quantities in the source units and expose unambiguous short
+  // names in SVG templates. A projected area is a separate derived field.
   if (record.type.toLowerCase() === 'ifcspace') {
+    const aliases = new Map<string, string | null>();
     for (const set of extractQuantitiesOnDemand(data, id)) {
       for (const quantity of set.quantities) {
         if (!Number.isFinite(quantity.value)) continue;
         const value = String(quantity.value);
-        fields.push({ key: JSON.stringify([set.name, quantity.name]), label: set.name + ' / ' + quantity.name, value });
-        svgValues?.set(set.name + '.' + quantity.name, value);
-        if (quantity.name === 'NetFloorArea') svgValues?.set('NetFloorArea', value);
+        const key = JSON.stringify([set.name, quantity.name]);
+        if (!seen.has(key)) {
+          seen.add(key);
+          fields.push({ key, label: set.name + ' / ' + quantity.name, value });
+          svgValues?.set(set.name + '.' + quantity.name, value);
+        }
+        if (!aliases.has(quantity.name)) aliases.set(quantity.name, value);
+        else if (aliases.get(quantity.name) !== value) aliases.set(quantity.name, null);
       }
+    }
+    for (const [name, value] of aliases) {
+      if (value !== null && !svgValues?.has(name)) svgValues?.set(name, value);
+    }
+    if (target.planArea !== undefined && Number.isFinite(target.planArea) && target.planArea > 0) {
+      const value = target.planArea.toFixed(2) + ' m²';
+      fields.push({ key: 'plan-area', label: 'Projected plan area (m²)', value });
+      svgValues?.set('PlanArea', value);
     }
   }
   return fields.filter(field => field.value);

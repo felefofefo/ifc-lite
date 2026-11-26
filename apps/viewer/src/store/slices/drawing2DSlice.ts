@@ -70,6 +70,7 @@ export interface TextAnnotation2D {
   italic?: boolean;
   align?: 'left' | 'center' | 'right';
   fontSize: number;        // Font size in screen px (default 14)
+  widthMm?: number;        // Fixed outer box width in paper mm; undefined = automatic
   color: string;           // Text color (default '#000000')
   backgroundColor: string; // Background fill
   borderColor: string;     // Border color
@@ -850,7 +851,8 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
           dy = offset * normalY;
         }
         set({ measure2DResults: state.measure2DResults.map((r) => {
-          if (r.id !== sel.id && (!chainId || r.dimension?.chainId !== chainId)) return r;
+          if (r.id !== sel.id && (!chainId || r.dimension?.chainId !== chainId
+            || (r.dimension?.viewKey ?? r.viewKey) !== (result.dimension?.viewKey ?? result.viewKey))) return r;
           return { ...r, start: { x: r.start.x + dx, y: r.start.y + dy }, end: { x: r.end.x + dx, y: r.end.y + dy } };
         }) });
         break;

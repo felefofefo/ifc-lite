@@ -23,7 +23,7 @@ interface TextAnnotationEditorProps {
   /** Font size in screen pixels, consistent with the drawing canvas. */
   fontSize?: number;
   /** Called with the new text when user confirms (Enter) */
-  onConfirm: (id: string, text: string, format?: Pick<TextAnnotation2D, 'bold' | 'italic' | 'align'>) => void;
+  onConfirm: (id: string, text: string, format?: Pick<TextAnnotation2D, 'bold' | 'italic' | 'align' | 'widthMm'>) => void;
   /** Called when user cancels (Escape) or submits empty text */
   onCancel: (id: string) => void;
 }
@@ -42,12 +42,14 @@ export function TextAnnotationEditor({
   const [italic, setItalic] = useState(annotation.italic ?? annotation.appearance?.italic ?? false);
   const [align, setAlign] = useState<'left'|'center'|'right'>(annotation.align ?? annotation.appearance?.align ?? 'left');
   const [text, setText] = useState(annotation.text);
+  const [widthMm, setWidthMm] = useState(annotation.widthMm);
+  const widthDrag = useRef<{ pointerId: number; x: number; width: number; initial: number | undefined } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Match the same paper-space layout used to paint the final annotation.
   const paperUnit = fontSize === undefined ? 0 : fontSize / (annotation.appearance?.textHeight ?? 2.5);
   const measureContext = useMemo(() => typeof document === 'undefined' ? null
     : document.createElement('canvas').getContext('2d'), []);
-  const layout = textAnnotationLayout({ ...annotation, text, bold, italic }, paperUnit,
+  const layout = textAnnotationLayout({ ...annotation, text, bold, italic, widthMm }, paperUnit,
     (line, font) => {
       if (!measureContext) return undefined;
       measureContext.font = font;
@@ -79,6 +81,7 @@ export function TextAnnotationEditor({
           bold: bold === (annotation.appearance?.bold ?? false) ? undefined : bold,
           italic: italic === (annotation.appearance?.italic ?? false) ? undefined : italic,
           align: align === (annotation.appearance?.align ?? 'left') ? undefined : align,
+          widthMm,
         });
       } else {
         onCancel(annotation.id);
@@ -89,7 +92,7 @@ export function TextAnnotationEditor({
     }
     // Stop propagation so the canvas doesn't receive these events
     e.stopPropagation();
-  }, [text, annotation.id, onConfirm, onCancel, bold, italic, align]);
+  }, [text, annotation.id, annotation.appearance, onConfirm, onCancel, bold, italic, align, widthMm]);
 
   const handleBlur = useCallback(() => {
     // Ignore blur events that fire before the editor is fully ready
@@ -102,11 +105,12 @@ export function TextAnnotationEditor({
           bold: bold === (annotation.appearance?.bold ?? false) ? undefined : bold,
           italic: italic === (annotation.appearance?.italic ?? false) ? undefined : italic,
           align: align === (annotation.appearance?.align ?? 'left') ? undefined : align,
+          widthMm,
         });
     } else {
       onCancel(annotation.id);
     }
-  }, [text, annotation.id, onConfirm, onCancel, bold, italic, align]);
+  }, [text, annotation.id, annotation.appearance, onConfirm, onCancel, bold, italic, align, widthMm]);
 
   return (
     // The wrapper only stops canvas click placement; the textarea and buttons own keyboard interaction.
@@ -121,7 +125,7 @@ export function TextAnnotationEditor({
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       onBlur={e => {
-        if (!e.currentTarget.contains(e.relatedTarget)) handleBlur();
+        if (!widthDrag.current && !e.currentTarget.contains(e.relatedTarget)) handleBlur();
       }}
     >
        <div className="absolute bottom-full left-0 mb-1 flex w-max items-center gap-1 rounded border bg-popover p-1 text-xs shadow-sm"
@@ -137,6 +141,8 @@ export function TextAnnotationEditor({
              className={align === value ? 'rounded bg-accent p-1.5' : 'rounded p-1.5'}
              onClick={() => setAlign(value)}><Icon aria-hidden="true" className="size-4" /></button>;
          })}
+         {widthMm !== undefined && <Button type="button" size="sm" variant="ghost" title="Automatic width"
+           onClick={() => setWidthMm(undefined)}>Auto</Button>}
          <Button type="button" size="sm" className="shrink-0" disabled={!text.trim()}
            onClick={handleBlur}>{t('section2d.tags.apply')}</Button>
        </div>
@@ -148,10 +154,12 @@ export function TextAnnotationEditor({
         placeholder={t('textAnnotationEditor.placeholder')}
         aria-label={t('textAnnotationEditor.inputLabel')}
         className="block box-border resize-none overflow-hidden border-0 outline outline-1 outline-primary"
-        wrap="off"
+        wrap={widthMm === undefined ? 'off' : 'soft'}
         rows={1}
         style={{
-          width: Math.max(text ? 1 : 80, layout.bgW + 1),
+          width: widthMm === undefined ? Math.max(text ? 1 : 80, layout.bgW + 1) : layout.bgW,
+          whiteSpace: widthMm === undefined ? 'pre' : 'pre-wrap',
+          overflowWrap: widthMm === undefined ? 'normal' : 'anywhere',
           height: Math.max(1, layout.bgH),
           padding: layout.padding,
           font: layout.font,
@@ -162,6 +170,43 @@ export function TextAnnotationEditor({
           caretColor: textColor,
         }}
       />
+      {paperUnit > 0 && <button type="button" aria-label="Resize text width"
+        title="Resize text width" className="absolute -right-1.5 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-primary bg-background cursor-ew-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        onPointerDown={event => {
+          if (event.button !== 0) return;
+          event.preventDefault(); event.stopPropagation();
+          widthDrag.current = { pointerId: event.pointerId, x: event.clientX,
+            width: (textareaRef.current?.getBoundingClientRect().width ?? layout.bgW) / paperUnit,
+            initial: widthMm };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event => {
+          const drag = widthDrag.current;
+          if (!drag || drag.pointerId !== event.pointerId) return;
+          event.stopPropagation();
+          setWidthMm(Math.max(6, Math.min(1000, drag.width + (event.clientX - drag.x) / paperUnit)));
+        }}
+        onPointerUp={event => {
+          if (widthDrag.current?.pointerId !== event.pointerId) return;
+          event.stopPropagation();
+          widthDrag.current = null;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          textareaRef.current?.focus();
+        }}
+        onPointerCancel={event => {
+          if (widthDrag.current?.pointerId !== event.pointerId) return;
+          setWidthMm(widthDrag.current.initial); widthDrag.current = null;
+          textareaRef.current?.focus();
+        }}
+        onLostPointerCapture={() => {
+          if (widthDrag.current) { setWidthMm(widthDrag.current.initial); widthDrag.current = null; }
+        }}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault(); event.stopPropagation();
+          const delta = (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 5 : 1);
+          setWidthMm(value => Math.max(6, Math.min(1000, (value ?? layout.bgW / paperUnit) + delta)));
+        }} />}
       <div className="absolute left-0 top-full mt-1 w-max text-2xs text-muted-foreground bg-popover/80 px-1 rounded">
         {t('textAnnotationEditor.hint')}
       </div>

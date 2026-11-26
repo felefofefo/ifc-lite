@@ -3,12 +3,29 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import type { Point2D } from '@ifc-lite/drawing-2d';
+import { repositionCurvedDimension } from '@/lib/drawing/dimension-line';
+import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 /** Non-interactive ghost of the selected authored element, in drawing coordinates. */
 export function DrawingMovePreview({ vm }: { vm: DrawingViewModel }) {
   const preview = vm.movePreview;
   if (!preview) return null;
+  if (!preview.batch) return <MoveGhost vm={vm} preview={preview} />;
+  return <>
+    {preview.batch.map((item, index) => {
+      let delta = preview.delta;
+      if (item.tag?.gridStart && vm.drawing?.config.plane.axis !== 'y') delta = { ...delta, y: 0 };
+      return <MoveGhost key={index} vm={vm} preview={{ ...item, delta, reference: index === 0 ? preview.reference : null }} />;
+    })}
+  </>;
+}
+
+type MoveGhostData = Omit<NonNullable<DrawingViewModel['movePreview']>, 'batch'> & {
+  annotation?: DrawingViewModel['selectedAnnotation2D'];
+};
+
+function MoveGhost({ vm, preview }: { vm: DrawingViewModel; preview: MoveGhostData }) {
   const payload = preview.payload;
   const transform = vm.markupTransform;
   const sx = vm.drawnPlane.axis === 'side' ? -transform.scale : transform.scale;
@@ -36,13 +53,38 @@ export function DrawingMovePreview({ vm }: { vm: DrawingViewModel }) {
         transform={`translate(${(markerStart.x + markerEnd.x) / 2} ${(markerStart.y + markerEnd.y) / 2}) rotate(${markerAngle})`}
         d="M0 0H19m-6-4 6 4-6 4" />}
       {tag && anchor && line(anchor, tag.position, 'tag-leader')}
-      {payload?.kind === 'dimensions' && payload.items.map(item => <g key={item.id}>
-        {line(item.start, item.end, 'dimension')}
-        {item.dimension?.anchors && <>
-          {line(item.dimension.anchors[0], item.start, 'extension-1')}
-          {line(item.dimension.anchors[1], item.end, 'extension-2')}
-        </>}
-      </g>)}
+      {payload?.kind === 'dimensions' && (() => {
+        // Match the existing Move action: a chain moves normal to its axis;
+        // curved dimensions reposition relative to their measured geometry.
+        const source = payload.items.find(item => item.id === (preview.annotation?.id ?? vm.selectedAnnotation2D?.id)) ?? payload.items[0];
+        if (!source) return null;
+        let delta = preview.delta;
+        if (source.dimension?.chainId && !source.dimension.shape) {
+          const x = source.end.x - source.start.x, y = source.end.y - source.start.y;
+          const length = Math.hypot(x, y);
+          if (!length) return null;
+          const nx = -y / length, ny = x / length, normal = delta.x * nx + delta.y * ny;
+          delta = { x: normal * nx, y: normal * ny };
+        }
+        const shift = (p: Point2D) => ({ x: p.x + delta.x, y: p.y + delta.y });
+        const stroke = (a: Point2D, b: Point2D, key: string) => {
+          const p = screen(a), q = screen(b);
+          return <line key={key} x1={p.x} y1={p.y} x2={q.x} y2={q.y} />;
+        };
+        return payload.items.map(item => {
+          const moved = item.dimension?.shape
+            ? repositionCurvedDimension({ ...item, anchors: item.dimension.anchors, shape: item.dimension.shape }, shift(item.start))
+            : { start: shift(item.start), end: shift(item.end), anchors: item.dimension?.anchors };
+          if (!moved) return null;
+          return <g key={item.id}>
+            {stroke(moved.start, moved.end, 'dimension')}
+            {moved.anchors && <>
+              {stroke(moved.anchors[0], moved.start, 'extension-1')}
+              {stroke(moved.anchors[1], moved.end, 'extension-2')}
+            </>}
+          </g>;
+        });
+      })()}
       {payload?.kind === 'area' && <polygon points={payload.item.points.map(point => {
         const p = translate(point); return `${p.x},${p.y}`;
       }).join(' ')} fill="currentColor" fillOpacity="0.08" />}
@@ -67,9 +109,8 @@ export function DrawingMovePreview({ vm }: { vm: DrawingViewModel }) {
       height={tagGraphics.graphic.height * vm.tags.paperUnit} opacity="0.7" />
       : <text x={p.x} y={p.y} fill="currentColor" fontSize={vm.tags.fontSize}
         textAnchor="middle" dominantBaseline="middle" opacity="0.75">{tagGraphics?.text ?? tag?.field}</text>)}
-    {snap && <g transform={`translate(${snap.x} ${snap.y})`}
-      stroke="#4CAF50" strokeWidth="1.5" fill="none">
-      <path d="M-12 0H12M0-12V12"/><circle r="6" />
+    {snap && <g transform={`translate(${snap.x} ${snap.y})`}>
+      <DrawingSnapGlyph kind={vm.snapKindFor(preview.reference)} />
     </g>}
   </svg>;
 }

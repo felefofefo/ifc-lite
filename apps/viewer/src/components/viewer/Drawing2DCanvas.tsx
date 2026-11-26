@@ -225,6 +225,7 @@ interface Drawing2DCanvasProps {
   // Selection
   selectedAnnotation?: SelectedAnnotation2D | null;
   hoveredAnnotation?: SelectedAnnotation2D | null;
+  windowAnnotations?: readonly SelectedAnnotation2D[];
   // IFC annotation overlay (issue #812)
   ifcAnnotationLines?: readonly DrawingLine2D[];
   ifcAnnotationTexts?: readonly AnnotationText2D[];
@@ -285,6 +286,7 @@ export function Drawing2DCanvas({
   cloudAnnotations = [],
   selectedAnnotation = null,
   hoveredAnnotation = null,
+  windowAnnotations,
   ifcAnnotationLines,
   ifcAnnotationTexts,
   ifcAnnotationFills,
@@ -1678,10 +1680,12 @@ export function Drawing2DCanvas({
       }
       ctx.restore();
     };
-    if (hoveredAnnotation && hoveredAnnotation.id !== selectedAnnotation?.id) highlightAnnotation(hoveredAnnotation, 0.55);
+    if (hoveredAnnotation && hoveredAnnotation.id !== selectedAnnotation?.id
+      && !windowAnnotations?.some(item => item.id === hoveredAnnotation.id && item.type === hoveredAnnotation.type)) highlightAnnotation(hoveredAnnotation, 0.55);
     if (selectedAnnotation) highlightAnnotation(selectedAnnotation, 1);
+    windowAnnotations?.forEach(item => highlightAnnotation(item, 1));
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, windowAnnotations, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas

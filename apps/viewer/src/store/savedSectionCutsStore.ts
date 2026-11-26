@@ -4,10 +4,10 @@
 
 /** Named drawing views and their project-scoped publication settings. */
 
-import { readProjectGrids, validGridViewExtents, type GridViewExtents, type ProjectGrid } from '@/lib/drawing/project-grids';
+import { moveProjectGrid, readProjectGrids, validGridViewExtents, type GridViewExtents, type ProjectGrid } from '@/lib/drawing/project-grids';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { create } from 'zustand';
-import { COMMON_SCALES, formatScaleFactorLabel, type DrawingScale, type GraphicOverrideRule } from '@ifc-lite/drawing-2d';
+import { COMMON_SCALES, formatScaleFactorLabel, type DrawingScale, type GraphicOverrideRule, type Point2D, type SectionPlaneConfig } from '@ifc-lite/drawing-2d';
 import type { CameraViewpoint, SectionBox, SectionCapStyle, SectionPlane, SectionPlaneAxis } from './types.js';
 import { useViewerStore, type ViewerState } from './index.js';
 import { getDefaultSectionPlane } from './slices/sectionSlice.js';
@@ -642,9 +642,7 @@ export function setViewMarkerStyle(viewId: string, styleId: string | undefined):
   updateViewSettings(viewId, { markerStyleId: styleId, markerSymbolId: undefined });
 }
 
-export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: boolean, distantElements?: DistantElements | null): void {
-  const { cuts } = useSavedSectionCuts.getState();
-  const cut = cuts.find(view => view.id === id);
+function movedViewTrace(cut: SavedSectionCut | undefined, trace: MarkerTrace, reverse: boolean, distantElements?: DistantElements | null): SavedSectionCut | undefined {
   const plane = cut?.planes[cut.activeIndex];
   const custom = verticalViewPlane(trace[0], trace[1], false, reverse);
   if (!cut || !plane || !custom || plane.axis === 'down' || plane.box) return;
@@ -654,8 +652,114 @@ export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: bool
     ...(cut.display ?? useViewerStore.getState().drawing2DDisplayOptions),
     distantElements: distantElements ?? undefined,
   };
-  const edited = { ...cut, planes, markerTrace: trace, display, viewpoint: null, zoom: null, updatedAt: Date.now() };
-  commitCuts({ cuts: cuts.map(view => view.id === id ? edited : view) });
+  return { ...cut, planes, markerTrace: trace, display, viewpoint: null, zoom: null, updatedAt: Date.now() };
+}
+
+export function editSavedViewTrace(id: string, trace: MarkerTrace, reverse: boolean, distantElements?: DistantElements | null): void {
+  const { cuts } = useSavedSectionCuts.getState();
+  const edited = movedViewTrace(cuts.find(view => view.id === id), trace, reverse, distantElements);
+  if (edited) commitCuts({ cuts: cuts.map(view => view.id === id ? edited : view) });
+}
+
+/** Move view-local tags, global grids and saved vertical views in one persisted write. */
+export function moveDrawingWindowSymbols(viewId: string | null, tagIds: ReadonlySet<string>,
+  markers: readonly { id: string; start: Point2D; end: Point2D; reverse: boolean }[],
+  plane: SectionPlaneConfig, planFlipped: boolean, delta: Point2D): void {
+  if (!tagIds.size && !markers.length) return;
+  const state = useSavedSectionCuts.getState();
+  if (!state.projectId || state.activeCutId !== viewId || !Number.isFinite(delta.x) || !Number.isFinite(delta.y)) {
+    throw new Error('Invalid drawing move selection');
+  }
+  const view = state.cuts.find(item => item.id === viewId);
+  const gridIds = new Set(state.grids.filter(grid => tagIds.has(grid.id)).map(grid => grid.id));
+  const localIds = new Set(view?.elementTags?.map(tag => tag.id) ?? []);
+  for (const id of tagIds) if (!gridIds.has(id) && !localIds.has(id)) throw new Error('Missing drawing symbol');
+  const shift = (p: Point2D): Point2D => ({ x: p.x + delta.x, y: p.y + delta.y });
+  const world = (p: Point2D): Point2D => ({ x: planFlipped ? -p.x : p.x, y: p.y });
+  const edits = new Map<string, SavedSectionCut>();
+  for (const marker of markers) {
+    const cut = state.cuts.find(item => item.id === marker.id);
+    if (!cut || cut.id === viewId || !['section', 'elevation'].includes(savedViewKind(cut))) throw new Error('Invalid drawing marker');
+    const moved = movedViewTrace(cut, [world(shift(marker.start)), world(shift(marker.end))], planFlipped !== marker.reverse);
+    if (!moved) throw new Error('Invalid marker trace');
+    edits.set(marker.id, moved);
+  }
+  const cuts = state.cuts.map(item => {
+    const moved = edits.get(item.id);
+    if (moved) return moved;
+    if (item.id !== viewId || !item.elementTags?.some(tag => tagIds.has(tag.id) && !gridIds.has(tag.id))) return item;
+    return { ...item, updatedAt: Date.now(), elementTags: item.elementTags.map(tag =>
+      !tagIds.has(tag.id) || gridIds.has(tag.id) ? tag : { ...tag, position: shift(tag.position),
+        ...(tag.gridStart && { gridStart: shift(tag.gridStart) }),
+        ...(!tag.free && { anchorOffset: shift(tag.anchorOffset) }),
+      }) };
+  });
+  const grids = state.grids.map(grid => gridIds.has(grid.id) ? moveProjectGrid(grid, plane, delta) : grid);
+  commitCuts({ cuts, grids });
+}
+
+/** Delete the selected view-local tags, shared grids and saved vertical views
+ * in a single persisted write. The caller confirms the scope before calling. */
+export function deleteDrawingWindowSymbols(viewId: string | null, tagIds: ReadonlySet<string>, markerIds: ReadonlySet<string>): void {
+  if (!tagIds.size && !markerIds.size) return;
+  const state = useSavedSectionCuts.getState();
+  if (!state.projectId || state.activeCutId !== viewId) throw new Error('Drawing selection changed');
+  const view = state.cuts.find(item => item.id === viewId);
+  const gridIds = new Set(state.grids.filter(grid => tagIds.has(grid.id)).map(grid => grid.id));
+  const localIds = new Set(view?.elementTags?.map(tag => tag.id) ?? []);
+  for (const id of tagIds) {
+    if (!gridIds.has(id) && !localIds.has(id)) throw new Error('Drawing symbol no longer exists');
+  }
+  for (const id of markerIds) {
+    const marker = state.cuts.find(item => item.id === id);
+    if (!marker || id === viewId || !['section', 'elevation'].includes(savedViewKind(marker))) {
+      throw new Error('Invalid drawing marker selection');
+    }
+  }
+  // Match the individual view-removal path, which exits template editing.
+  // Persist first so a storage failure cannot partially remove a selection.
+  const now = Date.now();
+  const cuts = state.cuts.filter(item => !markerIds.has(item.id)).map(item => {
+    const removeLocal = item.id === viewId && item.elementTags?.some(tag => tagIds.has(tag.id));
+    const removeExtents = item.gridExtents && [...gridIds].some(id => Object.prototype.hasOwnProperty.call(item.gridExtents, id));
+    if (!removeLocal && !removeExtents) return item;
+    const gridExtents = { ...item.gridExtents };
+    if (removeExtents) for (const id of gridIds) delete gridExtents[id];
+    return { ...item, updatedAt: now,
+      ...(removeLocal && { elementTags: item.elementTags?.filter(tag => !tagIds.has(tag.id)) }),
+      ...(removeExtents && { gridExtents }),
+    };
+  });
+  commitCuts({ cuts, grids: state.grids.filter(grid => !gridIds.has(grid.id)) });
+  if (markerIds.size) cancelDrawingTemplateEdit();
+}
+
+/** Append clipboard symbols with one persisted write; do not overwrite existing ids. */
+export function pasteDrawingWindowSymbols(viewId: string | null, tags: readonly DrawingElementTag[],
+  grids: readonly ProjectGrid[]): void {
+  if (!tags.length && !grids.length) return;
+  const state = useSavedSectionCuts.getState();
+  if (!state.projectId || state.activeCutId !== viewId) throw new Error('Drawing selection changed');
+  const view = state.cuts.find(item => item.id === viewId);
+  if (tags.length && !view) throw new Error('Save the drawing before pasting tags');
+  const ids = new Set([...state.grids.map(item => item.id), ...(view?.elementTags ?? []).map(item => item.id)]);
+  for (const item of [...tags, ...grids]) {
+    if (!item.id || ids.has(item.id)) throw new Error('Duplicate drawing symbol id');
+    ids.add(item.id);
+  }
+  if (readProjectGrids(grids).length !== grids.length) throw new Error('Invalid grid');
+  const names = new Set(state.grids.map(item => item.name.trim().toLocaleLowerCase()));
+  const copies = grids.map(grid => {
+    if (!grid.name.trim()) throw new Error('Grid name is required');
+    const base = grid.name.trim() + ' Copy';
+    let name = base, number = 2;
+    while (names.has(name.toLocaleLowerCase())) name = `${base} ${number++}`;
+    names.add(name.toLocaleLowerCase());
+    return { ...grid, name };
+  });
+  const cuts = state.cuts.map(item => item.id === viewId && tags.length
+    ? { ...item, elementTags: [...(item.elementTags ?? []), ...tags], updatedAt: Date.now() } : item);
+  commitCuts({ cuts, grids: [...state.grids, ...copies] });
 }
 
 export function removeSavedSectionCut(id: string): void {

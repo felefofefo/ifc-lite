@@ -28,15 +28,72 @@ export function textAnnotationScreenSize(annotation: { fontSize: number; appeara
   return Number.isFinite(paperUnit) && paperUnit > 0 ? heightMm * paperUnit : annotation.fontSize;
 }
 
-/** Shared text bounds for canvas painting, selection and click hit-testing. */
+/** Wrap at word boundaries, or at character boundaries for long unbroken words. */
+export function wrapTextAnnotationLines(text: string, maxWidth: number, measure: (line: string) => number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of text.split('\n')) {
+    let line = '';
+    let space = '';
+    for (const token of paragraph.match(/\S+|\s+/gu) ?? []) {
+      if (/^\s+$/u.test(token)) {
+        space += token;
+        continue;
+      }
+      const combined = line + space + token;
+      if (measure(combined) <= maxWidth) {
+        line = combined;
+      } else {
+        if (line) { lines.push(line); line = ''; }
+        // A word that does not fit even on an empty line must still be editable.
+        // Array.from avoids splitting surrogate pairs (e.g. emoji).
+        for (const char of Array.from(token)) {
+          if (line && measure(line + char) > maxWidth) { lines.push(line); line = ''; }
+          line += char;
+        }
+      }
+      space = '';
+    }
+    lines.push(line + space);
+  }
+  return lines;
+}
+
+let paperTextMeasureContext: CanvasRenderingContext2D | null = null;
+function measurePaperText(text: string, font: string): number | undefined {
+  if (typeof document === 'undefined') return undefined;
+  try {
+    paperTextMeasureContext ??= document.createElement('canvas').getContext('2d');
+    if (!paperTextMeasureContext) return undefined;
+    paperTextMeasureContext.font = font;
+    return paperTextMeasureContext.measureText(text).width;
+  } catch { return undefined; }
+}
+
+/** Shared text bounds for canvas painting, selection, hit-testing and export. */
 export function textAnnotationLayout(annotation: {
-  text: string; fontSize: number; bold?: boolean; italic?: boolean;
+  text: string; fontSize: number; bold?: boolean; italic?: boolean; widthMm?: number;
   appearance?: Pick<AnnotationSymbolStyle, 'textHeight' | 'font' | 'bold' | 'italic'>;
 }, paperUnit: number, measureWidth?: (text: string, font: string) => number | undefined) {
   const size = textAnnotationScreenSize(annotation, paperUnit);
   const bold = annotation.bold ?? annotation.appearance?.bold ?? false;
   const italic = annotation.italic ?? annotation.appearance?.italic ?? false;
   const font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${size}px ${annotation.appearance?.font ?? 'system-ui, sans-serif'}`;
+  const padding = Number.isFinite(paperUnit) && paperUnit > 0 ? paperUnit : 6; // 1 mm on paper
+  const lineHeight = size * 1.3;
+  const widthMm = annotation.widthMm;
+  if (widthMm !== undefined && Number.isFinite(widthMm) && widthMm >= 6 && widthMm <= 1000) {
+    // Canonical measurement resolution, independent of screen zoom or export units.
+    const canonicalUnit = 10;
+    const canonicalSize = textAnnotationScreenSize(annotation, canonicalUnit);
+    const canonicalFont = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${canonicalSize}px ${annotation.appearance?.font ?? 'system-ui, sans-serif'}`;
+    const measure = (line: string) => {
+      const actual = (measureWidth ?? measurePaperText)(line, canonicalFont);
+      return actual !== undefined && Number.isFinite(actual) && actual >= 0
+        ? actual : Array.from(line).length * canonicalSize * 0.6;
+    };
+    const lines = wrapTextAnnotationLines(annotation.text, (widthMm - 2) * canonicalUnit, measure);
+    return { font, lines, lineHeight, padding, bgW: widthMm * padding, bgH: lines.length * lineHeight + padding * 2 };
+  }
   const lines = annotation.text.split('\n');
   let maxWidth = 0;
   for (const line of lines) {
@@ -45,8 +102,6 @@ export function textAnnotationLayout(annotation: {
       ? measured : line.length * size * 0.6;
     maxWidth = Math.max(maxWidth, width);
   }
-  const padding = Number.isFinite(paperUnit) && paperUnit > 0 ? paperUnit : 6; // 1 mm on paper
-  const lineHeight = size * 1.3;
   return { font, lines, lineHeight, padding, bgW: maxWidth + padding * 2, bgH: lines.length * lineHeight + padding * 2 };
 }
 

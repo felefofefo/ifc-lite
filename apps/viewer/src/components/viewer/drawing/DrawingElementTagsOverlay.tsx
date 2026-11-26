@@ -10,9 +10,10 @@ import { useId, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import type { ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
 import type { DrawingViewModel } from './useDrawingViewModel';
+import type { DrawingCycleTarget } from './DrawingModelSelection';
 import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 
-export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
+export function DrawingElementTags({ vm, cycleTarget }: { vm: DrawingViewModel; cycleTarget?: DrawingCycleTarget | null }) {
   const { t } = useTranslation();
   const filterId = useId().replace(/:/g, '');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -39,11 +40,13 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
     const editing = preview && draft?.mode === 'edit' && draft.tag.id === tag.id;
     const selected = !preview && tags.selected?.id === tag.id;
     const dragging = selected && tags.tool === 'none';
-    const hovered = interactive && hoveredId === tag.id;
-    const highlighted = selected || editing || hovered;
-    const weakHighlight = hovered && !selected && !editing;
+    const hovered = interactive && (cycleTarget ? cycleTarget.type === 'tag' && cycleTarget.id === tag.id : hoveredId === tag.id);
+    const windowSelected = !preview && vm.windowAnnotations.some(item => item.type === 'tag' && item.id === tag.id);
+    const highlighted = selected || windowSelected || editing || hovered;
+    const weakHighlight = hovered && !selected && !windowSelected && !editing;
     const highlightFilter = highlighted ? `url(#${filterId}-${weakHighlight ? 'hover' : 'selected'})` : undefined;
     const graphicElement = <g key={tag.id} style={{ outline: 'none' }}
+      data-window-symbol={interactive ? 'tag' : undefined} data-window-id={interactive ? tag.id : undefined}
       className={dragging ? 'pointer-events-auto cursor-grab touch-none text-primary'
         : highlighted || preview ? 'text-primary' : 'text-foreground'}
       onPointerDown={dragging ? event => {
@@ -64,7 +67,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
       } : undefined}
       onPointerCancel={dragging ? event => { event.stopPropagation(); tags.cancelEditDrag(); } : undefined}
       onLostPointerCapture={dragging ? () => tags.cancelEditDrag() : undefined}>
-      {(tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={highlighted || preview ? "currentColor" : style?.color ?? "currentColor"}
+      {(tag.leader || tag.gridStart) && <line data-window-shape="true" x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={highlighted || preview ? "currentColor" : style?.color ?? "currentColor"}
         strokeOpacity={weakHighlight ? 0.55 : 1}
         strokeWidth={highlighted ? Math.max(1.5, (lineWidth ?? 0) * tags.paperUnit) : lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
       {editing && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
@@ -84,15 +87,15 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
         } : undefined}>
         {interactive && (tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
           stroke="transparent" strokeWidth={12} pointerEvents="stroke" />}
-        {startGraphic && <image href={startGraphic.href} filter={highlightFilter}
+        {startGraphic && <image data-window-shape="true" href={startGraphic.href} filter={highlightFilter}
           x={a.x - startGraphic.anchor.x * tags.paperUnit} y={a.y - startGraphic.anchor.y * tags.paperUnit}
           width={startGraphic.width * tags.paperUnit} height={startGraphic.height * tags.paperUnit} />}
         {!hideEnd && (graphic ? (
-          <image href={graphic.href} filter={highlightFilter} x={p.x - graphic.anchor.x * tags.paperUnit}
+          <image data-window-shape="true" href={graphic.href} filter={highlightFilter} x={p.x - graphic.anchor.x * tags.paperUnit}
             y={p.y - graphic.anchor.y * tags.paperUnit}
             width={graphic.width * tags.paperUnit} height={graphic.height * tags.paperUnit} />
         ) : (
-          <text x={p.x} y={p.y} fill="currentColor" fillOpacity={weakHighlight ? 0.55 : 1} stroke="var(--paper, #fff)" strokeWidth={3}
+          <text data-window-shape="true" x={p.x} y={p.y} fill="currentColor" fillOpacity={weakHighlight ? 0.55 : 1} stroke="var(--paper, #fff)" strokeWidth={3}
             paintOrder="stroke" fontFamily={style?.font ?? "Arial, sans-serif"} fontSize={style?.textHeight ? style.textHeight * tags.paperUnit : tags.fontSize}
             textAnchor="middle" dominantBaseline="middle">{text}</text>
         ))}
@@ -164,7 +167,7 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
   }
 
   return <>
-    {!!(shown.length || tags.preview || snap) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
+    {!!(shown.length || tags.preview || snap || tags.roomHighlight?.length) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
       <defs className="text-primary">
         {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${filterId}-${state}`} colorInterpolationFilters="sRGB">
           <feFlood floodColor="currentColor" floodOpacity={state === 'hover' ? 0.55 : 1} result="tint" />
@@ -172,6 +175,16 @@ export function DrawingElementTags({ vm }: { vm: DrawingViewModel }) {
           <feComposite in="highlight" in2="SourceAlpha" operator="in" />
         </filter>)}
       </defs>
+      {/* Room target feedback only: never part of markup, selection or export. */}
+      {tags.roomHighlight && <g aria-hidden="true" pointerEvents="none" data-room-highlight="true">
+        {tags.roomHighlight.map((polygon, index) => <path key={index}
+          d={[polygon.outer, ...polygon.holes].map(ring => ring.map((point, i) => {
+            const p = tags.screen(point);
+            return `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`;
+          }).join(' ') + ' Z').join(' ')}
+          fill="#0d9488" fillOpacity={0.16} fillRule="evenodd"
+          stroke="#0d9488" strokeOpacity={0.85} strokeWidth={1.5} />)}
+      </g>}
       {shown.map(item => paint(item, false))}
       {tags.preview && paint(tags.preview, true)}
       {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`}>

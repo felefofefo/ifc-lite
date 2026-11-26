@@ -8,6 +8,7 @@ import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@
 import { computePolygonCentroid, formatArea } from '@/components/viewer/tools/computePolygonArea';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
+import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 
 type DxfLabel = NonNullable<DXFExportOptions['labels']>[number];
 
@@ -43,10 +44,11 @@ export function drawingAnnotationDxf(
     if (!note.text.trim()) continue;
     const height = mm(note.appearance?.textHeight ?? 2.5);
     const padding = mm(1);
-    const lines = note.text.split('\n');
+    const fixed = note.widthMm === undefined ? undefined : textAnnotationLayout(note, mm(1));
+    const lines = fixed?.lines ?? note.text.split('\n');
     const lineHeight = height * 1.3;
-    const width = Math.max(...lines.map(line => line.length * height * 0.6)) + padding * 2;
-    const boxHeight = lines.length * lineHeight + padding * 2;
+    const width = fixed?.bgW ?? Math.max(...lines.map(line => line.length * height * 0.6)) + padding * 2;
+    const boxHeight = fixed?.bgH ?? lines.length * lineHeight + padding * 2;
     const { x, y } = note.position;
     polylineLayers.push({
       name: 'ROVE-TEXT-BOX', color: note.borderColor, closed: true,

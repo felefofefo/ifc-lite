@@ -10,6 +10,7 @@ import { computePolygonCentroid, formatArea } from '@/components/viewer/tools/co
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
 import { pdfColor } from './pdf-color';
+import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 import { isPagePoint } from './section-pdf-cut-polygons';
 
 type MapPoint = (x: number, y: number) => Point2D;
@@ -44,9 +45,10 @@ export function expandDrawingAnnotationBounds(
   for (const note of texts) {
     if (!note.text.trim()) continue;
     const height = world(note.appearance?.textHeight ?? 2.5);
-    const lines = note.text.split('\n');
-    const width = Math.max(...lines.map(line => line.length * height * 0.6)) + 2 * world(1);
-    const boxHeight = lines.length * height * 1.3 + 2 * world(1);
+    const fixed = note.widthMm === undefined ? undefined : textAnnotationLayout(note, world(1));
+    const lines = fixed?.lines ?? note.text.split('\n');
+    const width = fixed?.bgW ?? Math.max(...lines.map(line => line.length * height * 0.6)) + 2 * world(1);
+    const boxHeight = fixed?.bgH ?? lines.length * height * 1.3 + 2 * world(1);
     include(note.position);
     include({ x: note.position.x + width, y: note.position.y + boxHeight });
   }
@@ -130,10 +132,11 @@ export function drawDrawingAnnotationsPdf(
       if (!valid(p)) continue;
       const height = note.appearance?.textHeight ?? 2.5;
       const padding = 1;
-      const lines = note.text.split('\n');
+      const fixed = note.widthMm === undefined ? undefined : textAnnotationLayout(note, 1);
+      const lines = fixed?.lines ?? note.text.split('\n');
       const lineHeight = height * 1.3;
-      const width = Math.max(...lines.map(line => line.length * height * 0.6)) + padding * 2;
-      const boxHeight = lines.length * lineHeight + padding * 2;
+      const width = fixed?.bgW ?? Math.max(...lines.map(line => line.length * height * 0.6)) + padding * 2;
+      const boxHeight = fixed?.bgH ?? lines.length * lineHeight + padding * 2;
       if (!(height > 0) || !valid({ x: p.x + width, y: p.y + boxHeight })) continue;
       const background = color(note.backgroundColor, '#ffffff');
       if (background.alpha > 0) fillWithAlpha([

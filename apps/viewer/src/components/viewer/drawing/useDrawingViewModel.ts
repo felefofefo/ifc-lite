@@ -18,7 +18,7 @@ import { createMeshOutlineProvider, type MeshOutline2dFn } from '@/hooks/meshOut
 import { selectModelMeshes } from '@/lib/type-view-visibility';
 import { readIfcSpaceRooms } from '@/lib/drawing/ifc-space-rooms';
 import { useViewerStore } from '@/store';
-import { selectActiveSavedView, setDrawingProjectionDisplay, saveProjectGrid, editSavedViewTrace, updateViewSettings, removeSavedSectionCut, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
+import { selectActiveSavedView, setDrawingProjectionDisplay, saveProjectGrid, editSavedViewTrace, updateViewSettings, removeSavedSectionCut, deleteDrawingWindowSymbols, moveDrawingWindowSymbols, pasteDrawingWindowSymbols, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { toast } from '@/components/ui/toast';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { isTextEntryElement } from '@/lib/keyboard-event';
@@ -27,9 +27,11 @@ import { arrangeDrawingItems, type DrawingArrangeAction } from '@/lib/drawing/dr
 import { useTranslation } from '@/i18n';
 import { readDrawingTags, collectTagTargets, findTagTarget, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 import { moveProjectGrid } from '@/lib/drawing/project-grids';
+import { collectViewMarkers, DEFAULT_VIEW_MARKERS } from '@/lib/drawing/view-markers';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
-import { cloneClipboardPayload, sameDrawingCoordinates, snapshotAnnotation, type DrawingClipboardPayload, type DrawingEditClipboard } from '@/lib/drawing/drawing-edit-clipboard';
+import { cloneClipboardPayload, sameDrawingCoordinates, snapshotAnnotation, snapshotWindowClipboard, type DrawingClipboardPayload, type DrawingEditClipboard } from '@/lib/drawing/drawing-edit-clipboard';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
+import { isCanvasWindowAnnotation, type WindowDrawingSelection } from './drawing-annotation-window';
 import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
 import { temporaryDimensionViewKey } from '@/lib/drawing/dimension-view';
 import { transferViewMarkup } from '@/lib/drawing/dimension-view';
@@ -445,36 +447,85 @@ export function useDrawingViewModel() {
   const [moveBase, setMoveBase] = useState<{ x: number; y: number } | null>(null);
   const { resolve: resolveMoveDirection } = useDrawingDirection(
     annotation2DActiveTool === 'move' && moveBase ? 'drawing-move-target' : null, angularSnap);
-  const moveTarget = useRef<{
-    projectId?: string;
-    viewKey: string | null;
-    viewId?: string;
+  type MoveItem = {
     annotation?: NonNullable<typeof selectedAnnotation2D>;
     tag?: DrawingElementTag;
     marker?: NonNullable<typeof selectedMarker>;
     snapshot?: DrawingClipboardPayload;
+  };
+  const moveTarget = useRef<MoveItem & {
+    projectId?: string;
+    viewKey: string | null;
+    viewId?: string;
+    batch?: MoveItem[];
   } | null>(null);
   const [moveCursor, setMoveCursor] = useState<{
     point: { x: number; y: number }; reference: { x: number; y: number } | null;
   } | null>(null);
+  // Window selection is view-local, not persisted. Never use a representative
+  // single annotation for a batch operation.
+  const [windowAnnotations, setWindowAnnotationsState] = useState<WindowDrawingSelection[]>([]);
+  const windowAnnotationsRef = useRef<WindowDrawingSelection[]>([]);
+  const clearWindowAnnotations = useCallback(() => {
+    if (!windowAnnotationsRef.current.length) return;
+    windowAnnotationsRef.current = [];
+    setWindowAnnotationsState([]);
+  }, []);
+  function selectWindowAnnotations(items: WindowDrawingSelection[]) {
+    setSelectedAnnotation2D(null);
+    setEditableAnnotationId(null);
+    tags.clearSelection();
+    setSelectedMarker(null);
+    windowAnnotationsRef.current = items;
+    setWindowAnnotationsState(items);
+  }
+  useEffect(() => { clearWindowAnnotations(); }, [viewKey, drawingProjectId, annotation2DActiveTool, displayOptions.showAnnotations, viewAnnotationOptions, status, clearWindowAnnotations]);
+  useEffect(() => {
+    if (selectedAnnotation2D || tags.selected || selectedMarker || textAnnotation2DEditing) clearWindowAnnotations();
+  }, [selectedAnnotation2D, tags.selected?.id, selectedMarker?.id, textAnnotation2DEditing, clearWindowAnnotations]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isTextEntryElement(document.activeElement)) clearWindowAnnotations();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [clearWindowAnnotations]);
   const selectedTag = tags.selected ?? (tags.draft?.mode === 'edit' ? tags.draft.tag : undefined);
   const annotationPayload = useMemo(() => selectedAnnotation2D
     ? snapshotAnnotation(selectedAnnotation2D, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D)
     : null, [selectedAnnotation2D, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D]);
-  const canEdit = !!selectedTag || !!annotationPayload || !!selectedMarker;
-  const canCopy = !!selectedTag || !!annotationPayload;
-  const canDelete = !!selectedTag || !!annotationPayload || !!selectedMarker;
+  const canEdit = windowAnnotations.length > 0 || !!selectedTag || !!annotationPayload || !!selectedMarker;
+  const canCopyWindow = windowAnnotations.length > 0 && windowAnnotations.every(item => item.type !== 'marker');
+  const canCopy = windowAnnotations.length ? canCopyWindow : !!selectedTag || !!annotationPayload;
+  const windowCanvasAnnotations = useMemo(() => windowAnnotations.filter(isCanvasWindowAnnotation), [windowAnnotations]);
+  const canDelete = windowAnnotations.length > 0 || !!selectedTag || !!annotationPayload || !!selectedMarker;
   const canArrange = !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
-  const canCut = !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
+  const canCut = windowAnnotations.length
+    ? canCopyWindow && !windowAnnotations.some(item => item.type === 'tag' && projectGrids.some(grid => grid.id === item.id))
+    : !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
   useEffect(() => { setEditableAnnotationId(null); }, [selectedAnnotation2D?.id]);
   useEffect(() => { setSelectedMarker(null); }, [savedView?.id]);
   useEffect(() => { if (selectedAnnotation2D) tags.clearSelection(); }, [selectedAnnotation2D?.id]);
   useEffect(() => { if (tags.selected || selectedAnnotation2D) setSelectedMarker(null); }, [tags.selected?.id, selectedAnnotation2D?.id]);
   const newDrawingId = () => globalThis.crypto?.randomUUID?.() ?? `drawing-${Date.now()}-${Math.random()}`;
 
+  function windowClipboard(): DrawingEditClipboard | null {
+    const plane = drawing?.config.plane;
+    if (!plane || !canCopyWindow) return null;
+    const items = snapshotWindowClipboard(windowAnnotations, measure2DResults, polygonArea2DResults,
+      textAnnotations2D, cloudAnnotations2D, tags.items.map(entry => entry.tag), projectGrids);
+    return items ? { projectId: drawingProjectId, plane: structuredClone(plane), payload: { kind: 'batch', items } } : null;
+  }
+
   function copySelection(): boolean {
     const plane = drawing?.config.plane;
     if (!plane) return false;
+    if (windowAnnotations.length) {
+      const copied = windowClipboard();
+      if (!copied) return false;
+      setClipboard(copied);
+      return true;
+    }
     if (selectedTag) {
       const grid = projectGrids.find(grid => grid.id === selectedTag.id);
       const payload: DrawingClipboardPayload = grid
@@ -551,6 +602,49 @@ export function useDrawingViewModel() {
 
   async function requestDeleteSelection() {
     if (!canDelete) return;
+    if (windowAnnotations.length) {
+      const batch = windowAnnotations;
+      const projectAtRequest = drawingProjectId;
+      const viewAtRequest = useSavedSectionCuts.getState().activeCutId;
+      const livePlane = useViewerStore.getState().sectionPlane.id;
+      const tagIds = new Set(batch.filter(item => item.type === 'tag').map(item => item.id));
+      const markerIds = new Set(batch.filter(item => item.type === 'marker').map(item => item.id));
+      const hasGrids = useSavedSectionCuts.getState().grids.some(grid => tagIds.has(grid.id));
+      const description = [t('section2d.tools.deleteConfirm'),
+        ...(hasGrids ? [t('section2d.grid.deleteEverywhere')] : []),
+        ...(markerIds.size ? [t('section2d.tools.deleteViewConfirm')] : []),
+      ].join(' ');
+      if (!viewKey || !await confirmDialog({ description, destructive: true })) return;
+      if (windowAnnotationsRef.current !== batch || useSavedSectionCuts.getState().projectId !== projectAtRequest
+        || useSavedSectionCuts.getState().activeCutId !== viewAtRequest
+        || useViewerStore.getState().sectionPlane.id !== livePlane) return;
+      // Persist shared objects first. If storage fails, leave canvas markup intact.
+      try {
+        deleteDrawingWindowSymbols(viewAtRequest, tagIds, markerIds);
+      } catch (error) {
+        console.warn('Could not delete drawing selection', error);
+        toast.error(t('section2d.tools.editError'));
+        return;
+      }
+      const measureIds = new Set(batch.filter(item => item.type === 'measure').map(item => item.id));
+      const areaIds = new Set(batch.filter(item => item.type === 'polygon').map(item => item.id));
+      const textIds = new Set(batch.filter(item => item.type === 'text').map(item => item.id));
+      const cloudIds = new Set(batch.filter(item => item.type === 'cloud').map(item => item.id));
+      useViewerStore.setState(state => {
+        const scopedMeasure = (item: typeof state.measure2DResults[number]) => (item.dimension?.viewKey ?? item.viewKey) === viewKey;
+        const chains = new Set(state.measure2DResults.filter(item => scopedMeasure(item) && measureIds.has(item.id))
+          .map(item => item.dimension?.chainId).filter(Boolean));
+        return {
+          measure2DResults: state.measure2DResults.filter(item => !scopedMeasure(item)
+            || (!measureIds.has(item.id) && !(item.dimension?.chainId && chains.has(item.dimension.chainId)))),
+          polygonArea2DResults: state.polygonArea2DResults.filter(item => item.viewKey !== viewKey || !areaIds.has(item.id)),
+          textAnnotations2D: state.textAnnotations2D.filter(item => item.viewKey !== viewKey || !textIds.has(item.id)),
+          cloudAnnotations2D: state.cloudAnnotations2D.filter(item => item.viewKey !== viewKey || !cloudIds.has(item.id)),
+        };
+      });
+      clearWindowAnnotations();
+      return true;
+    }
     if (selectedTag) { await requestDeleteTag(selectedTag); return; }
     if (selectedMarker) { await requestDeleteMarker(selectedMarker.id); return; }
     const id = selectedAnnotation2D?.id, viewAtRequest = useSavedSectionCuts.getState().activeCutId, projectAtRequest = drawingProjectId;
@@ -591,8 +685,16 @@ export function useDrawingViewModel() {
 
   function cutSelection() {
     // A grid is a project datum: deleting it everywhere is never implicit in Cut.
-    if (!canCut || !copySelection()) return;
-    deleteSelection();
+    if (!canCut) return;
+    if (windowAnnotations.length) {
+      const copied = windowClipboard();
+      if (!copied) return;
+      // Reuse the scoped, confirmed batch deletion. Keep the old clipboard if
+      // the user cancels or persistence fails.
+      void requestDeleteSelection().then(deleted => { if (deleted) setClipboard(copied); });
+      return;
+    }
+    if (copySelection()) deleteSelection();
   }
 
   function pasteSelection() {
@@ -600,6 +702,47 @@ export function useDrawingViewModel() {
     try {
       if (clipboard.projectId !== drawingProjectId) {
         toast.error(t('section2d.tools.pasteDifferentProject')); return;
+      }
+      if (clipboard.payload.kind === 'batch') {
+        const payloads = clipboard.payload.items;
+        if (payloads.some(item => item.kind !== 'grid') && !sameDrawingCoordinates(clipboard.plane, drawing.config.plane)) {
+          toast.error(t('section2d.tools.pasteDifferentPlane')); return;
+        }
+        const copies = payloads.map(item => cloneClipboardPayload(item, viewKey, newDrawingId));
+        const pastedTags = copies.flatMap(item => item.kind === 'tag' ? [item.item] : []);
+        const pastedGrids = copies.flatMap(item => item.kind === 'grid' ? [item.item] : []);
+        if (pastedTags.length) {
+          if (!savedView || useSavedSectionCuts.getState().activeCutId !== savedView.id) {
+            toast.error(t('section2d.tags.saveView')); return;
+          }
+          const targets = collectTagTargets(drawing, displayOptions.showHiddenLines, ifcSpaceRooms);
+          if (pastedTags.some(item => !item.free && !findTagTarget(targets, item))) {
+            toast.error(t('section2d.tools.pasteMissingTarget')); return;
+          }
+        }
+        // Validate the entire batch before persisting symbols. A failed symbol
+        // write must not leave behind a partial set of canvas annotations.
+        const pastedMeasures = copies.flatMap(item => item.kind === 'dimensions' ? item.items : []);
+        const pastedAreas = copies.flatMap(item => item.kind === 'area' ? [item.item] : []);
+        const pastedTexts = copies.flatMap(item => item.kind === 'text' ? [item.item] : []);
+        const pastedClouds = copies.flatMap(item => item.kind === 'cloud' ? [item.item] : []);
+        pasteDrawingWindowSymbols(savedView?.id ?? null, pastedTags, pastedGrids);
+        useViewerStore.setState(state => ({
+          measure2DResults: [...state.measure2DResults, ...pastedMeasures],
+          polygonArea2DResults: [...state.polygonArea2DResults, ...pastedAreas],
+          textAnnotations2D: [...state.textAnnotations2D, ...pastedTexts],
+          cloudAnnotations2D: [...state.cloudAnnotations2D, ...pastedClouds],
+        }));
+        selectWindowAnnotations(copies.flatMap((item): WindowDrawingSelection[] => {
+          switch (item.kind) {
+            case 'dimensions': return item.items[0] ? [{ type: 'measure', id: item.items[0].id }] : [];
+            case 'area': return [{ type: 'polygon', id: item.item.id }];
+            case 'text': return [{ type: 'text', id: item.item.id }];
+            case 'cloud': return [{ type: 'cloud', id: item.item.id }];
+            case 'tag': case 'grid': return [{ type: 'tag', id: item.item.id }];
+          }
+        }));
+        return;
       }
       if (clipboard.payload.kind !== 'grid' && !sameDrawingCoordinates(clipboard.plane, drawing.config.plane)) {
         toast.error(t('section2d.tools.pasteDifferentPlane')); return;
@@ -649,6 +792,39 @@ export function useDrawingViewModel() {
 
   function startMove() {
     if (!canEdit || !drawing) return;
+    if (windowAnnotations.length) {
+      const batch: MoveItem[] = [];
+      const seenDimensions = new Set<string>();
+      const bounds = geometryResult?.coordinateInfo.shiftedBounds;
+      const markers = bounds && drawnPlane.axis === 'down' && !drawnPlane.custom
+        ? collectViewMarkers(useSavedSectionCuts.getState().cuts, bounds, drawnPlane.flipped, DEFAULT_VIEW_MARKERS) : [];
+      for (const item of windowAnnotations) {
+        if (item.type === 'tag') {
+          const tag = tags.items.find(entry => entry.tag.id === item.id)?.tag;
+          if (!tag) { toast.error(t('section2d.tools.editError')); return; }
+          batch.push({ tag: structuredClone(tag) });
+        } else if (item.type === 'marker') {
+          const marker = markers.find(entry => entry.id === item.id);
+          if (!marker) { toast.error(t('section2d.tools.editError')); return; }
+          const dx = marker.end.x - marker.start.x, dy = marker.end.y - marker.start.y;
+          batch.push({ marker: { id: marker.id, start: marker.start, end: marker.end,
+            reverse: -dy * marker.direction.x + dx * marker.direction.y < 0 } });
+        } else {
+          const snapshot = snapshotAnnotation(item, measure2DResults, polygonArea2DResults, textAnnotations2D, cloudAnnotations2D);
+          if (!snapshot) { toast.error(t('section2d.tools.editError')); return; }
+          if (snapshot.kind === 'dimensions') {
+            if (snapshot.items.some(segment => seenDimensions.has(segment.id))) continue;
+            snapshot.items.forEach(segment => seenDimensions.add(segment.id));
+          }
+          batch.push({ annotation: item, snapshot });
+        }
+      }
+      if (!batch.length) return;
+      moveTarget.current = { projectId: drawingProjectId, viewKey, viewId: savedView?.id, batch };
+      setMoveBase(null);
+      selectTool('move');
+      return;
+    }
     moveTarget.current = { projectId: drawingProjectId, viewKey, viewId: savedView?.id,
       ...(selectedMarker ? { marker: structuredClone(selectedMarker) }
         : selectedTag ? { tag: structuredClone(selectedTag) }
@@ -687,6 +863,31 @@ export function useDrawingViewModel() {
     if (target.projectId !== drawingProjectId || target.viewKey !== viewKey || target.viewId !== savedView?.id) return;
     const delta = { x: point.x - moveBase.x, y: point.y - moveBase.y };
     try {
+      if (target.batch) {
+        // Validate every canvas item before changing any shared object.
+        const state = useViewerStore.getState();
+        const canvasMoves = target.batch.flatMap(item => {
+          const selected = item.annotation;
+          if (!selected) return [];
+          const result = selected.type === 'measure' ? state.measure2DResults.find(r => r.id === selected.id && (r.dimension?.viewKey ?? r.viewKey) === viewKey)
+            : selected.type === 'polygon' ? state.polygonArea2DResults.find(r => r.id === selected.id && r.viewKey === viewKey)
+            : selected.type === 'text' ? state.textAnnotations2D.find(r => r.id === selected.id && r.viewKey === viewKey)
+            : state.cloudAnnotations2D.find(r => r.id === selected.id && r.viewKey === viewKey);
+          const origin = result && ('start' in result ? result.start : 'position' in result ? result.position : result.points[0]);
+          if (!origin) throw new Error('Missing selected annotation');
+          return [{ selected, origin }];
+        });
+        if (!drawing || !Number.isFinite(delta.x) || !Number.isFinite(delta.y)) throw new Error('Invalid move');
+        const tagIds = new Set(target.batch.flatMap(item => item.tag ? [item.tag.id] : []));
+        const markers = target.batch.flatMap(item => item.marker ? [item.marker] : []);
+        // Persist shared objects first, in one write. Reuse the existing canvas
+        // action for its dimension constraints and annotation semantics.
+        moveDrawingWindowSymbols(target.viewId ?? null, tagIds, markers, drawing.config.plane, drawnPlane.flipped, delta);
+        for (const { selected, origin } of canvasMoves) {
+          state.moveAnnotation2D(selected, { x: origin.x + delta.x, y: origin.y + delta.y });
+        }
+        return;
+      }
       if (target.marker) {
         const marker = target.marker;
         const shift = (p: { x: number; y: number }) => ({ x: p.x + delta.x, y: p.y + delta.y });
@@ -719,7 +920,7 @@ export function useDrawingViewModel() {
   }
 
   // Text editor handlers
-  const handleTextConfirm = useCallback((id: string, text: string, format?: { bold?: boolean; italic?: boolean; align?: 'left'|'center'|'right' }) => {
+  const handleTextConfirm = useCallback((id: string, text: string, format?: { bold?: boolean; italic?: boolean; align?: 'left'|'center'|'right'; widthMm?: number }) => {
     updateTextAnnotation2D(id, { text, ...format });
     setMoveCursor(null);
     setMeasure2DSnapPoint(null);
@@ -817,6 +1018,7 @@ export function useDrawingViewModel() {
     tag: activeMove.tag,
     marker: activeMove.marker,
     payload: activeMove.snapshot,
+    batch: activeMove.batch?.map(item => ({ tag: item.tag, marker: item.marker, payload: item.snapshot, annotation: item.annotation })),
   } : null;
   useEffect(() => {
     if (annotation2DActiveTool !== 'move') {
@@ -900,7 +1102,8 @@ export function useDrawingViewModel() {
     polygonArea2DPoints, polygonArea2DResults,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,
-    selectedAnnotation2D, clearAllAnnotations2D: () => { if (tags.clear()) dimensions.clearAllAnnotations2D(); },
+    windowAnnotations, windowCanvasAnnotations, selectWindowAnnotations, clearWindowAnnotations,
+    selectedAnnotation2D, clearAllAnnotations2D: () => { if (tags.clear()) { dimensions.clearAllAnnotations2D(); clearWindowAnnotations(); } },
     markupCounts, hasMarkup: hasMarkup || tags.items.length > 0,
     toggleIfcAnnotations, toggleConstructionProjection, toggleOverheadProjection, toggle3DOverlay, toggleSymbolicRepresentations,
     togglePrintPreview, paperTheme,
