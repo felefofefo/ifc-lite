@@ -33,7 +33,7 @@ import { type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useDrawingElementPropertiesLookup } from '@/hooks/useDrawingElementPropertiesLookup';
 import { markActiveDrawingCanvasRendered, registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { areaBoundaryStyle, areaHasLegacyBackground, areaHatchLayers, textAnnotationLayout } from '@/lib/drawing/annotation-types';
 import { resolveCutPolygonStyle } from './drawing/cut-polygon-style';
 import { resolveDrawingPaperTheme, type DrawingPaperTheme } from './drawing/paper-theme';
 
@@ -1367,23 +1367,28 @@ export function Drawing2DCanvas({
     for (const result of polygonAreaResults) {
       if (result.points.length < 3) continue;
 
-      // Draw filled polygon
-      ctx.globalAlpha = 0.1;
-      ctx.fillStyle = result.appearance?.color ?? '#2196F3';
-      ctx.beginPath();
+      const pen = areaBoundaryStyle(result.appearance, lineweights);
+      ctx.save();
       const first = result.points[0];
-      ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
-      for (let i = 1; i < result.points.length; i++) {
-        ctx.lineTo(drawingToScreenX(result.points[i].x), drawingToScreenY(result.points[i].y));
+      if (areaHasLegacyBackground(result.appearance)) {
+        ctx.globalAlpha = 0.1;
+        ctx.fillStyle = pen.color;
+        ctx.beginPath();
+        ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
+        for (const point of result.points.slice(1)) ctx.lineTo(drawingToScreenX(point.x), drawingToScreenY(point.y));
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      const paints = areaHatchLayers(result.appearance, publicationScale || 100, fillPreview?.patterns);
+      if (paints.length) drawPublicationCanvasFills(ctx, { polygon: { outer: result.points, holes: [] }, isCut: false },
+        paints, (x, y) => ({ x: drawingToScreenX(x), y: drawingToScreenY(y) }),
+        Math.abs(markupTransform.scale), paperUnit, Math.sign(annotScaleX * annotScaleY));
 
-      // Draw outline
-      ctx.strokeStyle = result.appearance?.color ?? '#2196F3';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 3]);
+      // Use paper-space pens, just like the drawing's IFC outlines.
+      ctx.strokeStyle = pen.color;
+      ctx.lineWidth = Math.max(0.01, pen.weight * paperUnit);
+      ctx.setLineDash(pen.dash.map(value => value * paperUnit));
       ctx.beginPath();
       ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
       for (let i = 1; i < result.points.length; i++) {
@@ -1393,15 +1398,8 @@ export function Drawing2DCanvas({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw vertex dots
-      ctx.fillStyle = result.appearance?.color ?? '#2196F3';
-      for (const pt of result.points) {
-        ctx.beginPath();
-        ctx.arc(drawingToScreenX(pt.x), drawingToScreenY(pt.y), 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-
+      // Node handles belong to editing/selection overlays, not the styled fill.
+      ctx.restore();
     }
 
     // Draw in-progress polygon

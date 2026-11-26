@@ -94,6 +94,16 @@ function MoveGhost({ vm, preview }: { vm: DrawingViewModel; preview: MoveGhostDa
           width={Math.abs(a.x - b.x)} height={Math.abs(a.y - b.y)} rx={7} /> : null;
       })()}
     </g>
+    {payload?.kind === 'area' && (() => {
+      const rect = vm.areaTagRects.find(item => item.id === payload.item.id);
+      return rect && <g opacity="0.7">
+        {rect.leader && <line x1={rect.leader.start.x + preview.delta.x * sx} y1={rect.leader.start.y + preview.delta.y * sy}
+          x2={rect.leader.end.x + preview.delta.x * sx} y2={rect.leader.end.y + preview.delta.y * sy}
+          stroke="currentColor" strokeWidth={1.5} />}
+        <image href={rect.href} x={rect.x + preview.delta.x * sx} y={rect.y + preview.delta.y * sy}
+          width={rect.width} height={rect.height} />
+      </g>;
+    })()}
     {payload?.kind === 'text' && <text {...translate(payload.item.position)}
       fontSize={14} fill="currentColor" opacity="0.75" stroke="none">{payload.item.text}</text>}
     {tagGraphics?.startGraphic && anchor && (() => {

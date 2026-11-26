@@ -7,8 +7,9 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTranslation } from '@/i18n';
-import { ANNOTATION_FONTS, ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle, type NamedAnnotationStyle } from '@/lib/drawing/annotation-types';
+import { AREA_BOUNDARY_PATTERNS, ANNOTATION_FONTS, ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle, type NamedAnnotationStyle } from '@/lib/drawing/annotation-types';
 import { renderTagSvg } from '@/lib/drawing/drawing-tag-svg';
+import { DrawingFillControl } from './DrawingHatchSelect';
 import { symbolUse } from '@/lib/drawing/drawing-tag-library';
 import { LINEWEIGHT_PRESETS } from '@/lib/drawing/lineweight-table';
 import { saveDrawingTagLibrary, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
@@ -31,7 +32,7 @@ export function DrawingAnnotationStyles() {
     const symbol = gridSymbols.find(item => item.id === id) ?? gridSymbols[0];
     if (!symbol) return null;
     try {
-      const graphic = renderTagSvg(symbol.svg, new Map([['Grid', 'A']]), undefined, style);
+      const graphic = renderTagSvg(symbol.svg, new Map([['Grid', 'A']]));
       const x = slot === 'start' ? 34 : 206;
       return <image href={graphic.href} x={x - graphic.anchor.x * 3} y={30 - graphic.anchor.y * 3}
         width={graphic.width * 3} height={graphic.height * 3} />;
@@ -107,7 +108,7 @@ export function DrawingAnnotationStyles() {
             <label className="grid gap-1 text-sm sm:col-span-2">{t('section2d.annotationStyles.name')}
               <Input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
             </label>
-            {kind !== 'cloud' && <><div className="grid gap-1 text-sm">
+            {kind === 'text' && <><div className="grid gap-1 text-sm">
               <label htmlFor="annotation-type-font">{t('section2d.annotationStyles.font')}</label>
               <Select value={style.font ?? 'inherit'} onValueChange={font => change({ font: ANNOTATION_FONTS.find(item => item === font) })}>
                 <SelectTrigger id="annotation-type-font"><SelectValue /></SelectTrigger>
@@ -166,6 +167,43 @@ export function DrawingAnnotationStyles() {
                 </Select>
               </div>)}
             </>}
+            {kind === 'area' && <fieldset className="space-y-2 rounded-md border p-3 sm:col-span-2">
+              <legend className="px-1 text-xs font-medium">Boundary</legend>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <span className="text-xs">{t('drawingUnderlay.materials.lineType')}</span>
+                  <Select value={style.boundaryPattern ?? 'inherit'} onValueChange={value =>
+                    change({ boundaryPattern: AREA_BOUNDARY_PATTERNS.find(pattern => pattern === value) })}>
+                    <SelectTrigger className="h-8 text-xs" aria-label={t('drawingUnderlay.materials.lineType')}><SelectValue /></SelectTrigger>
+                    <SelectContent>{(['inherit', ...AREA_BOUNDARY_PATTERNS] as const).map(pattern =>
+                      <SelectItem key={pattern} value={pattern}>{t(`drawingUnderlay.materials.lineType.${pattern}`)}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs">{t('section2d.markerStyles.lineWeight')}</span>
+                  <Select value={style.weight ?? 'default'} onValueChange={value =>
+                    change({ weight: LINEWEIGHT_PRESETS.find(weight => weight === value) })}>
+                    <SelectTrigger className="h-8 text-xs" aria-label={t('section2d.markerStyles.lineWeight')}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>
+                      {LINEWEIGHT_PRESETS.map(weight => <SelectItem key={weight} value={weight}>{t(`drawingUnderlay.lineweights.preset.${weight}`)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <label className="flex items-center justify-between gap-2 text-xs">
+                {t('section2d.markerStyles.lineColor')}
+                <Input type="color" className="h-8 w-9 shrink-0 cursor-pointer p-1" value={style.color ?? '#2196f3'}
+                  onChange={event => change({ color: event.target.value })} />
+              </label>
+            </fieldset>}
+            {kind === 'area' && <fieldset className="space-y-2 rounded-md border p-3 sm:col-span-2">
+              <legend className="px-1 text-xs font-medium">Fill</legend>
+              {(['background', 'foreground'] as const).map(side => <DrawingFillControl key={side}
+                background={side === 'background'} label={t(`drawingUnderlay.materials.${side}`)}
+                paint={style.areaFill?.[side]}
+                onChange={paint => change({ areaFill: { ...style.areaFill, [side]: paint } })} />)}
+            </fieldset>}
             {(kind === 'grid' || kind === 'cloud') && <>
               <div className="grid gap-1 text-sm">
                 <label htmlFor="annotation-grid-weight">{t('section2d.annotationStyles.weight')}</label>
@@ -178,9 +216,9 @@ export function DrawingAnnotationStyles() {
                 </Select>
               </div>
             </>}
-            {(kind === 'grid' || kind === 'area' || kind === 'text' || kind === 'cloud') &&
+            {(kind === 'grid' || kind === 'text' || kind === 'cloud') &&
               <label className="grid gap-1 text-sm">{t('section2d.annotationStyles.color')}
-                <Input type="color" className="w-16" value={style.color ?? (kind === 'area' ? '#2196f3' : kind === 'cloud' ? '#e53935' : '#000000')}
+                <Input type="color" className="w-16" value={style.color ?? (kind === 'cloud' ? '#e53935' : '#000000')}
                   onChange={event => change({ color: event.target.value })} />
               </label>}
           </form>

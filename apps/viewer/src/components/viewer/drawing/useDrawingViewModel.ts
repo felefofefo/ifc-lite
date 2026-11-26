@@ -27,7 +27,9 @@ import { arrangeDrawingItems, type DrawingArrangeAction } from '@/lib/drawing/dr
 import { useTranslation } from '@/i18n';
 import { readDrawingTags, collectTagTargets, findTagTarget, isAreaTagTemplate, resolveAreaTag, areaTagScreenRect, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 import { moveProjectGrid } from '@/lib/drawing/project-grids';
-import { collectViewMarkers, DEFAULT_VIEW_MARKERS } from '@/lib/drawing/view-markers';
+import { collectViewMarkers, DEFAULT_VIEW_MARKERS, markerHeadPoint } from '@/lib/drawing/view-markers';
+import { resolveMarkerHeads } from '@/lib/drawing/drawing-tag-library';
+import type { Vec2 } from '@/lib/snap/types';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
 import { cloneClipboardPayload, sameDrawingCoordinates, snapshotAnnotation, snapshotWindowClipboard, type DrawingClipboardPayload, type DrawingEditClipboard } from '@/lib/drawing/drawing-edit-clipboard';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
@@ -473,6 +475,7 @@ export function useDrawingViewModel() {
     viewKey: string | null;
     viewId?: string;
     batch?: MoveItem[];
+    referenceVertices?: { base: Vec2[]; destination: Vec2[] };
   } | null>(null);
   const [moveCursor, setMoveCursor] = useState<{
     point: { x: number; y: number }; reference: { x: number; y: number } | null;
@@ -850,6 +853,56 @@ export function useDrawingViewModel() {
     selectTool('move');
   }
 
+  function moveReferenceVertices(excludeMoving: boolean): Vec2[] {
+    if (!displayOptions.showAnnotations || !objectSnaps.endpoint || !viewKey || status !== 'ready') return [];
+    const moving = moveTarget.current;
+    const excluded = new Set<string>();
+    if (excludeMoving && moving) {
+      for (const item of moving.batch ?? [moving]) {
+        if (item.tag) excluded.add('tag:' + item.tag.id);
+        if (item.marker) excluded.add('marker:' + item.marker.id);
+        if (item.annotation) excluded.add(item.annotation.type + ':' + item.annotation.id);
+      }
+    }
+    const vertices: Vec2[] = [];
+    const seen = new Set<string>();
+    function add(point: { x: number; y: number }) {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+      const key = `${point.x}:${point.y}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      vertices.push([point.x, point.y]);
+    }
+    for (const item of tags.items) {
+      if (excluded.has('tag:' + item.tag.id)) continue;
+      if (!item.hideEnd || item.tag.gridStart) add(item.tag.position);
+      if (item.tag.gridStart || item.tag.leader) add(item.anchor);
+    }
+    for (const item of areaTags) {
+      if (!excluded.has('polygon:' + item.tag.id)) add(item.tag.position);
+    }
+    for (const note of styledNotes) {
+      if (!excluded.has('text:' + note.id)) add(note.position);
+    }
+    const bounds = geometryResult?.coordinateInfo.shiftedBounds;
+    if (bounds && drawnPlane.axis === 'down' && !drawnPlane.custom) {
+      const { cuts, tagLibrary } = useSavedSectionCuts.getState();
+      const flags = savedView?.annotationOptions ? DEFAULT_VIEW_MARKERS : savedView?.markers ?? DEFAULT_VIEW_MARKERS;
+      for (const marker of collectViewMarkers(cuts, bounds, drawnPlane.flipped, flags)) {
+        if (excluded.has('marker:' + marker.id)) continue;
+        const override = savedView?.annotationOptions?.styleIds?.[marker.kind];
+        const mark = override && tagLibrary.markerStyles?.some(style => style.id === override && style.kind === marker.kind)
+          ? { ...marker, styleId: override } : marker;
+        if (!drawingAnnotationVisible(savedView, mark.kind, mark.styleId)) continue;
+        const angle = Math.atan2(mark.direction.y, mark.direction.x) * 180 / Math.PI;
+        const heads = resolveMarkerHeads(tagLibrary.templates, mark, tagLibrary.markerStyles, angle);
+        if (heads.length) heads.forEach(({ slot }) => add(markerHeadPoint(mark, slot)));
+        else add(markerHeadPoint(mark, 'center'));
+      }
+    }
+    return vertices;
+  }
+
   function mouseDrawingInput(event: React.MouseEvent) {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect || !(markupTransform.scale > 0)) return null;
@@ -857,7 +910,13 @@ export function useDrawingViewModel() {
     const yScale = drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale;
     const point = { x: (event.clientX - rect.left - markupTransform.x) / xScale,
       y: (event.clientY - rect.top - markupTransform.y) / yScale };
-    const reference = measureHandlers.findSnapPoint(point);
+    const moving = moveTarget.current;
+    if (moving && displayOptions.showAnnotations && objectSnaps.endpoint && !moving.referenceVertices) {
+      moving.referenceVertices = { base: moveReferenceVertices(false), destination: moveReferenceVertices(true) };
+    }
+    const vertices = displayOptions.showAnnotations && objectSnaps.endpoint
+      ? (moveBase ? moving?.referenceVertices?.destination : moving?.referenceVertices?.base) : undefined;
+    const reference = measureHandlers.findSnapPoint(point, vertices);
     const directed = moveBase ? resolveMoveDirection(moveBase, point, reference, event.shiftKey) : null;
     const final = directed ?? reference ?? point;
     return { point: final, reference: reference ?? (directed && angularSnap !== 'off' ? final : null) };
@@ -936,6 +995,8 @@ export function useDrawingViewModel() {
 
   // Text editor handlers
   const handleTextConfirm = useCallback((id: string, text: string, format?: { bold?: boolean; italic?: boolean; align?: 'left'|'center'|'right'; widthMm?: number }) => {
+    // An old editor's blur must not commit or close a newer editor.
+    if (useViewerStore.getState().textAnnotation2DEditing !== id) return;
     updateTextAnnotation2D(id, { text, ...format });
     setMoveCursor(null);
     setMeasure2DSnapPoint(null);
@@ -943,6 +1004,7 @@ export function useDrawingViewModel() {
   }, [updateTextAnnotation2D, setTextAnnotation2DEditing]);
 
   const handleTextCancel = useCallback((id: string) => {
+    if (useViewerStore.getState().textAnnotation2DEditing !== id) return;
     // If text is empty (just created), remove it
     const annotation = textAnnotations2D.find((a) => a.id === id);
     if (annotation && !annotation.text.trim()) removeTextAnnotation2D(id);
@@ -1003,12 +1065,22 @@ export function useDrawingViewModel() {
   }
   const selectedArea = selectedAnnotation2D?.type === 'polygon'
     ? polygonArea2DResults.find(item => item.id === selectedAnnotation2D.id) : undefined;
-  function updateSelectedAreaTag(patch: { tagTemplateId?: string; tagName?: string }) {
+  function updateSelectedAreaTag(patch: { tagTemplateId?: string; tagName?: string; tagLeader?: boolean }) {
     if (!selectedArea || !viewKey) return;
     if (patch.tagTemplateId !== undefined && !areaTagTemplates.some(template => template.id === patch.tagTemplateId)) return;
-    if (patch.tagName !== undefined && patch.tagName.length > 200) return;
+    if (patch.tagName !== undefined
+      && (editableAnnotationId !== selectedArea.id || patch.tagName.length > 200)) return;
+    if (patch.tagLeader !== undefined
+      && (editableAnnotationId !== selectedArea.id || !selectedArea.tagTemplateId || typeof patch.tagLeader !== 'boolean')) return;
     useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item =>
       item.id === selectedArea.id && item.viewKey === viewKey ? { ...item, ...patch } : item) }));
+  }
+  function updateAreaTagPosition(id: string, point: { x: number; y: number }) {
+    if (!viewKey || selectedAnnotation2D?.type !== 'polygon' || selectedAnnotation2D.id !== id
+      || editableAnnotationId !== id || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item =>
+      item.id === id && item.viewKey === viewKey && item.tagTemplateId
+        ? { ...item, tagPosition: { ...point } } : item) }));
   }
   function editSelectedAnnotation() {
     if (!selectedAnnotation2D) return;
@@ -1096,6 +1168,9 @@ export function useDrawingViewModel() {
       onMouseDown: (e: React.MouseEvent) => {
         // Middle-button Pan must work even while a drawing tool or tag editor is active.
         if (e.button === 1) { measureHandlers.handleMouseDown(e); return true; }
+        // The outside click blurs the text editor. Do not also place or drag
+        // an annotation on that same mousedown (blur follows mousedown).
+        if (e.button === 0 && useViewerStore.getState().textAnnotation2DEditing !== null) return true;
         if (annotation2DActiveTool === 'move' || tags.active) return true;
         if (annotation2DActiveTool === 'none') { tags.clearSelection(); setSelectedMarker(null); }
         return canvasMouseHandlers.onMouseDown(e);
@@ -1121,7 +1196,7 @@ export function useDrawingViewModel() {
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
-    editableAnnotationId, resizeRevisionCloud, updateAreaVertex,
+    editableAnnotationId, resizeRevisionCloud, updateAreaVertex, updateAreaTagPosition,
     polygonArea2DPoints, polygonArea2DResults, areaTags, areaTagRects, areaTagTemplates, selectedArea, updateSelectedAreaTag,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,

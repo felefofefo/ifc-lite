@@ -5,7 +5,7 @@
 import { patternSegments, surfacePatternSegments, type DrawingPolygon, type DXFHatchLayer, type Point2D } from '@ifc-lite/drawing-2d';
 
 export function drawPublicationCanvasFills(
-  ctx: CanvasRenderingContext2D, polygon: DrawingPolygon, paints: readonly DXFHatchLayer[],
+  ctx: CanvasRenderingContext2D, polygon: Pick<DrawingPolygon, 'polygon' | 'isCut' | 'cutOutline' | 'surfacePatternTransform'>, paints: readonly DXFHatchLayer[],
   map: (x: number, y: number) => Point2D, worldToTarget: number, mmToTarget: number, orientation = 1, regions?: readonly DrawingPolygon[],
 ) {
   if (!paints.length || polygon.polygon.outer.length < 3) return;

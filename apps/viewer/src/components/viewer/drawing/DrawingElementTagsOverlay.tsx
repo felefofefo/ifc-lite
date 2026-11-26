@@ -186,7 +186,9 @@ export function DrawingElementTags({ vm, cycleTarget }: { vm: DrawingViewModel; 
           stroke="#0d9488" strokeOpacity={0.85} strokeWidth={1.5} />)}
       </g>}
       {shown.map(item => paint(item, false))}
-      {tags.preview && paint(tags.preview, true)}
+      {tags.preview && <g opacity={tags.placing || tags.placingFree || (!draft && tags.active && !tags.draggingSelectedTag) ? 0.7 : 1}>
+        {paint(tags.preview, true)}
+      </g>}
       {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`}>
        <DrawingSnapGlyph kind={vm.snapKindFor(tags.snapReference ?? null)} />
       </g>}

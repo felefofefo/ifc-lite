@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import type { Drawing2D, Point2D } from '@ifc-lite/drawing-2d';
 import { isPlacedSymbol, symbolFitsView, symbolUse } from '@/lib/drawing/drawing-tag-library';
 import { createDrawingModelIndex } from '@/lib/drawing/drawing-model-pick';
+import { renderTagSvg } from '@/lib/drawing/drawing-tag-svg';
 import { gridFromPlan, projectGrid } from '@/lib/drawing/project-grids';
 import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind } from '@/lib/drawing/annotation-types';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
@@ -73,8 +74,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const use = template && symbolUse(template);
   const draftTemplate = draft && templates.find(item => item.id === draft.tag.templateId);
   const draftUse = draftTemplate && symbolUse(draftTemplate);
-  const freeTemplate = active && !draft && template && use && isPlacedSymbol(use) && symbolFitsView(use, axis)
+  const freeTemplate = active && !!view && !!drawing && !draft && template && use && isPlacedSymbol(use) && symbolFitsView(use, axis)
     ? template : undefined;
+  const ifcPicking = active && !!view && !!drawing && !draft && use === 'ifc';
   const plane = drawing?.config.plane;
   const cursorPoint = cursor?.point;
   const measurementKind = draft ? draftUse : freeTemplate && use;
@@ -178,8 +180,23 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
         ? targets.find(item => item.id === roomHoverId) : undefined)
     : undefined;
   const fields = useMemo(() => target ? tagFields(target) : [], [target, mutationVersion]);
+  const hoveredTarget = ifcPicking ? targets.find(item => item.id === roomHoverId) : undefined;
+  // The unplaced IFC symbol has no persistent identity or target yet. Use the
+  // same SVG renderer, with real values over an eligible target and placeholders elsewhere.
+  const previewIfc = useMemo(() => {
+    if (!ifcPicking || !template) return null;
+    const position = { x: 0, y: 0 };
+    const tag = freeSymbol('ifc-preview', template.id, position);
+    if (hoveredTarget) {
+      return resolveDrawingTag(tag, hoveredTarget, undefined, templates);
+    }
+    try {
+      const graphic = renderTagSvg(template.svg, new Map<string, string>());
+      return { tag, graphic, anchor: position, text: graphic.text || template.name };
+    } catch { return null; }
+  }, [ifcPicking, template, hoveredTarget, templates]);
   const resolvedDraft = useMemo(() => {
-    if (!draft) return previewFree;
+    if (!draft) return previewFree ?? previewIfc;
     if (draft.tag.free) {
       const tag = draft.tag;
       if (mode) return resolveSymbol({ ...tag, position: measuredPoint ?? tag.position, field: label ?? '—' });
@@ -190,7 +207,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       return resolveSymbol({ ...tag, position: cursorPoint, gridStart, field });
     }
     return target ? resolveDrawingTag(draft.tag, target, fields, templates) : null;
-  }, [draft, target, fields, templates, previewFree, placing, cursorPoint, draftUse, plane, mode, measuredPoint, label, overrideText, resolveSymbol]);
+  }, [draft, target, fields, templates, previewFree, previewIfc, placing, cursorPoint, draftUse, plane, mode, measuredPoint, label, overrideText, resolveSymbol]);
   const [dragPreviewTag, setDragPreviewTag] = useState<DrawingElementTag | null>(null);
   const draggedTarget = dragPreviewTag && !dragPreviewTag.free
     ? findTagTarget(targets, dragPreviewTag) : undefined;
@@ -198,9 +215,10 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     ? dragPreviewTag.free ? resolveSymbol(dragPreviewTag)
       : draggedTarget ? resolveDrawingTag(dragPreviewTag, draggedTarget, undefined, templates) : null
     : null;
-  const preview = dragPreview ?? (resolvedDraft && (placing || freeTemplate) && cursor
-    ? { ...resolvedDraft, tag: { ...resolvedDraft.tag, position: cursor.point } }
-    : freeTemplate ? null : resolvedDraft);
+  const followsCursor = placing || !!freeTemplate || ifcPicking;
+  const preview = dragPreview ?? (followsCursor
+    ? resolvedDraft && cursor ? { ...resolvedDraft, tag: { ...resolvedDraft.tag, position: cursor.point } } : null
+    : resolvedDraft);
 
   useEffect(() => {
     setSession(current => active && current?.viewId === view?.id ? current : null);
@@ -299,7 +317,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (!p) return null;
     const reference = placing || freeTemplate ? findSnapPoint(p) : null;
     const anchor = use === 'grid' && freeTemplate ? firstPoint
-      : placing && draft?.tag.leader && preview ? preview.anchor : null;
+      : placing && draft?.tag.leader && resolvedDraft ? resolvedDraft.anchor : null;
     return { point: resolveDirection(anchor, p, reference, e.shiftKey) ?? reference ?? p, reference };
   }
 
@@ -655,20 +673,18 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     click,
     move(e: MouseEvent) {
       if (!active) return false;
-      if (placing || freeTemplate) setCursor(placementPoint(e));
-      if (!draft && axis === 'down' && template && symbolUse(template) === 'ifc'
-        && template.classes.includes('IfcSpace') && e.buttons === 0
-        && (e.target as Element).tagName === 'CANVAS') {
-        const p = placementPoint(e)?.point;
-        const hit = p ? pickIfcTarget(p) : undefined;
-        // React skips updates when the pointer remains in the same room.
-        setRoomHoverId(hit?.ifcClass === 'IfcSpace' ? hit.id : undefined);
+      if (followsCursor) {
+        // Toolbars/inputs are not drawing surfaces. Never place a ghost over them.
+        const next = e.buttons === 0 && (e.target as Element).tagName === 'CANVAS' ? placementPoint(e) : null;
+        setCursor(next);
+        const hit = ifcPicking && next ? pickIfcTarget(next.point) : undefined;
+        setRoomHoverId(hit?.id);
       } else setRoomHoverId(undefined);
       return true;
     },
     leave() {
       setRoomHoverId(undefined);
-      if (freeTemplate) setCursor(null);
+      if (followsCursor) setCursor(null);
       else if (cursor?.reference) setCursor({ ...cursor, reference: null });
     },
     moveTag() {

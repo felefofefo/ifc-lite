@@ -346,8 +346,8 @@ export function resolveFreeSymbol(tag: DrawingElementTag, templates: readonly Ta
     const hideEnd = grid && style?.endSymbolId === '';
     return {
       tag, anchor: tag.gridStart ?? tag.position, hideEnd,
-      startGraphic: start && renderTagSvg(start.svg, values, undefined, style),
-      graphic: hideEnd ? undefined : renderTagSvg(end.svg, values, undefined, style),
+      startGraphic: start && renderTagSvg(start.svg, values),
+      graphic: hideEnd ? undefined : renderTagSvg(end.svg, values),
       style, lineWidth: style?.weight && weights?.[style.weight], text: label || template.name,
     };
   } catch {
@@ -367,7 +367,7 @@ export function resolveDrawingTag(
   if (svg) {
     const values = new Map<string, string>();
     fields = tagFields(target, values);
-    try { graphic = renderTagSvg(svg, values, undefined, style); } catch { /* Fall back to the original field. */ }
+    try { graphic = renderTagSvg(svg, values); } catch { /* Fall back to the original field. */ }
   }
   return {
     tag, graphic, style, text: graphic?.text || (fields ?? tagFields(target)).find(field => field.key === tag.field)?.value || '\u2014',
@@ -395,16 +395,17 @@ export function resolveAreaTag(area: PolygonArea2DResult, templates: readonly Ta
   const template = templates.find(item => item.id === area.tagTemplateId && isAreaTagTemplate(item));
   if (!template || area.points.length < 3 || !Number.isFinite(area.area) || area.area <= 0
     || !Number.isFinite(area.perimeter)) return undefined;
-  const position = computePolygonCentroid(area.points);
-  if (!isPoint(position)) return undefined;
+  const anchor = computePolygonCentroid(area.points);
+  const position = area.tagPosition ?? anchor;
+  if (!isPoint(position) || !isPoint(anchor)) return undefined;
   const values = areaTagValues(area);
   try {
     const graphic = renderTagSvg(template.svg, values);
     // Only a derived export/render item; not a persisted IFC entity tag.
     const tag: DrawingElementTag = { id: area.id, templateId: template.id,
       globalId: '', projectId: '', fingerprint: '', free: true, field: 'area',
-      position, anchorOffset: { x: 0, y: 0 }, leader: false };
-    return { tag, anchor: position, graphic, text: graphic.text || values.get('PlanArea') || '' };
+      position, anchorOffset: { x: 0, y: 0 }, leader: area.tagLeader === true };
+    return { tag, anchor, graphic, text: graphic.text || values.get('PlanArea') || '' };
   } catch { return undefined; }
 }
 
@@ -414,7 +415,8 @@ export function areaTagScreenRect(item: ResolvedDrawingTag, screen: (point: Poin
   if (!graphic || !(paperUnit > 0) || !Number.isFinite(paperUnit)) return undefined;
   const p = screen(item.tag.position);
   return { id: item.tag.id, href: graphic.href, x: p.x - graphic.anchor.x * paperUnit,
-    y: p.y - graphic.anchor.y * paperUnit, width: graphic.width * paperUnit, height: graphic.height * paperUnit };
+    y: p.y - graphic.anchor.y * paperUnit, width: graphic.width * paperUnit, height: graphic.height * paperUnit,
+    leader: item.tag.leader ? { start: screen(item.anchor), end: p } : undefined };
 }
 
 const tagHeight = 2.5;

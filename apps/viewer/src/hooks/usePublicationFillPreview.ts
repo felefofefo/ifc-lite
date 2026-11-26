@@ -48,7 +48,7 @@ export function usePublicationFillPreview(retainNativeCaps = false, surface3D = 
       getElementProperties: properties, darkPaper,
     };
     return {
-      scale, distant,
+      scale, distant, patterns,
       fallbackStyle: (polygon: Parameters<typeof resolveCutPolygonStyle>[0]) =>
         resolveCutPolygonStyle(polygon, context),
       resolve: enabled ? drawingPublicationHatchStyle(hatches, scale, models, legacyStore, overrides ? context.overrideEngine.getRules() : [],

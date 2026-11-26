@@ -119,18 +119,22 @@ export function useMeasure2D({
 
   useEffect(() => { previousSnap.current = null; }, [snapSource, snapProfile, drawingKey, sectionAxis]);
 
-  const findSnapPoint = useCallback((cursor: Point2D): Point2D | null => {
+  const findSnapPoint = useCallback((cursor: Point2D, referenceVertices?: readonly Vec2[]): Point2D | null => {
     if (!snapSource || !(viewTransform.scale > 0) || !Number.isFinite(viewTransform.scale) || snapProfile.tiers.length === 0) {
       previousSnap.current = null;
       return null;
     }
+    // Keep reference points separate from IFC linework: only the Move command
+    // supplies them, and the existing Endpoint switch controls their availability.
+    const sources = referenceVertices?.length && objectSnaps.endpoint
+      ? [snapSource, createLineworkSource({ vertices: referenceVertices })] : [snapSource];
     const result = solveSnap({
       cursor: [cursor.x, cursor.y], metresPerPixel: 1 / viewTransform.scale,
       anchor: null, chain: [], modifiers: { shift: false, alt: false }, locks: {},
-    }, [snapSource], snapProfile, previousSnap.current ?? undefined);
+    }, sources, snapProfile, previousSnap.current ?? undefined);
     previousSnap.current = result.winner ? result : null;
     return result.winner ? { x: result.local[0], y: result.local[1] } : null;
-  }, [snapSource, snapProfile, viewTransform.scale]);
+  }, [snapSource, snapProfile, viewTransform.scale, objectSnaps.endpoint]);
 
   // UI-only metadata: never attach a snap kind to a Point2D persisted in the project.
   const snapKindFor = useCallback((point: Point2D | null) => {

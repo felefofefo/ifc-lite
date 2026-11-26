@@ -53,6 +53,9 @@ export interface PolygonArea2DResult {
   /** Optional IFC Space SVG template reused for this authored area. */
   tagTemplateId?: string;
   tagName?: string;
+  /** Manual label anchor in drawing coordinates; unset follows the polygon center. */
+  tagPosition?: Point2D;
+  tagLeader?: boolean;
   appearanceId?: string;
   appearance?: AnnotationSymbolStyle;
   viewKey?: string;
@@ -866,7 +869,8 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
         const dx = newOrigin.x - result.points[0].x;
         const dy = newOrigin.y - result.points[0].y;
         set({ polygonArea2DResults: state.polygonArea2DResults.map((r) =>
-          r.id === sel.id ? { ...r, points: r.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : r
+          r.id === sel.id ? { ...r, points: r.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+            ...(r.tagPosition && { tagPosition: { x: r.tagPosition.x + dx, y: r.tagPosition.y + dy } }) } : r
         ) });
         break;
       }

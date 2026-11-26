@@ -2,7 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { LINEWEIGHT_PRESETS } from './lineweight-table';
+import { LINEWEIGHT_PRESETS, type LineweightRow } from './lineweight-table';
+import { LINE_STYLE_PRESET_DASHES, type LineStylePreset, type DXFHatchLayer } from '@ifc-lite/drawing-2d';
+import { isMaterialHatchPattern, type HatchPaints } from './material-hatches';
+import { patternRepeatScale, type ImportedPattern } from './pattern-library';
 
 export const ANNOTATION_STYLE_KINDS = ['grid', 'level', 'spotElevation', 'slope', 'area', 'text', 'cloud'] as const;
 export type AnnotationStyleKind = typeof ANNOTATION_STYLE_KINDS[number];
@@ -19,7 +22,61 @@ export type AnnotationSymbolStyle = {
   startSymbolId?: string;
   endSymbolId?: string;
   weight?: typeof LINEWEIGHT_PRESETS[number];
+  boundaryPattern?: LineStylePreset;
+  areaFill?: HatchPaints;
 };
+
+export const AREA_BOUNDARY_PATTERNS = ['solid', 'dashed', 'dotted', 'dashdot', 'center'] as const satisfies readonly LineStylePreset[];
+
+export function areaBoundaryStyle(style?: AnnotationSymbolStyle, weights?: LineweightRow) {
+  const pattern = style?.boundaryPattern;
+  return {
+    color: style?.color ?? '#2196F3',
+    weight: style?.weight ? weights?.[style.weight] ?? 0.3 : 0.3,
+    dash: pattern && AREA_BOUNDARY_PATTERNS.includes(pattern) ? LINE_STYLE_PRESET_DASHES[pattern] : [1, 0.5],
+  };
+}
+
+/** No explicit background preserves the legacy translucent area fill. */
+export function areaHasLegacyBackground(style?: AnnotationSymbolStyle): boolean {
+  return !style?.areaFill?.background?.pattern && !style?.areaFill?.background?.color;
+}
+
+/** The same world/paper convention as drawingPublicationHatchStyle. */
+export function areaHatchLayers(style: AnnotationSymbolStyle | undefined, scale: number,
+  patterns: readonly ImportedPattern[] = []): DXFHatchLayer[] {
+  if (!Number.isFinite(scale) || scale <= 0) return [];
+  const paints = style?.areaFill;
+  if (!paints) return [];
+  return (['background', 'foreground'] as const).flatMap<DXFHatchLayer>(side => {
+    const paint = paints[side];
+    if (!paint) return [];
+    const pattern = paint.pattern ?? (side === 'background' && paint.color ? 'solid' : undefined);
+    if (!pattern || pattern === 'none') return [];
+    const base = { color: paint.color ?? '#666666', spacing: 2.5 * scale / 1000, lineWeight: 0.13 };
+    if (pattern === 'solid' || pattern === 'diagonal' || pattern === 'cross-hatch') {
+      return side === 'background' && pattern !== 'solid' ? [] : [{ ...base, pattern }];
+    }
+    if (side === 'background') return [];
+    const definition = patterns.find(item => item.id === pattern);
+    return definition ? [{ ...base, pattern: 'custom', spacing: patternRepeatScale(definition) * scale / 1000,
+      families: definition.lines, patternKey: definition.id }] : [];
+  });
+}
+
+function validAreaFill(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const paints = value as HatchPaints;
+  return (['background', 'foreground'] as const).every(side => {
+    const paint = paints[side];
+    if (paint === undefined) return true;
+    if (!paint || typeof paint !== 'object' || Array.isArray(paint)) return false;
+    return (paint.color === undefined || (typeof paint.color === 'string' && /^#[0-9a-f]{6}$/i.test(paint.color)))
+      && (paint.pattern === undefined || (side === 'background'
+        ? paint.pattern === 'solid' || paint.pattern === 'none'
+        : isMaterialHatchPattern(paint.pattern)));
+  });
+}
 
 /** Match the drawing's zoom and paper height (mm). The 2.5 mm default also
  * matches the SVG, DXF and PDF exports when no text style is assigned. */
@@ -120,7 +177,9 @@ export function validAnnotationStyles(styles: unknown): boolean {
       && (item.unit === undefined || units.includes(item.unit))
       && (item.color === undefined || (typeof item.color === 'string' && /^#[0-9a-f]{6}$/i.test(item.color)))
       && [item.startSymbolId, item.endSymbolId].every(id => id === undefined || (typeof id === 'string' && id.length < 200))
-      && (item.weight === undefined || LINEWEIGHT_PRESETS.includes(item.weight));
+      && (item.weight === undefined || LINEWEIGHT_PRESETS.includes(item.weight))
+      && (item.boundaryPattern === undefined || (kind === 'area' && AREA_BOUNDARY_PATTERNS.includes(item.boundaryPattern)))
+      && (item.areaFill === undefined || (kind === 'area' && validAreaFill(item.areaFill)));
   });
 }
 

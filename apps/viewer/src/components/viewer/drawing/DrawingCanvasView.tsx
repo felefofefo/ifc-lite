@@ -162,18 +162,22 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               <feComposite in="highlight" in2="SourceAlpha" operator="in" />
             </filter>)}
           </defs>
-          {vm.areaTagRects.map(({ id, href, x, y, width, height }) => {
+          {vm.areaTagRects.map(({ id, href, x, y, width, height, leader }) => {
             const selected = vm.selectedAnnotation2D?.type === 'polygon' && vm.selectedAnnotation2D.id === id
               || vm.windowAnnotations.some(item => item.type === 'polygon' && item.id === id);
             const hovered = !placement && selection.annotationHover?.type === 'polygon' && selection.annotationHover.id === id;
-            return <image key={id} href={href} x={x} y={y} width={width} height={height}
-              filter={selected || hovered ? `url(#${areaTagFilterId}-${selected ? 'selected' : 'hover'})` : undefined} />;
+            return <g key={id} className={selected || hovered ? 'text-primary' : 'text-foreground'}>
+              {leader && <line x1={leader.start.x} y1={leader.start.y} x2={leader.end.x} y2={leader.end.y}
+                stroke="currentColor" strokeOpacity={hovered && !selected ? 0.55 : 1} strokeWidth={selected ? 1.5 : 1} />}
+              <image href={href} x={x} y={y} width={width} height={height}
+                filter={selected || hovered ? `url(#${areaTagFilterId}-${selected ? 'selected' : 'hover'})` : undefined} />
+            </g>;
           })}
         </svg>}
       {status === 'ready' && selection.overlay}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'polygon'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
-        && <AreaVertexHandles vm={vm} id={vm.editableAnnotationId} />}
+        && <AreaVertexHandles key={vm.editableAnnotationId} vm={vm} id={vm.editableAnnotationId} />}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'cloud'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
         && <CloudResizeHandles vm={vm} id={vm.editableAnnotationId} />}
@@ -227,9 +231,16 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
                 {vm.areaTagTemplates.map(template => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            {vm.selectedArea.tagTemplateId && <Input className="h-7 w-32 text-xs" aria-label="Area name"
+            {vm.selectedArea.tagTemplateId && vm.editableAnnotationId === vm.selectedArea.id
+              && <Input className="h-7 w-32 text-xs" aria-label="Area name"
               placeholder="Area name" maxLength={200} value={vm.selectedArea.tagName ?? ''}
               onChange={event => vm.updateSelectedAreaTag({ tagName: event.target.value })} />}
+            {vm.selectedArea.tagTemplateId && vm.editableAnnotationId === vm.selectedArea.id &&
+              <label className="flex shrink-0 items-center gap-1 px-1">
+                <input type="checkbox" checked={vm.selectedArea.tagLeader === true}
+                  onChange={event => vm.updateSelectedAreaTag({ tagLeader: event.currentTarget.checked })} />
+                {t('section2d.tags.leader')}
+              </label>}
           </>}
           {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
@@ -247,6 +258,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           : markupTransform.scale * (vm.publicationScale || 100) / 1000;
         return (
           <TextAnnotationEditor
+            key={editingAnnotation.id}
             annotation={editingAnnotation}
             fontSize={textAnnotationScreenSize(editingAnnotation, paperUnit)}
             screenX={editingAnnotation.position.x * scaleX + markupTransform.x}
@@ -331,6 +343,7 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
     vm.updateAreaVertex(id,index,point);
   }
   return <svg aria-label="Edit area vertices" className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
+    <AreaTagMoveHandle vm={vm} id={id} />
     {area.points.map((point,index) => {
       const at=toScreen(point);
       return <circle key={index} cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)"
@@ -367,6 +380,64 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
     })}
     {feedback && <g transform={`translate(${toScreen(feedback.point).x} ${toScreen(feedback.point).y})`}><DrawingSnapGlyph kind={feedback.kind} /></g>}
   </svg>;
+}
+
+/** Drag only the Area's label. Commit once on release, keeping polygon geometry untouched. */
+function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
+  const drag = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const [delta, setDelta] = useState<{ x: number; y: number } | null>(null);
+  const rect = vm.areaTagRects.find(item => item.id === id);
+  const position = vm.areaTags.find(item => item.tag.id === id)?.tag.position;
+  const scale = vm.markupTransform.scale;
+  if (!rect || !position || !(scale > 0)) return null;
+  const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
+  const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
+  const move = (dx: number, dy: number) => {
+    if (dx || dy) vm.updateAreaTagPosition(id, { x: position.x + dx / sx, y: position.y + dy / sy });
+  };
+  const clear = () => { drag.current = null; setDelta(null); };
+  return <g>
+    {delta && rect.leader && <line x1={rect.leader.start.x} y1={rect.leader.start.y}
+      x2={rect.leader.end.x + delta.x} y2={rect.leader.end.y + delta.y} stroke="currentColor" strokeWidth={1.5} />}
+    {delta && <image href={rect.href} x={rect.x + delta.x} y={rect.y + delta.y}
+      width={rect.width} height={rect.height} opacity={0.8} />}
+    <rect x={rect.x + (delta?.x ?? 0)} y={rect.y + (delta?.y ?? 0)} width={rect.width} height={rect.height}
+      fill="transparent" stroke="currentColor" strokeWidth={1} strokeDasharray="4 3"
+      className="pointer-events-auto cursor-move touch-none" role="button" tabIndex={0}
+      aria-label="Move area tag"
+      onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}
+      onKeyDown={event => {
+        const dx = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        const dy = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+        if (!dx && !dy) return;
+        event.preventDefault(); event.stopPropagation();
+        const step = event.shiftKey ? 10 : 1;
+        move(dx * step, dy * step);
+      }}
+      onPointerDown={event => {
+        if (event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation();
+        drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => {
+        const start = drag.current;
+        if (!start || start.pointerId !== event.pointerId) return;
+        event.stopPropagation();
+        setDelta({ x: event.clientX - start.x, y: event.clientY - start.y });
+      }}
+      onPointerUp={event => {
+        const start = drag.current;
+        if (!start || start.pointerId !== event.pointerId) return;
+        event.stopPropagation();
+        const dx = event.clientX - start.x, dy = event.clientY - start.y;
+        clear();
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        move(dx, dy);
+      }}
+      onPointerCancel={event => { if (drag.current?.pointerId === event.pointerId) clear(); }}
+      onLostPointerCapture={clear} />
+  </g>;
 }
 
 /** Edit a revision cloud by dragging its corners; Move remains a separate command. */
