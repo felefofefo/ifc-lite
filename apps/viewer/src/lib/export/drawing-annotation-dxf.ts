@@ -5,7 +5,6 @@
 /** Export drawing markups as native DXF TEXT and closed polylines, in model metres. */
 import type { DXFExportOptions, DXFPolylineLayer, Point2D } from '@ifc-lite/drawing-2d';
 import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
-import { computePolygonCentroid, formatArea } from '@/components/viewer/tools/computePolygonArea';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
 import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
@@ -32,11 +31,6 @@ export function drawingAnnotationDxf(
     polylineLayers.push({
       name: 'ROVE-AREAS', color, closed: true, lineWeight: 0.3,
       dash: [mm(1), mm(0.5)], polylines: [area.points],
-    });
-    labels.push({
-      layer: 'ROVE-AREAS', color: '#000000', text: formatArea(area.area),
-      position: computePolygonCentroid(area.points), height: mm(area.appearance?.textHeight ?? 3),
-      hAlign: 'center', vAlign: 'middle',
     });
   }
 

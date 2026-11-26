@@ -119,7 +119,7 @@ export function useDrawingLayers(vm: DrawingViewModel) {
     entityColorMap: vm.entityColorMap, overridesEnabled: vm.overridesEnabled, overrideEngine: vm.overrideEngine,
     dimensionStyles: vm.dimensionSettings.styles,
     measure2DResults: drawingAnnotationVisible(annotationView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)) : [], polygonArea2DResults: vm.styledAreas,
-    elementTags: displayOptions.showAnnotations ? vm.tags.items : [],
+    elementTags: displayOptions.showAnnotations ? [...vm.tags.items, ...vm.areaTags] : [],
     textAnnotations2D: vm.styledNotes, cloudAnnotations2D: vm.styledClouds,
     sheetEnabled: vm.sheetEnabled, activeSheet: vm.activeSheet, dxfUnderlays: dxfUnderlayData,
     ifcDataStore, coordinateInfo: geometryResult?.coordinateInfo,

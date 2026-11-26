@@ -8,8 +8,6 @@ import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 import { DEFAULT_DIMENSION_STYLE, resolveDimensionStyle, styledDimension } from '@/lib/drawing/dimension-style';
 import { mapDimensionShape } from '@/lib/drawing/dimension-line';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
-import { computePolygonCentroid, formatArea } from '@/components/viewer/tools/computePolygonArea';
-import { formatDistance } from '@/components/viewer/tools/formatDistance';
 import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
@@ -111,15 +109,10 @@ export function selectDrawingAnnotations(vm: DrawingViewModel, a: Point2D, b: Po
   }
   for (const area of vm.styledAreas) {
     if (area.points.length < 3) continue;
-    const center = screen(computePolygonCentroid(area.points));
-    const font = area.appearance?.font ?? 'system-ui, sans-serif';
-    const size = area.appearance?.textHeight ? area.appearance.textHeight * paperUnit : 12;
-    const areaText = formatArea(area.area), perimeter = `P: ${formatDistance(area.perimeter, vm.unitDisplayOverrides)}`;
-    const w = Math.max(measure(areaText, `bold ${size}px ${font}`) ?? areaText.length * size * 0.6,
-      measure(perimeter, `${size * 5 / 6}px ${font}`) ?? perimeter.length * size * 0.5) + 12;
-    const h = Math.max(32, size * 2 + 8);
-    add('polygon', area.id, [{ points: area.points.map(screen), closed: true, filled: true },
-      rectangle(center.x - w / 2, center.y - h / 2, w, h)]);
+    const shapes: Shape[] = [{ points: area.points.map(screen), closed: true, filled: true }];
+    const tag = vm.areaTagRects.find(item => item.id === area.id);
+    if (tag) shapes.push(rectangle(tag.x, tag.y, tag.width, tag.height));
+    add('polygon', area.id, shapes);
   }
   for (const cloud of vm.styledClouds) {
     if (cloud.points.length < 2) continue;

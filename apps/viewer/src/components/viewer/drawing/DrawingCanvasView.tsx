@@ -12,7 +12,8 @@ import { Spinner } from '@/components/ui/spinner';
 
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
+import { Input } from '@/components/ui/input';
 import { createLineworkSource } from '@/lib/snap/sources/linework';
 import { solveSnap } from '@/lib/snap/solve';
 import type { SnapKind, SnapProfile, SnapResult } from '@/lib/snap/types';
@@ -36,6 +37,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
 }) {
   const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
   const fillPreview = usePublicationFillPreview();
+  const areaTagFilterId = useId().replace(/:/g, '');
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
   const selection = useDrawingModelSelection(vm,
@@ -151,6 +153,23 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
             ).join(' ')} />
           ))}
         </svg>}
+      {status === 'ready' && displayOptions.showAnnotations && vm.areaTagRects.length > 0 &&
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+          <defs className="text-primary">
+            {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${areaTagFilterId}-${state}`} colorInterpolationFilters="sRGB">
+              <feFlood floodColor="currentColor" floodOpacity={state === 'hover' ? 0.55 : 1} result="tint" />
+              <feBlend in="SourceGraphic" in2="tint" mode="screen" result="highlight" />
+              <feComposite in="highlight" in2="SourceAlpha" operator="in" />
+            </filter>)}
+          </defs>
+          {vm.areaTagRects.map(({ id, href, x, y, width, height }) => {
+            const selected = vm.selectedAnnotation2D?.type === 'polygon' && vm.selectedAnnotation2D.id === id
+              || vm.windowAnnotations.some(item => item.type === 'polygon' && item.id === id);
+            const hovered = !placement && selection.annotationHover?.type === 'polygon' && selection.annotationHover.id === id;
+            return <image key={id} href={href} x={x} y={y} width={width} height={height}
+              filter={selected || hovered ? `url(#${areaTagFilterId}-${selected ? 'selected' : 'hover'})` : undefined} />;
+          })}
+        </svg>}
       {status === 'ready' && selection.overlay}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'polygon'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
@@ -197,6 +216,21 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               {vm.selectedAnnotationStyle.choices.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
             </SelectContent>
           </Select>}
+          {vm.selectedArea && <>
+            <Select value={vm.selectedArea.tagTemplateId ?? '__no_area_tag__'}
+              onValueChange={id => vm.updateSelectedAreaTag({ tagTemplateId: id === '__no_area_tag__' ? undefined : id })}>
+              <SelectTrigger className="h-7 w-36 text-xs" aria-label="Area tag"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__no_area_tag__">No area tag</SelectItem>
+                {vm.selectedArea.tagTemplateId && !vm.areaTagTemplates.some(item => item.id === vm.selectedArea?.tagTemplateId)
+                  && <SelectItem value={vm.selectedArea.tagTemplateId} disabled>Missing tag template</SelectItem>}
+                {vm.areaTagTemplates.map(template => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {vm.selectedArea.tagTemplateId && <Input className="h-7 w-32 text-xs" aria-label="Area name"
+              placeholder="Area name" maxLength={200} value={vm.selectedArea.tagName ?? ''}
+              onChange={event => vm.updateSelectedAreaTag({ tagName: event.target.value })} />}
+          </>}
           {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
             onClick={vm.editSelectedAnnotation}>{t('section2d.tools.edit')}</Button>}

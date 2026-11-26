@@ -20,7 +20,8 @@
 
 import { useEffect, useMemo } from 'react';
 import type { GeometryResult } from '@ifc-lite/geometry';
-import { useViewerStore } from '@/store';
+import { resolveEntityRef, useViewerStore } from '@/store';
+import { makePropertiesGetter } from '@/hooks/drawingElementProperties';
 import { drawingProjectId } from '@/lib/drawing/drawing-project';
 import { selectActiveSavedView, setSavedViewsProject, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { useIfc } from '@/hooks/useIfc';
@@ -88,19 +89,30 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
   const isolatedEntities = useViewerStore((s) => s.isolatedEntities);
   const viewFilter = useDrawingViewFilter();
   const filterMode = viewFilter?.mode, filterIds = viewFilter?.ids;
-  const drawingHidden = useMemo(() => {
-    const visibility = graphicRules.filter(rule => rule.style.visible !== undefined);
-    if (!visibility.length && !(filterMode === 'hide' && filterIds)) return hiddenEntities;
+  // A Show rule may opt an IFC Space into a 2D drawing even when the
+  // global Spaces switch is off. Inherit is NOT an explicit Show. Never
+  // bypass an individual hide, the view filter or any isolation channel.
+  const { drawingHidden, explicitlyVisibleSpaces } = useMemo(() => {
+    const visibility = graphicRules.filter(rule => rule.enabled && rule.style.visible !== undefined);
+    const shown = new Set<number>();
+    if (!visibility.length && !(filterMode === 'hide' && filterIds))
+      return { drawingHidden: hiddenEntities, explicitlyVisibleSpaces: shown };
     const hidden = new Set([...hiddenEntities, ...(filterMode === 'hide' && filterIds ? filterIds : [])]);
     const engine = new GraphicOverrideEngine(visibility);
+    const getProperties = makePropertiesGetter(models, ifcDataStore);
     const seen = new Set<number>();
     for (const mesh of geometryResult?.meshes ?? []) {
       if (seen.has(mesh.expressId)) continue;
       seen.add(mesh.expressId);
-      if (!engine.applyOverrides({ expressId: mesh.expressId, ifcType: mesh.ifcType ?? '' }).style.visible) hidden.add(mesh.expressId);
+      const ifcType = mesh.ifcType ?? '';
+      const isSpace = ifcType.toLowerCase() === 'ifcspace';
+      const result = engine.applyOverrides({ expressId: mesh.expressId, ifcType,
+        ...(isSpace ? { modelId: resolveEntityRef(mesh.expressId).modelId, properties: getProperties(mesh.expressId) } : {}) });
+      if (!result.style.visible) hidden.add(mesh.expressId);
+      else if (!saved3D && isSpace && result.matchedRules.some(rule => rule.style.visible === true)) shown.add(mesh.expressId);
     }
-    return hidden;
-  }, [hiddenEntities, filterMode, filterIds, graphicRules, geometryResult]);
+    return { drawingHidden: hidden, explicitlyVisibleSpaces: shown };
+  }, [hiddenEntities, filterMode, filterIds, graphicRules, geometryResult, models, ifcDataStore, saved3D]);
   const drawingIsolated = useMemo(() => filterMode === 'show' && filterIds
     ? isolatedEntities === null ? filterIds : new Set([...filterIds].filter(id => isolatedEntities.has(id)))
     : isolatedEntities, [filterMode, filterIds, isolatedEntities]);
@@ -115,7 +127,7 @@ export function DrawingRuntimeHost({ mergedGeometry, computedIsolatedIds }: Draw
     showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth,
   }), [showHiddenLines, useSymbolicRepresentations, show3DOverlay, scale, showConstructionProjection, showOverheadProjection, constructionProjectionDepth]);
   const { generateDrawing, isRegenerating } = useDrawingGeneration({
-    geometryResult, ifcDataStore, sectionPlane, displayOptions: generationOptions, typeVisibility, includeProjectionPolygons,
+    geometryResult, ifcDataStore, sectionPlane, displayOptions: generationOptions, typeVisibility, includeProjectionPolygons, explicitlyVisibleSpaces,
     // Both sets hold global ids, so they cover every federated model.
     combinedHiddenIds: drawingHidden, combinedIsolatedIds: drawingIsolated, computedIsolatedIds,
     models, panelVisible, activeTool, saved3D: saved3D && sectionPlane.enabled && !sectionPlane.box, drawing: sourceDrawing,

@@ -23,7 +23,6 @@ import {
 } from '@ifc-lite/drawing-2d';
 import type { DrawingLine2D } from '@ifc-lite/renderer';
 import { formatDistance } from './tools/formatDistance';
-import { formatArea, computePolygonCentroid } from './tools/computePolygonArea';
 import { drawCloudOnCanvas } from './tools/cloudPathGenerator';
 import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D, Annotation2DTool, Measure2DResult, Point2D, SelectedAnnotation2D } from '@/store/slices/drawing2DSlice';
 import type { DxfUnderlayRenderData } from '@/hooks/useDxfUnderlay';
@@ -1402,36 +1401,7 @@ export function Drawing2DCanvas({
         ctx.fill();
       }
 
-      // Draw area label at centroid
-      const centroid = computePolygonCentroid(result.points);
-      const cx = drawingToScreenX(centroid.x);
-      const cy = drawingToScreenY(centroid.y);
-      const labelFont = result.appearance?.font ?? 'system-ui, sans-serif';
-      const labelSize = result.appearance?.textHeight ? result.appearance.textHeight * paperUnit : 12;
-      const areaText = formatArea(result.area);
-      const perimText = `P: ${formatDistance(result.perimeter, unitDisplayOverrides)}`;
 
-      ctx.font = `bold ${labelSize}px ${labelFont}`;
-      const areaMetrics = ctx.measureText(areaText);
-      ctx.font = `${labelSize * 5 / 6}px ${labelFont}`;
-      const perimMetrics = ctx.measureText(perimText);
-      const labelW = Math.max(areaMetrics.width, perimMetrics.width) + 12;
-      const labelH = Math.max(32, labelSize * 2 + 8);
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
-      ctx.fillRect(cx - labelW / 2, cy - labelH / 2, labelW, labelH);
-      ctx.strokeStyle = result.appearance?.color ?? '#2196F3';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(cx - labelW / 2, cy - labelH / 2, labelW, labelH);
-
-      ctx.fillStyle = '#000000';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = `bold ${labelSize}px ${labelFont}`;
-      ctx.fillText(areaText, cx, cy - labelSize / 2);
-      ctx.font = `${labelSize * 5 / 6}px ${labelFont}`;
-      ctx.fillStyle = '#666666';
-      ctx.fillText(perimText, cx, cy + labelSize * 2 / 3);
     }
 
     // Draw in-progress polygon

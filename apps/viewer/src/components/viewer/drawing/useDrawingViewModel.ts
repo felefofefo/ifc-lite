@@ -25,7 +25,7 @@ import { isTextEntryElement } from '@/lib/keyboard-event';
 import { registerKeyboardCommand } from '@/lib/commands/dispatcher';
 import { arrangeDrawingItems, type DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
 import { useTranslation } from '@/i18n';
-import { readDrawingTags, collectTagTargets, findTagTarget, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
+import { readDrawingTags, collectTagTargets, findTagTarget, isAreaTagTemplate, resolveAreaTag, areaTagScreenRect, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 import { moveProjectGrid } from '@/lib/drawing/project-grids';
 import { collectViewMarkers, DEFAULT_VIEW_MARKERS } from '@/lib/drawing/view-markers';
 import type { DistantElements } from '@/lib/drawing/distant-elements';
@@ -122,7 +122,7 @@ export function useDrawingViewModel() {
   const savedView = useSavedSectionCuts(selectActiveSavedView);
   const projectGrids = useSavedSectionCuts(state => state.grids);
   const drawingProjectId = useSavedSectionCuts(state => state.projectId);
-  const { annotationStyles, defaultAnnotationStyles } = useSavedSectionCuts(state => state.tagLibrary);
+  const { annotationStyles, defaultAnnotationStyles, templates: tagTemplates } = useSavedSectionCuts(state => state.tagLibrary);
   const drawingPlaneId = useSavedSectionCuts(s => s.drawingPlaneId);
   const saved3D = savedView?.kind === '3d' ? savedView : undefined;
   const publicationScale = saved3D ? saved3D.publicationScale ?? displayOptions.scale
@@ -314,11 +314,26 @@ export function useDrawingViewModel() {
 
   // Hit-testing and canvas painting use the same styled, visible text annotations.
   const styledNotes = styledMarkup('text', textAnnotations2D);
+  const styledAreas = styledMarkup('area', polygonArea2DResults);
+  const areaTagTemplates = useMemo(() => tagTemplates.filter(isAreaTagTemplate), [tagTemplates]);
+  const areaTags = useMemo(() => {
+    if (!displayOptions.showAnnotations || status !== 'ready' || saved3D) return [];
+    return polygonArea2DResults.flatMap(area => {
+      const styleId = viewAnnotationOptions?.styleIds?.area ?? area.appearanceId;
+      if (!drawingAnnotationVisible(annotationView, 'area', styleId)) return [];
+      const item = resolveAreaTag(area, areaTagTemplates);
+      return item ? [item] : [];
+    });
+  }, [polygonArea2DResults, areaTagTemplates, displayOptions.showAnnotations, status, saved3D, annotationView, viewAnnotationOptions]);
   const textPaperUnit = sheetEnabled && activeSheet ? viewTransform.scale
     : markupTransform.scale * (publicationScale || 100) / 1000;
+  const areaTagRects = areaTags.flatMap(item => {
+    const rect = areaTagScreenRect(item, tags.screen, textPaperUnit);
+    return rect ? [rect] : [];
+  });
   const annotationHandlers = useAnnotation2D({
     drawing, viewTransform: markupTransform, sectionAxis: drawnPlane.axis, containerRef,
-    paperUnit: textPaperUnit,
+    paperUnit: textPaperUnit, areaTagRects,
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
     polygonArea2DPoints, addPolygonArea2DPoint,
     areaEndpointSnaps: objectSnaps.endpoint,
@@ -327,7 +342,7 @@ export function useDrawingViewModel() {
     addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey, appearanceId: defaultAnnotationStyles?.text }); }, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint,
     completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey, defaultAnnotationStyles?.cloud); }, cancelCloudAnnotation2D,
-    measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? polygonArea2DResults : [],
+    measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? styledAreas : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
     selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D, moveAnnotation2D,
     snapForDrag: measureHandlers.findSnapPoint, angularSnap,
@@ -986,6 +1001,15 @@ export function useDrawingViewModel() {
       ...(selection.type === 'cloud' && { cloudAnnotations2D: state.cloudAnnotations2D.map(item => item.id === selection.id ? { ...item, appearanceId } : item) }),
     }));
   }
+  const selectedArea = selectedAnnotation2D?.type === 'polygon'
+    ? polygonArea2DResults.find(item => item.id === selectedAnnotation2D.id) : undefined;
+  function updateSelectedAreaTag(patch: { tagTemplateId?: string; tagName?: string }) {
+    if (!selectedArea || !viewKey) return;
+    if (patch.tagTemplateId !== undefined && !areaTagTemplates.some(template => template.id === patch.tagTemplateId)) return;
+    if (patch.tagName !== undefined && patch.tagName.length > 200) return;
+    useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item =>
+      item.id === selectedArea.id && item.viewKey === viewKey ? { ...item, ...patch } : item) }));
+  }
   function editSelectedAnnotation() {
     if (!selectedAnnotation2D) return;
     setEditableAnnotationId(selectedAnnotation2D.id);
@@ -1050,7 +1074,6 @@ export function useDrawingViewModel() {
       return [appearance ? { ...item, appearance } : item];
     });
   }
-  const styledAreas = styledMarkup('area', polygonArea2DResults);
   const styledClouds = styledMarkup('cloud', cloudAnnotations2D);
 
   return {
@@ -1099,7 +1122,7 @@ export function useDrawingViewModel() {
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
     editableAnnotationId, resizeRevisionCloud, updateAreaVertex,
-    polygonArea2DPoints, polygonArea2DResults,
+    polygonArea2DPoints, polygonArea2DResults, areaTags, areaTagRects, areaTagTemplates, selectedArea, updateSelectedAreaTag,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
     cloudAnnotation2DPoints, cloudAnnotations2D,
     windowAnnotations, windowCanvasAnnotations, selectWindowAnnotations, clearWindowAnnotations,

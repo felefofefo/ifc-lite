@@ -35,7 +35,7 @@ import type {
   Point2D, TextAnnotation2D, SelectedAnnotation2D,
   Measure2DResult, PolygonArea2DResult, CloudAnnotation2D,
 } from '@/store/slices/drawing2DSlice';
-import { computePolygonCentroid } from '@/components/viewer/tools/computePolygonArea';
+import { insideRing } from '@/lib/drawing/drawing-model-pick';
 import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
 
 /** Nearest point on segment a-b to p, in drawing coordinates. */
@@ -81,6 +81,7 @@ export interface HitTestAnnotationsParams {
   polys: PolygonArea2DResult[];
   measures: Measure2DResult[];
   paperUnit?: number;
+  areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number }[];
   measureText?: (text: string, font: string) => number | undefined;
 }
 
@@ -92,7 +93,7 @@ interface PaddedCandidate {
 
 export function hitTestAnnotations({
   screenX, screenY, threshold, drawingToScreen, texts, clouds, polys, measures,
-  paperUnit = 1, measureText,
+  paperUnit = 1, measureText, areaTagRects = [],
 }: HitTestAnnotationsParams): SelectedAnnotation2D | null {
   // ── Pass 1: genuine hits, reverse paint order (topmost wins) ───────────
   // Paint order: measure -> polygon -> text -> cloud, so the reverse
@@ -123,12 +124,15 @@ export function hitTestAnnotations({
     }
   }
 
+  for (let i = areaTagRects.length - 1; i >= 0; i--) {
+    const rect = areaTagRects[i];
+    if (screenX >= rect.x && screenX <= rect.x + rect.width
+      && screenY >= rect.y && screenY <= rect.y + rect.height
+      && polys.some(area => area.id === rect.id)) return { type: 'polygon', id: rect.id };
+  }
   for (let i = polys.length - 1; i >= 0; i--) {
     const result = polys[i];
-    if (result.points.length < 3) continue;
-    const centroid = computePolygonCentroid(result.points);
-    const sc = drawingToScreen(centroid);
-    if (Math.abs(screenX - sc.x) < 40 && Math.abs(screenY - sc.y) < 20) {
+    if (result.points.length >= 3 && insideRing({ x: screenX, y: screenY }, result.points.map(drawingToScreen))) {
       return { type: 'polygon', id: result.id };
     }
   }

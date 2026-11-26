@@ -166,6 +166,8 @@ function isPolygonArea2DResult(v: unknown): v is PolygonArea2DResult {
     typeof r.id === 'string' && r.id.length > 0 &&
     (r.viewKey === undefined || typeof r.viewKey === 'string') &&
     isPoint2DArray(r.points) && r.points.length >= 3 &&
+    (r.tagTemplateId === undefined || (typeof r.tagTemplateId === 'string' && r.tagTemplateId.length > 0)) &&
+    (r.tagName === undefined || (typeof r.tagName === 'string' && r.tagName.length <= 200)) &&
     isFiniteNumber(r.area) && isFiniteNumber(r.perimeter)
   );
 }

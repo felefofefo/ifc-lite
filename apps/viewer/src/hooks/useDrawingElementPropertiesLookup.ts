@@ -90,7 +90,7 @@ export function useDrawingElementPropertiesLookup(
     if (!overridesEnabled || !drawing || !engineNeedsProperties(overrideEngine)) return NO_PROPERTIES;
 
     const cache = new Map<number, ElementData['properties']>();
-    for (const polygon of drawing.cutPolygons) {
+    for (const polygon of [...drawing.cutPolygons, ...(drawing.projectionPolygons ?? []), ...drawing.lines]) {
       if (cache.has(polygon.entityId)) continue;
       const ref = fromGlobalIdFromModels(models, polygon.entityId);
       const store = ref ? (ref.modelId === 'legacy' ? ifcDataStore : (models.get(ref.modelId)?.ifcDataStore ?? null)) : null;

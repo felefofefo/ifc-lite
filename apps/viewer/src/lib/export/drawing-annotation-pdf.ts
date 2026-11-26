@@ -6,7 +6,6 @@
 import type { jsPDF } from 'jspdf';
 import type { Drawing2D, Point2D } from '@ifc-lite/drawing-2d';
 import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
-import { computePolygonCentroid, formatArea } from '@/components/viewer/tools/computePolygonArea';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
 import { pdfColor } from './pdf-color';
@@ -36,11 +35,6 @@ export function expandDrawingAnnotationBounds(
   for (const area of areas) {
     if (area.points.length < 3) continue;
     area.points.forEach(include);
-    const center = computePolygonCentroid(area.points);
-    const label = formatArea(area.area);
-    const height = world(area.appearance?.textHeight ?? 3);
-    include({ x: center.x - label.length * height * 0.3, y: center.y - height });
-    include({ x: center.x + label.length * height * 0.3, y: center.y + height });
   }
   for (const note of texts) {
     if (!note.text.trim()) continue;
@@ -123,8 +117,6 @@ export function drawDrawingAnnotationsPdf(
       traceClosed(doc, ring);
       doc.stroke();
       doc.setLineDashPattern([], 0);
-      const center = point(computePolygonCentroid(area.points));
-      drawLabel(formatArea(area.area), center.x, center.y, area.appearance?.textHeight ?? 3, '#000000');
     }
     for (const note of texts) {
       if (!note.text.trim()) continue;

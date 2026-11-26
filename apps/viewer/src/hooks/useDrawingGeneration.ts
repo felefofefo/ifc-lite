@@ -122,6 +122,8 @@ interface UseDrawingGenerationParams {
    * `generateDrawing` (issue #2060).
    */
   typeVisibility: TypeVisibilityGate;
+  /** 2D view-rule exception for individually matched IFC Spaces only. */
+  explicitlyVisibleSpaces?: ReadonlySet<number>;
   combinedHiddenIds: Set<number>;
   combinedIsolatedIds: Set<number> | null;
   computedIsolatedIds?: Set<number> | null;
@@ -150,6 +152,7 @@ export function useDrawingGeneration({
   sectionPlane,
   displayOptions,
   typeVisibility,
+  explicitlyVisibleSpaces,
   combinedHiddenIds,
   combinedIsolatedIds,
   computedIsolatedIds,
@@ -519,7 +522,10 @@ export function useDrawingGeneration({
       // `drawing.lines` verbatim, see `useRenderUpdates.ts`) in the 3D view
       // too. Same shared mapping as the viewport, Cesium, basket and GLB
       // export, so all six toggles stay in lockstep.
-      meshesToProcess = meshesToProcess.filter((mesh) => isTypeVisible(mesh.ifcType, typeVisibility));
+      const typeAllowed = (item: { ifcType?: string; expressId: number }) =>
+        isTypeVisible(item.ifcType, typeVisibility)
+        || (item.ifcType?.toLowerCase() === 'ifcspace' && explicitlyVisibleSpaces?.has(item.expressId) === true);
+      meshesToProcess = meshesToProcess.filter(typeAllowed);
 
       // Filter out hidden entities (using combined multi-model set)
       if (combinedHiddenIds.size > 0) {
@@ -578,7 +584,7 @@ export function useDrawingGeneration({
         // cut by express id; without this, a profile sharing that same
         // express id would still be free to project it back in.
         projectionProfiles = projectionProfiles.filter((p) => isModelViewExpressId(p.expressId));
-        projectionProfiles = projectionProfiles.filter((p) => isTypeVisible(p.ifcType, typeVisibility));
+        projectionProfiles = projectionProfiles.filter(typeAllowed);
         if (combinedHiddenIds.size > 0) {
           projectionProfiles = projectionProfiles.filter((p) => !combinedHiddenIds.has(p.expressId));
         }
@@ -689,6 +695,7 @@ export function useDrawingGeneration({
     sectionPlane,
     displayOptions,
     typeVisibility,
+    explicitlyVisibleSpaces,
     combinedHiddenIds,
     combinedIsolatedIds,
     computedIsolatedIds,
@@ -787,7 +794,7 @@ export function useDrawingGeneration({
     const plane = JSON.stringify([sectionPlane.id, sectionPlane.axis, sectionPlane.position, sectionPlane.flipped,
       sectionPlane.custom]);
     const inputs = [geometryResult, geometryResult?.meshes.length, includeProjectionPolygons, ifcDataStore,
-      displayOptions, typeVisibility, combinedHiddenIds, combinedIsolatedIds,
+      displayOptions, typeVisibility, explicitlyVisibleSpaces, combinedHiddenIds, combinedIsolatedIds,
       computedIsolatedIds, models, drawingRtcContextKey];
     const changed = inputs.some((value, index) => value !== previousInputs.current[index]);
     const planeChanged = plane !== previousPlane.current;

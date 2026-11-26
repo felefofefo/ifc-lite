@@ -50,6 +50,9 @@ export interface Measure2DResult {
 /** Polygon area measurement result */
 export interface PolygonArea2DResult {
   id: string;
+  /** Optional IFC Space SVG template reused for this authored area. */
+  tagTemplateId?: string;
+  tagName?: string;
   appearanceId?: string;
   appearance?: AnnotationSymbolStyle;
   viewKey?: string;

@@ -30,7 +30,6 @@ import type { CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { dimensionArc, mapDimensionShape } from '@/lib/drawing/dimension-line';
 import { DEFAULT_DIMENSION_STYLE, DIMENSION_FONTS, formatDimensionLabel, resolveDimensionStyle, styledDimension, type DimensionStyle } from '@/lib/drawing/dimension-style';
 import { formatDistance } from '@/components/viewer/tools/formatDistance';
-import { formatArea, computePolygonCentroid } from '@/components/viewer/tools/computePolygonArea';
 import { generateCloudSVGPath } from '@/components/viewer/tools/cloudPathGenerator';
 import type { Measure2DResult, PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
 import type { DxfUnderlayRenderData } from '@/hooks/useDxfUnderlay';
@@ -440,13 +439,7 @@ function useDrawingExport({
 
         svg += `    <polygon points="${pointsStr}" fill="${escapeXml(measureColor)}" fill-opacity="0.1" stroke="${escapeXml(measureColor)}" stroke-width="${lineWidth.toFixed(4)}" stroke-dasharray="${mmToTarget(1).toFixed(4)} ${mmToTarget(0.5).toFixed(4)}"/>\n`;
 
-        // Label at centroid
-        const centroid = computePolygonCentroid(result.points);
-        const ct = mapPoint(centroid.x, centroid.y);
-        const areaText = formatArea(result.area);
-        const fontSize = mmToTarget(result.appearance?.textHeight ?? 3);
 
-        svg += `    <text x="${ct.x.toFixed(4)}" y="${ct.y.toFixed(4)}" font-family="${escapeXml(result.appearance?.font ?? 'Arial, sans-serif')}" font-size="${fontSize.toFixed(4)}" fill="#000000" text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(areaText)}</text>\n`;
       }
       svg += '  </g>\n';
     }

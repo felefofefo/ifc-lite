@@ -13,6 +13,8 @@ import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbol
 import type { LineweightRow } from './lineweight-table';
 import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { roomFootprintArea, type DrawingIfcSpaceRoom } from './ifc-space-rooms';
+import type { PolygonArea2DResult } from '@/store/slices/drawing2DSlice';
+import { computePolygonCentroid } from '@/components/viewer/tools/computePolygonArea';
 
 export interface DrawingElementTag {
   id: string;
@@ -371,6 +373,48 @@ export function resolveDrawingTag(
     tag, graphic, style, text: graphic?.text || (fields ?? tagFields(target)).find(field => field.key === tag.field)?.value || '\u2014',
     anchor: { x: target.center.x + tag.anchorOffset.x, y: target.center.y + tag.anchorOffset.y },
   };
+}
+
+/** Reuse Space-compatible SVGs without pretending an authored polygon is IFC. */
+export function isAreaTagTemplate(template: TagTemplate): boolean {
+  return symbolUse(template) === 'ifc' && template.classes.includes('IfcSpace');
+}
+
+export function areaTagValues(area: Pick<PolygonArea2DResult, 'area' | 'perimeter' | 'tagName'>): Map<string, string> {
+  const name = area.tagName?.trim() || 'Area';
+  const value = area.area.toFixed(2);
+  return new Map([
+    ['Name', name], ['LongName', name],
+    ['Area', value + ' m²'], ['PlanArea', value + ' m²'],
+    // Compatibility with Space templates that add their own unit suffix.
+    ['NetFloorArea', value], ['Perimeter', area.perimeter.toFixed(2) + ' m'],
+  ]);
+}
+
+export function resolveAreaTag(area: PolygonArea2DResult, templates: readonly TagTemplate[]): ResolvedDrawingTag | undefined {
+  const template = templates.find(item => item.id === area.tagTemplateId && isAreaTagTemplate(item));
+  if (!template || area.points.length < 3 || !Number.isFinite(area.area) || area.area <= 0
+    || !Number.isFinite(area.perimeter)) return undefined;
+  const position = computePolygonCentroid(area.points);
+  if (!isPoint(position)) return undefined;
+  const values = areaTagValues(area);
+  try {
+    const graphic = renderTagSvg(template.svg, values);
+    // Only a derived export/render item; not a persisted IFC entity tag.
+    const tag: DrawingElementTag = { id: area.id, templateId: template.id,
+      globalId: '', projectId: '', fingerprint: '', free: true, field: 'area',
+      position, anchorOffset: { x: 0, y: 0 }, leader: false };
+    return { tag, anchor: position, graphic, text: graphic.text || values.get('PlanArea') || '' };
+  } catch { return undefined; }
+}
+
+/** Same screen rectangle for paint, point picking and window selection. */
+export function areaTagScreenRect(item: ResolvedDrawingTag, screen: (point: Point2D) => Point2D, paperUnit: number) {
+  const graphic = item.graphic;
+  if (!graphic || !(paperUnit > 0) || !Number.isFinite(paperUnit)) return undefined;
+  const p = screen(item.tag.position);
+  return { id: item.tag.id, href: graphic.href, x: p.x - graphic.anchor.x * paperUnit,
+    y: p.y - graphic.anchor.y * paperUnit, width: graphic.width * paperUnit, height: graphic.height * paperUnit };
 }
 
 const tagHeight = 2.5;

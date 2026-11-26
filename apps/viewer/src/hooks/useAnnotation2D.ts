@@ -31,6 +31,7 @@ export interface UseAnnotation2DParams {
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** Same paper-unit conversion used by Drawing2DCanvas for text styles. */
   paperUnit?: number;
+  areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number }[];
   activeTool: Annotation2DTool;
   setActiveTool: (tool: Annotation2DTool) => void;
   // Polygon area state
@@ -91,6 +92,7 @@ export function useAnnotation2D({
   sectionAxis,
   containerRef,
   paperUnit = 1,
+  areaTagRects,
   activeTool,
   setActiveTool,
   polygonArea2DPoints,
@@ -256,9 +258,9 @@ export function useAnnotation2D({
     if (label) return { type: 'measure', id: label, dimensionLabel: true };
     return hitTestAnnotationsPure({
       screenX, screenY, threshold: HIT_TEST_RADIUS_PX, drawingToScreen,
-      texts, clouds, polys, measures, paperUnit, measureText: measureAnnotationText,
+      texts, clouds, polys, measures, paperUnit, areaTagRects, measureText: measureAnnotationText,
     });
-  }, [drawingToScreen, pickDimensionLabel, paperUnit, measureAnnotationText]); // reads annotation data from storeRef
+  }, [drawingToScreen, pickDimensionLabel, paperUnit, areaTagRects, measureAnnotationText]); // reads annotation data from storeRef
 
   // ── Get annotation origin (reads latest data from refs) ───────────────
 
