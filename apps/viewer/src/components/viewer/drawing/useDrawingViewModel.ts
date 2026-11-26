@@ -23,7 +23,7 @@ import { toast } from '@/components/ui/toast';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { isTextEntryElement } from '@/lib/keyboard-event';
 import { registerKeyboardCommand } from '@/lib/commands/dispatcher';
-import { arrangeDrawingItems, type DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
+import { arrangeDrawingItems, canvasMarkupGroups, canvasArrangeRanks, type DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
 import { useTranslation } from '@/i18n';
 import { readDrawingTags, collectTagTargets, findTagTarget, isAreaTagTemplate, resolveAreaTag, areaTagScreenRect, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 import { moveProjectGrid } from '@/lib/drawing/project-grids';
@@ -38,7 +38,7 @@ import type { DrawingInspectorTab } from '@/store/slices/drawingInspectorSlice';
 import { temporaryDimensionViewKey } from '@/lib/drawing/dimension-view';
 import { transferViewMarkup } from '@/lib/drawing/dimension-view';
 import { useViewDimensions } from './useViewDimensions';
-import type { DimensionType } from '@/lib/drawing/dimension-line';
+import type { DimensionType, DimensionChainMode } from '@/lib/drawing/dimension-line';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { DEFAULT_OBJECT_SNAPS, useMeasure2D } from '@/hooks/useMeasure2D';
 import { useAnnotation2D } from '@/hooks/useAnnotation2D';
@@ -295,8 +295,42 @@ export function useDrawingViewModel() {
   }
 
   const finishDimension = useCallback(() => setAnnotation2DActiveTool('none'), [setAnnotation2DActiveTool]);
+  // Use the same view/style visibility rules as Drawing2DCanvas.
+  const dimensionTypeOverride = viewAnnotationOptions?.styleIds?.dimensions;
+  const alignmentDimensions = useMemo(() => displayOptions.showAnnotations
+    && drawingAnnotationVisible(annotationView, 'dimensions')
+    ? measure2DResults.filter(item => drawingAnnotationVisible(annotationView, 'dimensions',
+      dimensionTypeOverride && dimensionSettings.styles.has(dimensionTypeOverride)
+        ? dimensionTypeOverride : item.dimension?.styleId)) : [],
+    [displayOptions.showAnnotations, annotationView, measure2DResults, dimensionTypeOverride, dimensionSettings.styles]);
+  const [dimensionContinuation, setDimensionContinuation] = useState<{
+    projectId: typeof drawingProjectId; viewKey: string; chainId: string; mode: DimensionChainMode;
+  } | null>(null);
+  const continuationDimensions = useMemo(() => {
+    if (!dimensionContinuation || annotation2DActiveTool !== 'measure') return undefined;
+    if (dimensionContinuation.projectId !== drawingProjectId || dimensionContinuation.viewKey !== viewKey
+      || status !== 'ready' || saved3D) return [];
+    const chain = measure2DResults.filter(item => item.dimension?.chainId === dimensionContinuation.chainId);
+    const visible = alignmentDimensions.filter(item => item.dimension?.chainId === dimensionContinuation.chainId);
+    return chain.length === visible.length && (dimensionContinuation.mode !== 'remove' || chain.length > 1) ? chain : [];
+  }, [dimensionContinuation, annotation2DActiveTool, drawingProjectId, viewKey, status, saved3D, alignmentDimensions, measure2DResults]);
+  useEffect(() => {
+    if (!dimensionContinuation) return;
+    if (annotation2DActiveTool !== 'measure') setDimensionContinuation(null);
+    else if (!continuationDimensions?.length) {
+      setDimensionContinuation(null);
+      setAnnotation2DActiveTool('none');
+    }
+  }, [dimensionContinuation, annotation2DActiveTool, continuationDimensions, setAnnotation2DActiveTool]);
   const measureHandlers = useMeasure2D({
-    objectSnaps, extraSnapContours: roomSnapContours,
+    continuationDimensions,
+    chainMode: dimensionContinuation?.mode,
+    onContinue: point => !!dimensionContinuation && !!continuationDimensions?.length
+      && dimensionContinuation.projectId === useSavedSectionCuts.getState().projectId
+      && (dimensionContinuation.mode === 'continue'
+        ? dimensions.continueChain(dimensionContinuation.chainId, point)
+        : dimensions.editChain(dimensionContinuation.chainId, point, dimensionContinuation.mode, 12 / markupTransform.scale)),
+    objectSnaps, extraSnapContours: roomSnapContours, alignmentDimensions,
     drawing: status === 'ready' && viewKey ? drawing : null,
     drawingKey: viewKey ?? undefined,
     viewTransform: markupTransform, setViewTransform, sectionAxis: drawnPlane.axis, containerRef,
@@ -347,7 +381,20 @@ export function useDrawingViewModel() {
     measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? styledAreas : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
     selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D, moveAnnotation2D,
-    snapForDrag: measureHandlers.findSnapPoint, angularSnap,
+    snapForDrag: measureHandlers.findSnapPoint,
+    snapDraggedAnnotation: (point, selected) => {
+      const result = selected.type === 'measure' && !selected.dimensionLabel
+        ? measure2DResults.find(item => item.id === selected.id) : undefined;
+      const data = result?.dimension;
+      if (!result || !data) return measureHandlers.findSnapPoint(point);
+      const excluded = new Set([data.chainId]);
+      if (!data.shape) {
+        const axis = { x: result.end.x - result.start.x, y: result.end.y - result.start.y };
+        const reference = measureHandlers.findDimensionAlignment(axis, point, excluded);
+        if (reference) return reference;
+      }
+      return measureHandlers.findSnapPoint(point, undefined, excluded);
+    }, angularSnap,
     setAnnotation2DCursorPos, setMeasure2DSnapPoint,
   });
 
@@ -447,6 +494,7 @@ export function useDrawingViewModel() {
 
   const resetDimension = measureHandlers.reset;
   const selectTool = useCallback((tool: Annotation2DTool) => {
+    setDimensionContinuation(null);
     if (tool !== 'none' && !displayOptions.showAnnotations) {
       setDrawingProjectionDisplay({ showAnnotations: true });
     }
@@ -454,6 +502,24 @@ export function useDrawingViewModel() {
     setAnnotation2DActiveTool(tool);
   }, [displayOptions.showAnnotations, resetDimension, setAnnotation2DActiveTool]);
 
+  const selectedChainId = dimensions.selectedDimension?.dimension?.chainId;
+  const canContinueDimension = !!viewKey && status === 'ready' && !saved3D
+    && !!selectedChainId && !selectedAnnotation2D?.dimensionLabel
+    && !dimensions.selectedDimension?.dimension?.shape
+    && alignmentDimensions.some(item => item.id === dimensions.selectedDimension?.id)
+    && measure2DResults.filter(item => item.dimension?.chainId === selectedChainId)
+      .every(item => !item.dimension?.shape && alignmentDimensions.some(visible => visible.id === item.id));
+  const canRemoveDimensionPoint = canContinueDimension && measure2DResults.filter(item =>
+    item.dimension?.chainId === selectedChainId).length > 1;
+  function startDimensionContinuation(mode: DimensionChainMode = 'continue') {
+    if (!canContinueDimension || !selectedChainId || !viewKey || (mode === 'remove' && !canRemoveDimensionPoint)) return;
+    resetDimension();
+    setDimensionContinuation({ projectId: drawingProjectId, viewKey, chainId: selectedChainId, mode });
+    setAnnotation2DActiveTool('measure');
+  }
+  const continuationStyleId = continuationDimensions?.length
+    ? (dimensionTypeOverride && dimensionSettings.styles.has(dimensionTypeOverride)
+      ? dimensionTypeOverride : continuationDimensions[0].dimension?.styleId) : undefined;
   const selectDimensionType = useCallback((type: DimensionType) => {
     setDimensionType(type);
     selectTool('measure');
@@ -683,21 +749,26 @@ export function useDrawingViewModel() {
       } catch (error) { console.warn('Could not arrange drawing tag', error); toast.error(t('section2d.tools.editError')); }
       return;
     }
-    if (!selectedAnnotation2D || !annotationPayload) return;
-    const id = selectedAnnotation2D.id;
+    if (!selectedAnnotation2D || !annotationPayload || !viewKey) return;
+    const selected = selectedAnnotation2D;
     useViewerStore.setState(state => {
-      switch (selectedAnnotation2D.type) {
-        case 'measure': {
-          const selected = state.measure2DResults.find(item => item.id === id);
-          const chain = selected?.dimension?.chainId;
-          const ids = chain ? state.measure2DResults.filter(item => item.viewKey === selected?.viewKey
-            && item.dimension?.chainId === chain).map(item => item.id) : [id];
-          return { measure2DResults: arrangeDrawingItems(state.measure2DResults, ids, action) };
-        }
-        case 'polygon': return { polygonArea2DResults: arrangeDrawingItems(state.polygonArea2DResults, id, action) };
-        case 'text': return { textAnnotations2D: arrangeDrawingItems(state.textAnnotations2D, id, action) };
-        case 'cloud': return { cloudAnnotations2D: arrangeDrawingItems(state.cloudAnnotations2D, id, action) };
+      const inView = (item: { viewKey?: string }) => item.viewKey === viewKey;
+      const inMeasureView = (item: typeof state.measure2DResults[number]) => (item.dimension?.viewKey ?? item.viewKey) === viewKey;
+      const groups = canvasMarkupGroups(state.measure2DResults.filter(inMeasureView),
+        state.polygonArea2DResults.filter(inView), state.textAnnotations2D.filter(inView), state.cloudAnnotations2D.filter(inView));
+      const ranks = canvasArrangeRanks(groups, selected, action);
+      if (!ranks) return state;
+      function apply<T extends { id: string; drawOrder?: number }>(items: T[], type: 'measure' | 'polygon' | 'text' | 'cloud', scoped: (item: T) => boolean): T[] {
+        return items.map(item => {
+          if (!scoped(item)) return item;
+          const drawOrder = ranks!.get(`${type}:${item.id}`);
+          return drawOrder === undefined || drawOrder === item.drawOrder ? item : { ...item, drawOrder };
+        });
       }
+      return { measure2DResults: apply(state.measure2DResults, 'measure', inMeasureView),
+        polygonArea2DResults: apply(state.polygonArea2DResults, 'polygon', inView),
+        textAnnotations2D: apply(state.textAnnotations2D, 'text', inView),
+        cloudAnnotations2D: apply(state.cloudAnnotations2D, 'cloud', inView) };
     });
   }
 
@@ -916,7 +987,28 @@ export function useDrawingViewModel() {
     }
     const vertices = displayOptions.showAnnotations && objectSnaps.endpoint
       ? (moveBase ? moving?.referenceVertices?.destination : moving?.referenceVertices?.base) : undefined;
-    const reference = measureHandlers.findSnapPoint(point, vertices);
+    // Source ticks may be picked for the base, but never snap to the moving
+    // dimension chain itself while choosing a destination.
+    const movingItems = moving?.batch ?? (moving ? [moving] : []);
+    const excludedChains = new Set<string>();
+    if (moveBase) for (const item of movingItems) {
+      if (item.snapshot?.kind === 'dimensions') for (const segment of item.snapshot.items) {
+        if (segment.dimension) excludedChains.add(segment.dimension.chainId);
+      }
+    }
+    // Only a single chain gets a dimension-line alignment constraint; mixed
+    // window selections retain their common Move delta.
+    const item = movingItems.length === 1 ? movingItems[0] : undefined;
+    if (moveBase && item?.snapshot?.kind === 'dimensions') {
+      const source = item.snapshot.items.find(segment => segment.id === item.annotation?.id) ?? item.snapshot.items[0];
+      if (source?.dimension && !source.dimension.shape) {
+        const axis = { x: source.end.x - source.start.x, y: source.end.y - source.start.y };
+        const origin = { x: source.start.x + point.x - moveBase.x, y: source.start.y + point.y - moveBase.y };
+        const aligned = measureHandlers.findDimensionAlignment(axis, origin, excludedChains);
+        if (aligned) return { point: { x: point.x + aligned.x - origin.x, y: point.y + aligned.y - origin.y }, reference: aligned };
+      }
+    }
+    const reference = measureHandlers.findSnapPoint(point, vertices, excludedChains);
     const directed = moveBase ? resolveMoveDirection(moveBase, point, reference, event.shiftKey) : null;
     const final = directed ?? reference ?? point;
     return { point: final, reference: reference ?? (directed && angularSnap !== 'off' ? final : null) };
@@ -1132,7 +1224,6 @@ export function useDrawingViewModel() {
     }
   }, [annotation2DActiveTool, drawingProjectId, viewKey, savedView?.id, selectTool]);
 
-  const dimensionTypeOverride = viewAnnotationOptions?.styleIds?.dimensions;
   const displayedMeasurements = dimensionTypeOverride && dimensionSettings.styles.has(dimensionTypeOverride)
     ? measure2DResults.map(item => item.dimension ? { ...item, dimension: { ...item.dimension, styleId: dimensionTypeOverride } } : item)
     : measure2DResults;
@@ -1191,7 +1282,12 @@ export function useDrawingViewModel() {
     measure2DMode, measure2DResults, displayedMeasurements, styledAreas, styledNotes, styledClouds, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
     objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, selectOnly2D, toggleSelectOnly2D,
     findSnapPoint: measureHandlers.findSnapPoint, snapKindFor: measureHandlers.snapKindFor,
+    snapDisplayPoint: measureHandlers.snapDisplayPoint,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
+    continuingDimension: !!continuationDimensions?.length, canContinueDimension, startDimensionContinuation,
+    canRemoveDimensionPoint, dimensionChainMode: dimensionContinuation?.mode,
+    chainPreviewRemovedIds: measureHandlers.chainEditPreview?.removedIds,
+    continuationStyleId,
     annotation2DActiveTool, selectTool, annotation2DCursorPos,
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,

@@ -31,6 +31,7 @@
  */
 
 import { dimensionArc } from '@/lib/drawing/dimension-line';
+import { canvasMarkupGroups } from '@/lib/drawing/drawing-arrange';
 import type {
   Point2D, TextAnnotation2D, SelectedAnnotation2D,
   Measure2DResult, PolygonArea2DResult, CloudAnnotation2D,
@@ -81,7 +82,8 @@ export interface HitTestAnnotationsParams {
   polys: PolygonArea2DResult[];
   measures: Measure2DResult[];
   paperUnit?: number;
-  areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number }[];
+  dimensionLabelId?: string;
+  areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number; leader?: { start: Point2D; end: Point2D } }[];
   measureText?: (text: string, font: string) => number | undefined;
 }
 
@@ -93,12 +95,28 @@ interface PaddedCandidate {
 
 export function hitTestAnnotations({
   screenX, screenY, threshold, drawingToScreen, texts, clouds, polys, measures,
-  paperUnit = 1, measureText, areaTagRects = [],
+  paperUnit = 1, measureText, areaTagRects = [], dimensionLabelId,
 }: HitTestAnnotationsParams): SelectedAnnotation2D | null {
   // ── Pass 1: genuine hits, reverse paint order (topmost wins) ───────────
-  // Paint order: measure -> polygon -> text -> cloud, so the reverse
-  // (topmost-first) check order is cloud -> text -> polygon.
-
+  const ranks = new Map<string, number>();
+  canvasMarkupGroups(measures, polys, texts, clouds).forEach((group, rank) => {
+    for (const entry of group.entries) ranks.set(`${entry.type}:${entry.item.id}`, rank);
+  });
+  let genuine: SelectedAnnotation2D | null = null;
+  let genuineRank = -1;
+  function offer(selection: SelectedAnnotation2D) {
+    const rank = ranks.get(`${selection.type}:${selection.id}`) ?? -1;
+    if (rank > genuineRank) { genuine = selection; genuineRank = rank; }
+  }
+  if (dimensionLabelId) offer({ type: 'measure', id: dimensionLabelId, dimensionLabel: true });
+  // The Area Tag is painted at its polygon's rank, not in an always-front
+  // overlay. Resolve genuine rectangle hits in the same common order.
+  for (let i = areaTagRects.length - 1; i >= 0; i--) {
+    const rect = areaTagRects[i];
+    if (screenX >= rect.x && screenX <= rect.x + rect.width
+      && screenY >= rect.y && screenY <= rect.y + rect.height
+      && polys.some(area => area.id === rect.id)) offer({ type: 'polygon', id: rect.id });
+  }
   for (let i = clouds.length - 1; i >= 0; i--) {
     const cloud = clouds[i];
     if (cloud.points.length < 2) continue;
@@ -109,7 +127,7 @@ export function hitTestAnnotations({
     const minY = Math.min(sp1.y, sp2.y);
     const maxY = Math.max(sp1.y, sp2.y);
     if (screenX >= minX && screenX <= maxX && screenY >= minY && screenY <= maxY) {
-      return { type: 'cloud', id: cloud.id };
+      offer({ type: 'cloud', id: cloud.id });
     }
   }
 
@@ -120,26 +138,24 @@ export function hitTestAnnotations({
     const { bgW, bgH } = textAnnotationLayout(annotation, paperUnit, measureText);
     if (screenX >= sp.x - 2 && screenX <= sp.x + bgW + 2 &&
         screenY >= sp.y - 2 && screenY <= sp.y + bgH + 2) {
-      return { type: 'text', id: annotation.id };
+      offer({ type: 'text', id: annotation.id });
     }
   }
 
-  for (let i = areaTagRects.length - 1; i >= 0; i--) {
-    const rect = areaTagRects[i];
-    if (screenX >= rect.x && screenX <= rect.x + rect.width
-      && screenY >= rect.y && screenY <= rect.y + rect.height
-      && polys.some(area => area.id === rect.id)) return { type: 'polygon', id: rect.id };
-  }
   for (let i = polys.length - 1; i >= 0; i--) {
     const result = polys[i];
     if (result.points.length >= 3 && insideRing({ x: screenX, y: screenY }, result.points.map(drawingToScreen))) {
-      return { type: 'polygon', id: result.id };
+      offer({ type: 'polygon', id: result.id });
     }
   }
 
   // ── Pass 2: padded (tolerance-only) hits, nearest wins across types ────
 
   let best: PaddedCandidate | null = null;
+  function preferred(candidate: SelectedAnnotation2D, distance: number, previous: PaddedCandidate | null) {
+    return !previous || distance < previous.dist || (distance === previous.dist
+      && (ranks.get(`${candidate.type}:${candidate.id}`) ?? -1) > (ranks.get(`${previous.selection.type}:${previous.selection.id}`) ?? -1));
+  }
 
   for (let i = clouds.length - 1; i >= 0; i--) {
     const cloud = clouds[i];
@@ -153,7 +169,7 @@ export function hitTestAnnotations({
     const dx = Math.max(minX - screenX, 0, screenX - maxX);
     const dy = Math.max(minY - screenY, 0, screenY - maxY);
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < threshold && (!best || dist < best.dist)) {
+    if (dist < threshold && preferred({ type: 'cloud', id: cloud.id }, dist, best)) {
       best = { dist, selection: { type: 'cloud', id: cloud.id } };
     }
   }
@@ -165,12 +181,19 @@ export function hitTestAnnotations({
       const a = drawingToScreen(result.points[j]);
       const b = drawingToScreen(result.points[(j + 1) % result.points.length]);
       const { dist } = nearestPointOnScreenSegment({ x: screenX, y: screenY }, a, b);
-      if (dist < threshold && (!best || dist < best.dist)) {
+      if (dist < threshold && preferred({ type: 'polygon', id: result.id }, dist, best)) {
         best = { dist, selection: { type: 'polygon', id: result.id } };
       }
     }
   }
 
+  for (const rect of areaTagRects) {
+    if (!rect.leader || !polys.some(area => area.id === rect.id)) continue;
+    const { dist } = nearestPointOnScreenSegment({ x: screenX, y: screenY }, rect.leader.start, rect.leader.end);
+    const selection: SelectedAnnotation2D = { type: 'polygon', id: rect.id };
+    if (dist <= 1) offer(selection);
+    if (dist < threshold && preferred(selection, dist, best)) best = { dist, selection };
+  }
   for (let i = measures.length - 1; i >= 0; i--) {
     const result = measures[i];
     const sa = drawingToScreen(result.start);
@@ -182,10 +205,11 @@ export function hitTestAnnotations({
     const strokes = points.slice(1).map((point, index) => [points[index], point] as const);
     if (shape?.kind === 'angular' && anchors) strokes.push([sa, drawingToScreen(anchors[0])], [sb, drawingToScreen(anchors[1])]);
     const dist = Math.min(...strokes.map(([a, b]) => nearestPointOnScreenSegment({ x: screenX, y: screenY }, a, b).dist));
-    if (dist < threshold && (!best || dist < best.dist)) {
+    if (dist <= 1) offer({ type: 'measure', id: result.id });
+    if (dist < threshold && preferred({ type: 'measure', id: result.id }, dist, best)) {
       best = { dist, selection: { type: 'measure', id: result.id } };
     }
   }
 
-  return best ? best.selection : null;
+  return genuine ?? (best ? best.selection : null);
 }

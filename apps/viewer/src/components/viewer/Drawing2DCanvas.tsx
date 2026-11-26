@@ -5,6 +5,8 @@
 import { drawingPublicationStrokeStyle } from '@/hooks/drawingPublicationStrokeStyle';
 import type { DimensionSegment } from '@/lib/drawing/dimension-line';
 import { mapDimensionShape } from '@/lib/drawing/dimension-line';
+import { canvasMarkupGroups } from '@/lib/drawing/drawing-arrange';
+import type { areaTagScreenRect } from '@/lib/drawing/drawing-element-tags';
 import { DEFAULT_DIMENSION_STYLE, DIMENSION_FONTS, drawDimensionStrokes, formatDimensionLabel, resolveDimensionStyle, styledDimension, type DimensionLabelHit, type DimensionStyle } from '@/lib/drawing/dimension-style';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
@@ -197,6 +199,7 @@ interface Drawing2DCanvasProps {
   measureMode?: boolean;
   markupTransform?: { x: number; y: number; scale: number };
   dimensionStyle?: DimensionStyle;
+  dimensionPreviewStyle?: DimensionStyle;
   dimensionStyles?: ReadonlyMap<string, DimensionStyle>;
   dimensionLabelHits?: React.RefObject<DimensionLabelHit[]>;
   publicationScale?: number;
@@ -217,6 +220,8 @@ interface Drawing2DCanvasProps {
   annotation2DCursorPos?: Point2D | null;
   polygonAreaPoints?: Point2D[];
   polygonAreaResults?: PolygonArea2DResult[];
+  areaTagRects?: readonly NonNullable<ReturnType<typeof areaTagScreenRect>>[];
+  areaTagImages?: ReadonlyMap<string, HTMLImageElement>;
   textAnnotations?: TextAnnotation2D[];
   textAnnotationEditing?: string | null;
   cloudAnnotationPoints?: Point2D[];
@@ -263,6 +268,7 @@ export function Drawing2DCanvas({
   measureMode = false,
   markupTransform = transform,
   dimensionStyle = DEFAULT_DIMENSION_STYLE,
+  dimensionPreviewStyle,
   dimensionStyles,
   dimensionLabelHits,
   publicationScale = 100,
@@ -279,6 +285,8 @@ export function Drawing2DCanvas({
   annotation2DCursorPos = null,
   polygonAreaPoints = [],
   polygonAreaResults = [],
+  areaTagRects,
+  areaTagImages,
   textAnnotations = [],
   textAnnotationEditing = null,
   cloudAnnotationPoints = [],
@@ -1278,7 +1286,7 @@ export function Drawing2DCanvas({
       start: Point2D, end: Point2D, distance: number, fallback: string,
       placed?: Measure2DResultData['dimension'], isActive = false, id?: string,
     ) => {
-      const style = !isActive ? resolveDimensionStyle(dimensionStyles, placed?.styleId, dimensionStyle) : dimensionStyle;
+      const style = !isActive ? resolveDimensionStyle(dimensionStyles, placed?.styleId, dimensionStyle) : dimensionPreviewStyle ?? dimensionStyle;
       const anchors = placed?.anchors;
       const dimension = styledDimension(markupToScreen(start), markupToScreen(end),
         anchors && [markupToScreen(anchors[0]), markupToScreen(anchors[1])], style, paperUnit,
@@ -1319,9 +1327,227 @@ export function Drawing2DCanvas({
       ctx.restore();
     };
 
-    for (const result of measureResults) {
+    const paintMeasurement = (result: Measure2DResultData) => {
       drawMeasureLine(result.start, result.end, result.distance, activeSheet && sheetEnabled ? '#000' : paperTheme.ink,
         result.dimension, false, result.id);
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. RENDER POLYGON AREA MEASUREMENTS (in screen space)
+    // ═══════════════════════════════════════════════════════════════════════
+    // Draw completed polygon areas
+    const primaryColor = getComputedStyle(canvas).color;
+    const areaTagById = new Map(areaTagRects?.map(rect => [rect.id, rect] as const) ?? []);
+    const areaHighlightOpacity = (id: string) => {
+      if ((selectedAnnotation?.type === 'polygon' && selectedAnnotation.id === id)
+        || windowAnnotations?.some(item => item.type === 'polygon' && item.id === id)) return 1;
+      return hoveredAnnotation?.type === 'polygon' && hoveredAnnotation.id === id ? 0.55 : 0;
+    };
+    let areaTagHighlightCanvas: HTMLCanvasElement | undefined;
+    const paintAreaTag = (id: string) => {
+      const rect = areaTagById.get(id);
+      const image = rect && areaTagImages?.get(rect.href);
+      if (!rect || !image) return; // SVG fallback remains visible while decoding.
+      const opacity = areaHighlightOpacity(id);
+      ctx.save();
+      if (rect.leader) {
+        ctx.strokeStyle = opacity ? primaryColor : paperTheme.ink;
+        ctx.globalAlpha = opacity || 1;
+        ctx.lineWidth = opacity ? 1.5 : 1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(rect.leader.start.x, rect.leader.start.y);
+        ctx.lineTo(rect.leader.end.x, rect.leader.end.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      let graphic: CanvasImageSource = image;
+      // Match the IFC Tag SVG filter: screen blend in sRGB, then clip to
+      // SourceAlpha. White stays white; transparent margins stay transparent.
+      // Never use source-in with a solid blue fill (it colors white backgrounds).
+      if (opacity && rect.width > 0 && rect.height > 0 && Number.isFinite(rect.width) && Number.isFinite(rect.height)) {
+        const scale = Math.min(dpr, 2048 / Math.max(rect.width, rect.height));
+        const mask = areaTagHighlightCanvas ??= canvas.ownerDocument.createElement('canvas');
+        mask.width = Math.max(1, Math.ceil(rect.width * scale));
+        mask.height = Math.max(1, Math.ceil(rect.height * scale));
+        const ink = mask.getContext('2d');
+        if (ink) {
+          ink.drawImage(image, 0, 0, mask.width, mask.height);
+          ink.globalCompositeOperation = 'screen';
+          ink.globalAlpha = opacity;
+          ink.fillStyle = primaryColor;
+          ink.fillRect(0, 0, mask.width, mask.height);
+          ink.globalCompositeOperation = 'destination-in';
+          ink.globalAlpha = 1;
+          ink.drawImage(image, 0, 0, mask.width, mask.height);
+          graphic = mask;
+        }
+      }
+      ctx.drawImage(graphic, rect.x, rect.y, rect.width, rect.height);
+      ctx.restore();
+    };
+    const paintArea = (result: PolygonArea2DResult) => {
+      if (result.points.length < 3) return;
+
+      const pen = areaBoundaryStyle(result.appearance, lineweights);
+      ctx.save();
+      const first = result.points[0];
+      if (areaHasLegacyBackground(result.appearance)) {
+        ctx.globalAlpha = 0.1;
+        ctx.fillStyle = pen.color;
+        ctx.beginPath();
+        ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
+        for (const point of result.points.slice(1)) ctx.lineTo(drawingToScreenX(point.x), drawingToScreenY(point.y));
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      const paints = areaHatchLayers(result.appearance, publicationScale || 100, fillPreview?.patterns);
+      if (paints.length) drawPublicationCanvasFills(ctx, { polygon: { outer: result.points, holes: [] }, isCut: false },
+        paints, (x, y) => ({ x: drawingToScreenX(x), y: drawingToScreenY(y) }),
+        Math.abs(markupTransform.scale), paperUnit, Math.sign(annotScaleX * annotScaleY));
+
+      // Use paper-space pens, just like the drawing's IFC outlines.
+      ctx.strokeStyle = pen.color;
+      ctx.lineWidth = Math.max(0.01, pen.weight * paperUnit);
+      ctx.setLineDash(pen.dash.map(value => value * paperUnit));
+      ctx.beginPath();
+      ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
+      for (let i = 1; i < result.points.length; i++) {
+        ctx.lineTo(drawingToScreenX(result.points[i].x), drawingToScreenY(result.points[i].y));
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Node handles belong to editing/selection overlays, not the styled fill.
+      ctx.restore();
+      // Highlight the area before its label, in the same arranged paint pass.
+      // This also avoids tinting higher-ranked markup with the selected area.
+      const opacity = areaHighlightOpacity(result.id);
+      if (opacity) {
+        ctx.save();
+        ctx.beginPath();
+        result.points.forEach((point, index) => {
+          const sx = drawingToScreenX(point.x), sy = drawingToScreenY(point.y);
+          if (index === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        });
+        ctx.closePath();
+        ctx.fillStyle = primaryColor;
+        ctx.globalAlpha = opacity * 0.18;
+        ctx.fill();
+        ctx.globalAlpha = opacity;
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // The label and leader belong to the same arranged object as the area.
+      paintAreaTag(result.id);
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 6. RENDER TEXT ANNOTATIONS (in screen space)
+    // ═══════════════════════════════════════════════════════════════════════
+    const paintText = (textAnnotation: TextAnnotation2D) => {
+      // Don't render text that is currently being edited (the editor overlay handles it)
+      if (textAnnotation.id === textAnnotationEditing) return;
+      if (!textAnnotation.text.trim()) return;
+
+      const sx = drawingToScreenX(textAnnotation.position.x);
+      const sy = drawingToScreenY(textAnnotation.position.y);
+
+      const { lines, lineHeight, padding, bgW, bgH } = measureTextAnnotation(textAnnotation);
+
+      // Background
+      ctx.fillStyle = textAnnotation.backgroundColor;
+      ctx.fillRect(sx, sy, bgW, bgH);
+
+      // Border
+      ctx.strokeStyle = textAnnotation.borderColor;
+      ctx.lineWidth = 0.15 * paperUnit; // same 0.15 mm stroke as PDF/SVG
+      ctx.strokeRect(sx, sy, bgW, bgH);
+
+      // Text
+      ctx.fillStyle = textAnnotation.appearance?.color ?? textAnnotation.color;
+      const align = textAnnotation.align ?? textAnnotation.appearance?.align ?? 'left';
+      ctx.textAlign = align;
+      ctx.textBaseline = 'top';
+      const textX = align === 'center' ? sx + bgW / 2 : align === 'right' ? sx + bgW - padding : sx + padding;
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], textX, sy + padding + i * lineHeight);
+      }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 7. RENDER CLOUD ANNOTATIONS (in screen space)
+    // ═══════════════════════════════════════════════════════════════════════
+    const screenScale = Math.abs(transform.scale);
+
+    // Draw completed clouds
+    const paintCloud = (cloud: CloudAnnotation2D) => {
+      if (cloud.points.length < 2) return;
+      const p1 = cloud.points[0];
+      const p2 = cloud.points[1];
+
+      // Determine arc radius based on rectangle size (in drawing coords)
+      const rectW = Math.abs(p2.x - p1.x);
+      const rectH = Math.abs(p2.y - p1.y);
+      const arcRadius = Math.min(rectW, rectH) * 0.15 || 0.2;
+
+      const color = cloud.appearance?.color ?? cloud.color;
+
+      // Draw cloud fill
+      ctx.globalAlpha = 0.05;
+      ctx.fillStyle = color;
+      drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Draw cloud stroke
+      ctx.strokeStyle = color;
+      ctx.lineWidth = cloud.appearance?.weight ? (lineweights?.[cloud.appearance.weight] ?? 0.25) * paperUnit : 2;
+      drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
+      ctx.stroke();
+
+      // Draw label at center
+      if (cloud.label) {
+        const labelX = drawingToScreenX((p1.x + p2.x) / 2);
+        const labelY = drawingToScreenY((p1.y + p2.y) / 2);
+
+        const size = 12;
+        ctx.font = 'bold 12px system-ui, sans-serif';
+        const labelMetrics = ctx.measureText(cloud.label);
+        const lW = labelMetrics.width + 10;
+        const lH = Math.max(20, size + 8);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.fillRect(labelX - lW / 2, labelY - lH / 2, lW, lH);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(labelX - lW / 2, labelY - lH / 2, lW, lH);
+
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(cloud.label, labelX, labelY);
+      }
+    };
+
+    // All native marks share one back-to-front order, without separate canvases.
+    for (const group of canvasMarkupGroups(measureResults, polygonAreaResults, textAnnotations, cloudAnnotations)) {
+      for (const entry of group.entries) {
+        ctx.save();
+        switch (entry.type) {
+          case 'measure': paintMeasurement(entry.item); break;
+          case 'polygon': paintArea(entry.item); break;
+          case 'text': paintText(entry.item); break;
+          case 'cloud': paintCloud(entry.item); break;
+        }
+        ctx.restore();
+      }
     }
 
     if (measureMode) {
@@ -1358,48 +1584,6 @@ export function Drawing2DCanvas({
       ctx.beginPath();
       ctx.arc(screenSnap.x, screenSnap.y, 6, 0, Math.PI * 2);
       ctx.stroke();
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 5. RENDER POLYGON AREA MEASUREMENTS (in screen space)
-    // ═══════════════════════════════════════════════════════════════════════
-    // Draw completed polygon areas
-    for (const result of polygonAreaResults) {
-      if (result.points.length < 3) continue;
-
-      const pen = areaBoundaryStyle(result.appearance, lineweights);
-      ctx.save();
-      const first = result.points[0];
-      if (areaHasLegacyBackground(result.appearance)) {
-        ctx.globalAlpha = 0.1;
-        ctx.fillStyle = pen.color;
-        ctx.beginPath();
-        ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
-        for (const point of result.points.slice(1)) ctx.lineTo(drawingToScreenX(point.x), drawingToScreenY(point.y));
-        ctx.closePath();
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      }
-      const paints = areaHatchLayers(result.appearance, publicationScale || 100, fillPreview?.patterns);
-      if (paints.length) drawPublicationCanvasFills(ctx, { polygon: { outer: result.points, holes: [] }, isCut: false },
-        paints, (x, y) => ({ x: drawingToScreenX(x), y: drawingToScreenY(y) }),
-        Math.abs(markupTransform.scale), paperUnit, Math.sign(annotScaleX * annotScaleY));
-
-      // Use paper-space pens, just like the drawing's IFC outlines.
-      ctx.strokeStyle = pen.color;
-      ctx.lineWidth = Math.max(0.01, pen.weight * paperUnit);
-      ctx.setLineDash(pen.dash.map(value => value * paperUnit));
-      ctx.beginPath();
-      ctx.moveTo(drawingToScreenX(first.x), drawingToScreenY(first.y));
-      for (let i = 1; i < result.points.length; i++) {
-        ctx.lineTo(drawingToScreenX(result.points[i].x), drawingToScreenY(result.points[i].y));
-      }
-      ctx.closePath();
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Node handles belong to editing/selection overlays, not the styled fill.
-      ctx.restore();
     }
 
     // Draw in-progress polygon
@@ -1455,94 +1639,6 @@ export function Drawing2DCanvas({
       }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 6. RENDER TEXT ANNOTATIONS (in screen space)
-    // ═══════════════════════════════════════════════════════════════════════
-    for (const textAnnotation of textAnnotations) {
-      // Don't render text that is currently being edited (the editor overlay handles it)
-      if (textAnnotation.id === textAnnotationEditing) continue;
-      if (!textAnnotation.text.trim()) continue;
-
-      const sx = drawingToScreenX(textAnnotation.position.x);
-      const sy = drawingToScreenY(textAnnotation.position.y);
-
-      const { lines, lineHeight, padding, bgW, bgH } = measureTextAnnotation(textAnnotation);
-
-      // Background
-      ctx.fillStyle = textAnnotation.backgroundColor;
-      ctx.fillRect(sx, sy, bgW, bgH);
-
-      // Border
-      ctx.strokeStyle = textAnnotation.borderColor;
-      ctx.lineWidth = 0.15 * paperUnit; // same 0.15 mm stroke as PDF/SVG
-      ctx.strokeRect(sx, sy, bgW, bgH);
-
-      // Text
-      ctx.fillStyle = textAnnotation.appearance?.color ?? textAnnotation.color;
-      const align = textAnnotation.align ?? textAnnotation.appearance?.align ?? 'left';
-      ctx.textAlign = align;
-      ctx.textBaseline = 'top';
-      const textX = align === 'center' ? sx + bgW / 2 : align === 'right' ? sx + bgW - padding : sx + padding;
-      for (let i = 0; i < lines.length; i++) {
-        ctx.fillText(lines[i], textX, sy + padding + i * lineHeight);
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 7. RENDER CLOUD ANNOTATIONS (in screen space)
-    // ═══════════════════════════════════════════════════════════════════════
-    const screenScale = Math.abs(transform.scale);
-
-    // Draw completed clouds
-    for (const cloud of cloudAnnotations) {
-      if (cloud.points.length < 2) continue;
-      const p1 = cloud.points[0];
-      const p2 = cloud.points[1];
-
-      // Determine arc radius based on rectangle size (in drawing coords)
-      const rectW = Math.abs(p2.x - p1.x);
-      const rectH = Math.abs(p2.y - p1.y);
-      const arcRadius = Math.min(rectW, rectH) * 0.15 || 0.2;
-
-      const color = cloud.appearance?.color ?? cloud.color;
-
-      // Draw cloud fill
-      ctx.globalAlpha = 0.05;
-      ctx.fillStyle = color;
-      drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      // Draw cloud stroke
-      ctx.strokeStyle = color;
-      ctx.lineWidth = cloud.appearance?.weight ? (lineweights?.[cloud.appearance.weight] ?? 0.25) * paperUnit : 2;
-      drawCloudOnCanvas(ctx, p1, p2, arcRadius, drawingToScreenX, drawingToScreenY, screenScale);
-      ctx.stroke();
-
-      // Draw label at center
-      if (cloud.label) {
-        const labelX = drawingToScreenX((p1.x + p2.x) / 2);
-        const labelY = drawingToScreenY((p1.y + p2.y) / 2);
-
-        const size = 12;
-        ctx.font = 'bold 12px system-ui, sans-serif';
-        const labelMetrics = ctx.measureText(cloud.label);
-        const lW = labelMetrics.width + 10;
-        const lH = Math.max(20, size + 8);
-
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-        ctx.fillRect(labelX - lW / 2, labelY - lH / 2, lW, lH);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(labelX - lW / 2, labelY - lH / 2, lW, lH);
-
-        ctx.fillStyle = color;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(cloud.label, labelX, labelY);
-      }
-    }
-
     // Draw in-progress cloud (rectangle preview from first corner to cursor)
     if (cloudAnnotationPoints.length === 1 && annotation2DCursorPos && annotation2DActiveTool === 'cloud') {
       const p1 = cloudAnnotationPoints[0];
@@ -1566,7 +1662,6 @@ export function Drawing2DCanvas({
     // 8. RENDER SELECTION HIGHLIGHT
     // ═══════════════════════════════════════════════════════════════════════
     // Hover and selection share the same geometry and differ only in intensity.
-    const primaryColor = getComputedStyle(canvas).color;
     const highlightAnnotation = (target: SelectedAnnotation2D, opacity: number) => {
       ctx.save();
       ctx.globalAlpha = opacity;
@@ -1592,29 +1687,9 @@ export function Drawing2DCanvas({
           }
           break;
         }
-        case 'polygon': {
-          const result = polygonAreaResults.find((r) => r.id === target.id);
-          if (result && result.points.length >= 3) {
-            ctx.save();
-            ctx.beginPath();
-            result.points.forEach((point, index) => {
-              const sx = drawingToScreenX(point.x), sy = drawingToScreenY(point.y);
-              if (index === 0) ctx.moveTo(sx, sy);
-              else ctx.lineTo(sx, sy);
-            });
-            ctx.closePath();
-            ctx.fillStyle = SEL_COLOR;
-            ctx.globalAlpha = opacity * 0.18;
-            ctx.fill();
-            ctx.globalAlpha = opacity;
-            ctx.strokeStyle = SEL_COLOR;
-            ctx.lineWidth = 2.5;
-            ctx.setLineDash([]);
-            ctx.stroke();
-            ctx.restore();
-          }
+        case 'polygon':
+          // Already highlighted with its tag in the arranged paint pass.
           break;
-        }
         case 'text': {
           const annotation = textAnnotations.find((a) => a.id === target.id);
           if (annotation && annotation.id !== textAnnotationEditing && annotation.text.trim()) {
@@ -1653,7 +1728,7 @@ export function Drawing2DCanvas({
     if (selectedAnnotation) highlightAnnotation(selectedAnnotation, 1);
     windowAnnotations?.forEach(item => highlightAnnotation(item, 1));
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, windowAnnotations, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionPreviewStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, areaTagRects, areaTagImages, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, windowAnnotations, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas

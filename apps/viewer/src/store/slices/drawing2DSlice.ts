@@ -39,6 +39,8 @@ export interface Point2D {
 /** Measurement result */
 export interface Measure2DResult {
   id: string;
+  /** Optional per-view paint order; legacy markup keeps its original order. */
+  drawOrder?: number;
   viewKey?: string;
   start: Point2D;
   end: Point2D;
@@ -50,6 +52,8 @@ export interface Measure2DResult {
 /** Polygon area measurement result */
 export interface PolygonArea2DResult {
   id: string;
+  /** Optional per-view paint order; legacy markup keeps its original order. */
+  drawOrder?: number;
   /** Optional IFC Space SVG template reused for this authored area. */
   tagTemplateId?: string;
   tagName?: string;
@@ -67,6 +71,8 @@ export interface PolygonArea2DResult {
 /** Text box annotation */
 export interface TextAnnotation2D {
   id: string;
+  /** Optional per-view paint order; legacy markup keeps its original order. */
+  drawOrder?: number;
   appearanceId?: string;
   appearance?: AnnotationSymbolStyle;
   viewKey?: string;
@@ -85,6 +91,8 @@ export interface TextAnnotation2D {
 /** Cloud (revision cloud) annotation */
 export interface CloudAnnotation2D {
   id: string;
+  /** Optional per-view paint order; legacy markup keeps its original order. */
+  drawOrder?: number;
   appearanceId?: string;
   appearance?: AnnotationSymbolStyle;
   viewKey?: string;

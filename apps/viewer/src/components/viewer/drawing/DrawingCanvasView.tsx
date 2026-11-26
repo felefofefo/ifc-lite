@@ -12,7 +12,7 @@ import { Spinner } from '@/components/ui/spinner';
 
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { createLineworkSource } from '@/lib/snap/sources/linework';
 import { solveSnap } from '@/lib/snap/solve';
@@ -38,11 +38,16 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
   const fillPreview = usePublicationFillPreview();
   const areaTagFilterId = useId().replace(/:/g, '');
+  const areaTagImages = useAreaTagImages(vm.areaTags);
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
   const selection = useDrawingModelSelection(vm,
     status === 'ready' && !vm.selectOnly2D && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing, !placement);
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
+  const snapDisplayPoint = vm.measure2DSnapPoint && vm.snapDisplayPoint(vm.measure2DSnapPoint);
+  // While a new SVG loads (or if image decoding fails), keep the original
+  // SVG overlay as a visible fallback. Never drop a tag from the drawing.
+  const fallbackAreaTags = vm.areaTagRects.filter(rect => !hasContent || !areaTagImages.has(rect.href));
   const editingAnnotation = vm.textAnnotation2DEditing
     ? vm.styledNotes.find((a) => a.id === vm.textAnnotation2DEditing) ?? vm.textAnnotations2D.find((a) => a.id === vm.textAnnotation2DEditing) ?? null
     : null;
@@ -92,13 +97,16 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           useIfcMaterials={(vm.activePresetId === null || vm.activePresetId === 'preset-3d-colors' || vm.activePresetId?.startsWith('drawing-template:') === true)}
           measureMode={vm.measure2DMode}
           dimensionStyle={vm.dimensionSettings.styles.get(vm.dimensionSettings.library.defaultId)}
+          dimensionPreviewStyle={vm.continuingDimension
+            ? vm.dimensionSettings.styles.get(vm.continuationStyleId ?? 'architectural') : undefined}
           dimensionStyles={vm.dimensionSettings.styles}
           dimensionLabelHits={vm.dimensionEditing.dimensionLabelHits}
           publicationScale={vm.publicationScale}
           markupTransform={markupTransform}
           dimensionPreview={vm.dimensionPreview}
           dimensionPoints={vm.dimensionDraft.points}
-          measureResults={drawingAnnotationVisible(annotationView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)) : []}
+          measureResults={drawingAnnotationVisible(annotationView, 'dimensions') ? vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)
+            && !vm.chainPreviewRemovedIds?.includes(item.id)) : []}
           sheetEnabled={vm.sheetEnabled}
           activeSheet={vm.activeSheet}
           sectionAxis={drawnPlane.axis}
@@ -108,6 +116,8 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           annotation2DCursorPos={vm.annotation2DCursorPos}
           polygonAreaPoints={vm.polygonArea2DPoints}
           polygonAreaResults={vm.styledAreas}
+          areaTagRects={vm.areaTagRects}
+          areaTagImages={areaTagImages}
           textAnnotations={vm.styledNotes}
           textAnnotationEditing={vm.textAnnotation2DEditing}
           cloudAnnotationPoints={vm.cloudAnnotation2DPoints}
@@ -128,10 +138,11 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
       )}
 
       {/* Screen-sized snap feedback; unlike model geometry it must not be exported. */}
-      {status === 'ready' && vm.measure2DSnapPoint && !placement
-        && (vm.measure2DMode || ['polygon-area', 'text', 'cloud', 'move'].includes(vm.annotation2DActiveTool))
+      {status === 'ready' && snapDisplayPoint && !placement
+        && (vm.measure2DMode || ['polygon-area', 'text', 'cloud', 'move'].includes(vm.annotation2DActiveTool)
+          || (vm.annotation2DActiveTool === 'none' && vm.selectedAnnotation2D?.type === 'measure'))
         && <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-          <g transform={`translate(${vm.measure2DSnapPoint.x * (drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale) + markupTransform.x} ${vm.measure2DSnapPoint.y * (drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale) + markupTransform.y})`}>
+          <g transform={`translate(${snapDisplayPoint.x * (drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale) + markupTransform.x} ${snapDisplayPoint.y * (drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale) + markupTransform.y})`}>
             <DrawingSnapGlyph kind={vm.snapKindFor(vm.measure2DSnapPoint)} />
           </g>
         </svg>}
@@ -153,7 +164,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
             ).join(' ')} />
           ))}
         </svg>}
-      {status === 'ready' && displayOptions.showAnnotations && vm.areaTagRects.length > 0 &&
+      {status === 'ready' && displayOptions.showAnnotations && fallbackAreaTags.length > 0 &&
         <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
           <defs className="text-primary">
             {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${areaTagFilterId}-${state}`} colorInterpolationFilters="sRGB">
@@ -162,7 +173,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               <feComposite in="highlight" in2="SourceAlpha" operator="in" />
             </filter>)}
           </defs>
-          {vm.areaTagRects.map(({ id, href, x, y, width, height, leader }) => {
+          {fallbackAreaTags.map(({ id, href, x, y, width, height, leader }) => {
             const selected = vm.selectedAnnotation2D?.type === 'polygon' && vm.selectedAnnotation2D.id === id
               || vm.windowAnnotations.some(item => item.type === 'polygon' && item.id === id);
             const hovered = !placement && selection.annotationHover?.type === 'polygon' && selection.annotationHover.id === id;
@@ -182,11 +193,17 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
         && <CloudResizeHandles vm={vm} id={vm.editableAnnotationId} />}
       {status === 'ready' && <DrawingMovePreview vm={vm} />}
+      {status === 'ready' && vm.continuingDimension && <div
+        className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
+        role="status">{vm.dimensionChainMode === 'insert' ? 'Pick a measured point inside the chain · Esc to finish'
+          : vm.dimensionChainMode === 'remove' ? 'Pick an interior tick or base point · Esc to finish'
+          : 'Pick a point beyond either end of the chain · Esc to finish'}</div>}
       {status === 'ready' && vm.annotation2DActiveTool === 'move' && <div
         className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
         role="status">{t(vm.moveBase ? 'section2d.tools.moveTarget' : 'section2d.tools.moveBase')}</div>}
       {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} cycleTarget={selection.cycleTarget} />}
       {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags vm={vm} cycleTarget={selection.cycleTarget} />}
+      {status === 'ready' && selection.windowOverlay}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
       {status === 'ready' && !placement && vm.windowAnnotations.length > 0 && vm.annotation2DActiveTool === 'none' && <div role="toolbar"
         aria-label={t('section2d.tools.select')}
@@ -220,6 +237,20 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               {vm.selectedAnnotationStyle.choices.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
             </SelectContent>
           </Select>}
+          {vm.canContinueDimension && <Button type="button" size="sm" variant="ghost" className="shrink-0"
+            onClick={event => { event.stopPropagation(); vm.startDimensionContinuation(); }}>Continue</Button>}
+          {vm.canContinueDimension && <>
+            <Button type="button" size="sm" variant="ghost" className="shrink-0"
+              onClick={event => { event.stopPropagation(); vm.startDimensionContinuation('insert'); }}>Add Point</Button>
+            <Button type="button" size="sm" variant="ghost" className="shrink-0" disabled={!vm.canRemoveDimensionPoint}
+              onClick={event => { event.stopPropagation(); vm.startDimensionContinuation('remove'); }}>Remove Point</Button>
+          </>}
+          {vm.selectedAnnotation2D.type === 'measure' && vm.selectedAnnotation2D.dimensionLabel
+            && vm.dimensionEditing.selectedDimension && <Button type="button" size="sm" variant="ghost"
+              className="shrink-0" disabled={!vm.dimensionEditing.hasLabelOffset}
+              onClick={event => { event.stopPropagation(); vm.dimensionEditing.resetLabelPosition(); }}>
+              {t('section2d.dimensionStyle.resetPosition')}
+            </Button>}
           {vm.selectedArea && <>
             <Select value={vm.selectedArea.tagTemplateId ?? '__no_area_tag__'}
               onValueChange={id => vm.updateSelectedAreaTag({ tagTemplateId: id === '__no_area_tag__' ? undefined : id })}>
@@ -380,6 +411,44 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
     })}
     {feedback && <g transform={`translate(${toScreen(feedback.point).x} ${toScreen(feedback.point).y})`}><DrawingSnapGlyph kind={feedback.kind} /></g>}
   </svg>;
+}
+
+/** Decode only changed authored SVGs, not on pan/zoom. Keep a bounded cache
+ * of the current view's successful images. Publish at most once per frame. */
+function useAreaTagImages(items: DrawingViewModel['areaTags']) {
+  const key = useMemo(() => JSON.stringify([...new Set(items.flatMap(item =>
+    item.graphic ? [item.graphic.href] : []))].sort()), [items]);
+  const cache = useRef(new Map<string, HTMLImageElement>());
+  const [images, setImages] = useState<ReadonlyMap<string, HTMLImageElement>>(() => new Map());
+  useEffect(() => {
+    const urls = JSON.parse(key) as string[];
+    const wanted = new Set(urls);
+    for (const href of cache.current.keys()) if (!wanted.has(href)) cache.current.delete(href);
+    setImages(new Map(cache.current));
+    let live = true;
+    let frame: number | null = null;
+    const pending: HTMLImageElement[] = [];
+    for (const href of urls) {
+      if (cache.current.has(href)) continue;
+      const image = new Image();
+      pending.push(image);
+      image.onload = () => {
+        if (!live || !image.naturalWidth || !image.naturalHeight) return;
+        cache.current.set(href, image);
+        if (frame === null) frame = requestAnimationFrame(() => {
+          frame = null;
+          if (live) setImages(new Map(cache.current));
+        });
+      };
+      image.src = href;
+    }
+    return () => {
+      live = false;
+      if (frame !== null) cancelAnimationFrame(frame);
+      for (const image of pending) image.onload = null;
+    };
+  }, [key]);
+  return images;
 }
 
 /** Drag only the Area's label. Commit once on release, keeping polygon geometry untouched. */

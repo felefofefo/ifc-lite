@@ -103,13 +103,13 @@ export function cloneClipboardPayload(payload: DrawingClipboardPayload, viewKey:
     case 'dimensions': {
       const chainId = id();
       return { kind: 'dimensions', items: payload.items.map((item, index) => ({
-        ...structuredClone(item), id: `${chainId}-${index}`, viewKey,
+        ...structuredClone(item), id: `${chainId}-${index}`, viewKey, drawOrder: undefined,
         ...(item.dimension && { dimension: { ...structuredClone(item.dimension), chainId, viewKey } }),
       })) };
     }
-    case 'area': return { kind: 'area', item: { ...structuredClone(payload.item), id: id(), viewKey } };
-    case 'text': return { kind: 'text', item: { ...structuredClone(payload.item), id: id(), viewKey } };
-    case 'cloud': return { kind: 'cloud', item: { ...structuredClone(payload.item), id: id(), viewKey } };
+    case 'area': return { kind: 'area', item: { ...structuredClone(payload.item), id: id(), viewKey, drawOrder: undefined } };
+    case 'text': return { kind: 'text', item: { ...structuredClone(payload.item), id: id(), viewKey, drawOrder: undefined } };
+    case 'cloud': return { kind: 'cloud', item: { ...structuredClone(payload.item), id: id(), viewKey, drawOrder: undefined } };
     case 'tag': return { kind: 'tag', item: { ...structuredClone(payload.item), id: id() } };
     case 'grid': return { kind: 'grid', item: { ...structuredClone(payload.item), id: id() } };
   }

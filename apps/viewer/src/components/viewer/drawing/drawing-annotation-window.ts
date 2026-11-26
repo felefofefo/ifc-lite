@@ -111,7 +111,10 @@ export function selectDrawingAnnotations(vm: DrawingViewModel, a: Point2D, b: Po
     if (area.points.length < 3) continue;
     const shapes: Shape[] = [{ points: area.points.map(screen), closed: true, filled: true }];
     const tag = vm.areaTagRects.find(item => item.id === area.id);
-    if (tag) shapes.push(rectangle(tag.x, tag.y, tag.width, tag.height));
+    if (tag) {
+      shapes.push(rectangle(tag.x, tag.y, tag.width, tag.height));
+      if (tag.leader) shapes.push({ points: [tag.leader.start, tag.leader.end] });
+    }
     add('polygon', area.id, shapes);
   }
   for (const cloud of vm.styledClouds) {

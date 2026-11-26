@@ -4,7 +4,7 @@
 
 import { isDegenerateMeasurement } from '../../store/slices/drawing2DDegenerateGuards';
 
-interface Point {
+export interface Point {
   x: number;
   y: number;
 }
@@ -194,6 +194,204 @@ export function dimensionSegments(
     previous = next;
   }
   return segments;
+}
+
+/** Geometry shared by dimension creation and offset editing. */
+type DimensionSnapTarget = {
+  start: Point; end: Point;
+  dimension?: { shape?: DimensionShape; chainId?: string; anchors?: readonly Point[] };
+};
+
+/** Actual reference points, not the ends of the decorative tick strokes. */
+export function dimensionSnapVertices(
+  targets: readonly DimensionSnapTarget[], excluded?: ReadonlySet<string>,
+): (readonly [number, number])[] {
+  const vertices: (readonly [number, number])[] = [];
+  const seen = new Set<string>();
+  for (const target of targets) {
+    const data = target.dimension;
+    if (!data || (data.chainId && excluded?.has(data.chainId))) continue;
+    for (const p of [target.start, target.end, ...(data.anchors ?? [])]) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      const key = `${p.x},${p.y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      vertices.push([p.x, p.y]);
+    }
+  }
+  return vertices;
+}
+
+/** Keep the geometric solution separate from the stationary visual feedback. */
+export interface DimensionAlignment {
+  point: Point;
+  reference: Point;
+}
+
+/** Project the requested position onto the nearest parallel dimension line,
+ * including its continuation beyond either tick. Exclude the moving chain. */
+export function parallelDimensionPoint(
+  axis: Point, point: Point, targets: readonly DimensionSnapTarget[],
+  tolerance: number, excluded?: ReadonlySet<string>,
+): DimensionAlignment | null {
+  const length = Math.hypot(axis.x, axis.y);
+  if (!Number.isFinite(length) || length < 1e-8 || !Number.isFinite(tolerance)
+    || tolerance <= 0 || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  const normal = { x: -axis.y / length, y: axis.x / length };
+  let best: DimensionAlignment | null = null;
+  let distance = tolerance;
+  for (const target of targets) {
+    const data = target.dimension;
+    if (!data || data.shape || (data.chainId && excluded?.has(data.chainId))) continue;
+    const dx = target.end.x - target.start.x, dy = target.end.y - target.start.y;
+    const span = Math.hypot(dx, dy);
+    if (!Number.isFinite(span) || span < 1e-8
+      || Math.abs(dx * normal.x + dy * normal.y) / span > 1e-6) continue;
+    const offset = project(point, target.start, normal);
+    if (!Number.isFinite(offset) || Math.abs(offset) > distance
+      || (best && Math.abs(offset) === distance)) continue;
+    const candidate = { x: point.x + normal.x * offset, y: point.y + normal.y * offset };
+    if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
+    // The snap solution slides along the supporting line, but the icon stays
+    // on the actual reference segment, not on the cursor projection.
+    const reference = { x: target.start.x + dx / 2, y: target.start.y + dy / 2 };
+    if (!Number.isFinite(reference.x) || !Number.isFinite(reference.y)) continue;
+    distance = Math.abs(offset);
+    best = { point: candidate, reference };
+  }
+  return best;
+}
+
+/** Snap a draft's line offset without changing the measured anchors. */
+export function dimensionAlignmentPoint(
+  draft: DimensionDraft, type: DimensionType, point: Point,
+  targets: readonly DimensionSnapTarget[], tolerance: number,
+): DimensionAlignment | null {
+  if (!draft.placing || isCurvedDimension(type) || draft.points.length < 2) return null;
+  const axis = (type === 'aligned' ? draft.alignedAxis : undefined)
+    ?? dimensionAxis(type, draft.points[0], draft.points[1]);
+  return axis ? parallelDimensionPoint(axis, point, targets, tolerance) : null;
+}
+
+/** A continuation uses the existing dimension's tick line and its extreme
+ * measured anchors. Existing segments (including label overrides) stay intact. */
+export function continueLinearDimension(
+  chain: readonly DimensionSnapTarget[], point: Point,
+): DimensionSegment | null {
+  const first = chain[0];
+  const finite = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.y);
+  if (!first?.dimension || !finite(point) || !finite(first.start) || !finite(first.end)) return null;
+  const origin = first.start;
+  const dx = first.end.x - origin.x, dy = first.end.y - origin.y;
+  const length = Math.hypot(dx, dy);
+  if (!Number.isFinite(length) || isDegenerateMeasurement(length)) return null;
+  const axis = { x: dx / length, y: dy / length };
+  const normal = { x: -axis.y, y: axis.x };
+  const ends: { tick: Point; anchor: Point; station: number }[] = [];
+  for (const item of chain) {
+    const data = item.dimension;
+    if (!data || data.shape || data.anchors?.length !== 2 || data.chainId !== first.dimension.chainId) return null;
+    const ticks = [item.start, item.end];
+    for (let i = 0; i < 2; i++) {
+      const tick = ticks[i], anchor = data.anchors[i];
+      if (!finite(tick) || !finite(anchor)) return null;
+      // Reject malformed/non-collinear chains instead of changing their geometry.
+      if (Math.abs(project(origin, tick, normal)) > 1e-6
+        || Math.abs(project(tick, anchor, axis)) > 1e-6) return null;
+      ends.push({ tick, anchor, station: project(origin, tick, axis) });
+    }
+  }
+  ends.sort((a, b) => a.station - b.station);
+  const low = ends[0], high = ends[ends.length - 1];
+  const station = project(origin, point, axis);
+  if (!Number.isFinite(station) || (station >= low.station && station <= high.station)) return null;
+  const end = station < low.station ? low : high;
+  const delta = station - end.station;
+  const distance = Math.abs(delta);
+  if (isDegenerateMeasurement(distance)) return null;
+  const tick = { x: end.tick.x + axis.x * delta, y: end.tick.y + axis.y * delta };
+  if (!finite(tick)) return null;
+  return delta < 0
+    ? { start: tick, end: end.tick, distance, anchors: [point, end.anchor] }
+    : { start: end.tick, end: tick, distance, anchors: [end.anchor, point] };
+}
+
+export type DimensionChainMode = 'continue' | 'insert' | 'remove';
+
+/** A local replacement: unaffected segments and their label overrides remain untouched. */
+export interface DimensionChainEdit {
+  removedIds: string[];
+  segments: DimensionSegment[];
+  reference: Point;
+}
+
+/** Insert a measured anchor inside one segment, or remove a shared interior
+ * anchor. The tick line is fixed, including for oblique dimensions. */
+export function editLinearDimensionChain(
+  chain: readonly (DimensionSnapTarget & { id: string })[], point: Point,
+  mode: Exclude<DimensionChainMode, 'continue'>, tolerance: number,
+): DimensionChainEdit | null {
+  const first = chain[0];
+  const finite = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.y);
+  if (!first?.dimension?.chainId || !finite(point) || !finite(first.start) || !finite(first.end)) return null;
+  const origin = first.start;
+  const dx = first.end.x - origin.x, dy = first.end.y - origin.y;
+  const length = Math.hypot(dx, dy);
+  if (!Number.isFinite(length) || isDegenerateMeasurement(length)) return null;
+  const axis = { x: dx / length, y: dy / length };
+  const normal = { x: -axis.y, y: axis.x };
+  const station = (p: Point) => project(origin, p, axis);
+  const at = (s: number): Point => ({ x: origin.x + axis.x * s, y: origin.y + axis.y * s });
+  const equal = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y) <= 1e-6;
+  const intervals: { id: string; lo: number; hi: number; start: Point; end: Point; a: Point; b: Point }[] = [];
+  const ids = new Set<string>();
+  for (const item of chain) {
+    const data = item.dimension;
+    if (!data || data.shape || data.chainId !== first.dimension.chainId || data.anchors?.length !== 2
+      || ids.has(item.id)) return null;
+    ids.add(item.id);
+    let [start, end] = [item.start, item.end];
+    let [a, b] = data.anchors;
+    if (![start, end, a, b].every(finite)) return null;
+    if (station(start) > station(end)) { [start, end] = [end, start]; [a, b] = [b, a]; }
+    const lo = station(start), hi = station(end);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || isDegenerateMeasurement(hi - lo)
+      || Math.abs(project(origin, start, normal)) > 1e-6 || Math.abs(project(origin, end, normal)) > 1e-6
+      || Math.abs(project(start, a, axis)) > 1e-6 || Math.abs(project(end, b, axis)) > 1e-6) return null;
+    intervals.push({ id: item.id, lo, hi, start, end, a, b });
+  }
+  intervals.sort((a, b) => a.lo - b.lo);
+  // Refuse ambiguous, overlapping or disconnected chains instead of guessing.
+  for (let i = 1; i < intervals.length; i++) {
+    if (!equal(intervals[i - 1].end, intervals[i].start) || !equal(intervals[i - 1].b, intervals[i].a)) return null;
+  }
+  if (mode === 'insert') {
+    const s = station(point);
+    const item = intervals.find(part => s > part.lo && s < part.hi
+      && !isDegenerateMeasurement(s - part.lo) && !isDegenerateMeasurement(part.hi - s));
+    if (!item) return null;
+    const tick = at(s);
+    if (!finite(tick)) return null;
+    return { removedIds: [item.id], reference: point, segments: [
+      { start: item.start, end: tick, distance: s - item.lo, anchors: [item.a, point] },
+      { start: tick, end: item.end, distance: item.hi - s, anchors: [point, item.b] },
+    ] };
+  }
+  if (mode !== 'remove' || !Number.isFinite(tolerance) || tolerance <= 0) return null;
+  let best: DimensionChainEdit | null = null;
+  let distance = tolerance;
+  for (let i = 1; i < intervals.length; i++) {
+    const left = intervals[i - 1], right = intervals[i];
+    // Both the tick node and the actual measured anchor are selectable.
+    const tickDistance = Math.hypot(point.x - left.end.x, point.y - left.end.y);
+    const baseDistance = Math.hypot(point.x - left.b.x, point.y - left.b.y);
+    const d = Math.min(tickDistance, baseDistance);
+    if (d > distance || (best && d === distance)) continue;
+    distance = d;
+    best = { removedIds: [left.id, right.id], reference: tickDistance <= baseDistance ? left.end : left.b,
+      segments: [{ start: left.start, end: right.end, distance: right.hi - left.lo, anchors: [left.a, right.b] }] };
+  }
+  return best;
 }
 
 export function snapDrawingAngle(anchor: Point, point: Point, baseAngle = 0, increment = 15): Point {

@@ -344,16 +344,20 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
     mouseHandlers,
     cycleTarget,
     annotationHover: annotationEnabled ? previewAnnotation : null,
-    overlay: (index && (ids.size > 0 || (enabled && previewIfc !== undefined))) || (windowEnabled && selectionBox) ? (
+    overlay: index && (ids.size > 0 || (enabled && previewIfc !== undefined)) ? (
       <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full">
         {Array.from(ids, id => highlight(id, false))}
         {enabled && previewIfc !== undefined && !ids.has(previewIfc) && highlight(previewIfc, true)}
-        {windowEnabled && selectionBox && <rect data-drawing-selection-box
+      </svg>
+    ) : null,
+    windowOverlay: windowEnabled && selectionBox ? (
+      <svg aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 h-full w-full">
+        <rect data-drawing-selection-box
           x={Math.min(selectionBox.start.x, selectionBox.end.x)} y={Math.min(selectionBox.start.y, selectionBox.end.y)}
           width={Math.abs(selectionBox.end.x - selectionBox.start.x)} height={Math.abs(selectionBox.end.y - selectionBox.start.y)}
           className={selectionBox.end.x < selectionBox.start.x ? 'text-green-600' : 'text-primary'}
           fill="currentColor" fillOpacity={0.09} stroke="currentColor" strokeWidth={1}
-          strokeDasharray={selectionBox.end.x < selectionBox.start.x ? '5 3' : undefined} />}
+          strokeDasharray={selectionBox.end.x < selectionBox.start.x ? '5 3' : undefined} />
       </svg>
     ) : null,
   };

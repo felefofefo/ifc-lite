@@ -31,7 +31,7 @@ export interface UseAnnotation2DParams {
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** Same paper-unit conversion used by Drawing2DCanvas for text styles. */
   paperUnit?: number;
-  areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number }[];
+  areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number; leader?: { start: Point2D; end: Point2D } }[];
   activeTool: Annotation2DTool;
   setActiveTool: (tool: Annotation2DTool) => void;
   // Polygon area state
@@ -59,6 +59,7 @@ export interface UseAnnotation2DParams {
   /** Editing/dragging is opt-in. The first click only selects. */
   editableAnnotationId?: string | null;
   snapForDrag?: (point: Point2D) => Point2D | null;
+  snapDraggedAnnotation?: (point: Point2D, selected: SelectedAnnotation2D) => Point2D | null;
   angularSnap?: 'off' | '15' | '90';
   pickDimensionLabel?: (x: number, y: number) => string | undefined;
   setSelectedAnnotation2D: (sel: SelectedAnnotation2D | null) => void;
@@ -114,6 +115,7 @@ export function useAnnotation2D({
   selectedAnnotation2D,
   editableAnnotationId,
   snapForDrag,
+  snapDraggedAnnotation,
   angularSnap = 'off',
   setSelectedAnnotation2D,
   moveAnnotation2D,
@@ -254,11 +256,10 @@ export function useAnnotation2D({
   const hitTestAnnotations = useCallback((screenX: number, screenY: number): SelectedAnnotation2D | null => {
     const { textAnnotations2D: texts, cloudAnnotations2D: clouds,
       polygonArea2DResults: polys, measure2DResults: measures } = storeRef.current;
-    const label = pickDimensionLabel?.(screenX, screenY);
-    if (label) return { type: 'measure', id: label, dimensionLabel: true };
+    const dimensionLabelId = pickDimensionLabel?.(screenX, screenY);
     return hitTestAnnotationsPure({
       screenX, screenY, threshold: HIT_TEST_RADIUS_PX, drawingToScreen,
-      texts, clouds, polys, measures, paperUnit, areaTagRects, measureText: measureAnnotationText,
+      texts, clouds, polys, measures, paperUnit, areaTagRects, dimensionLabelId, measureText: measureAnnotationText,
     });
   }, [drawingToScreen, pickDimensionLabel, paperUnit, areaTagRects, measureAnnotationText]); // reads annotation data from storeRef
 
@@ -452,13 +453,18 @@ export function useAnnotation2D({
         x: drawingCoord.x - dragOffsetRef.current.x,
         y: drawingCoord.y - dragOffsetRef.current.y,
       };
-      const snapped = snapForDrag?.(raw) ?? null;
-      const angle = angularSnap !== 'off' && dragAnchorRef.current
+      const sel = storeRef.current.selectedAnnotation2D;
+      const measurement = sel?.type === 'measure' && !sel.dimensionLabel
+        ? storeRef.current.measure2DResults.find(item => item.id === sel.id) : undefined;
+      const linear = !!measurement?.dimension && !measurement.dimension.shape;
+      const snapped = sel && snapDraggedAnnotation ? snapDraggedAnnotation(raw, sel) : snapForDrag?.(raw) ?? null;
+      // A linear chain already has its own normal-only movement constraint.
+      const angle = !linear && angularSnap !== 'off' && dragAnchorRef.current
         ? snapDrawingAngle(dragAnchorRef.current, raw, 0, Number(angularSnap)) : null;
       const newDrawingPos = snapped && (!angle || Math.hypot(snapped.x - angle.x, snapped.y - angle.y) < 1e-8)
         ? snapped : angle ?? snapped ?? raw;
       // We call the store action directly — it's already optimized for single-item updates
-      const sel = storeRef.current.selectedAnnotation2D;
+      if (linear) setMeasure2DSnapPoint(snapped);
       if (sel) {
         commitDragPosition(sel, newDrawingPos);
       }
@@ -489,13 +495,14 @@ export function useAnnotation2D({
     setAnnotation2DCursorPos(point);
   }, [activeTool, containerRef, screenToDrawing, findSnapPoint, setMeasure2DSnapPoint,
     setAnnotation2DCursorPos, applyShiftConstraint, polygonArea2DPoints, cloudAnnotation2DPoints,
-    commitDragPosition, snapForDrag, angularSnap, resolveAreaPoint]);
+    commitDragPosition, snapForDrag, snapDraggedAnnotation, angularSnap, resolveAreaPoint]);
 
   const endDrag = useCallback(() => {
+    if (isDraggingRef.current) setMeasure2DSnapPoint(null);
     isDraggingRef.current = false;
     dragOffsetRef.current = null;
     dragAnchorRef.current = null;
-  }, []);
+  }, [setMeasure2DSnapPoint]);
   const handleMouseUp = useCallback((_e: React.MouseEvent) => endDrag(), [endDrag]);
 
   // A release outside the canvas never reaches its onMouseUp (like useMeasure2D's

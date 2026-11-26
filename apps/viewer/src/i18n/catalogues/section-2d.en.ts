@@ -60,7 +60,7 @@ export const section2dEn = {
   'section2d.tools.distance': 'Dimension',
   'section2d.dimensionStyle.title': 'Dimensions',
   'section2d.dimensionStyle.manage': 'Manage styles',
-  'section2d.dimensionStyle.architectural': 'Architectural dimension style',
+  'section2d.dimensionStyle.architectural': 'Default',
   'section2d.dimensionStyle.description': 'Changes apply to dimensions using this type. Sizes are in millimetres on paper.',
   'section2d.dimensionStyle.preview': 'Dimension style preview',
   'section2d.dimensionStyle.textSize': 'Text height (mm)',

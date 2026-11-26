@@ -14,7 +14,7 @@ import type { LineweightRow } from './lineweight-table';
 import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import { roomFootprintArea, type DrawingIfcSpaceRoom } from './ifc-space-rooms';
 import type { PolygonArea2DResult } from '@/store/slices/drawing2DSlice';
-import { computePolygonCentroid } from '@/components/viewer/tools/computePolygonArea';
+import { computePolygonSurfaceCentroid } from '@/components/viewer/tools/computePolygonArea';
 
 export interface DrawingElementTag {
   id: string;
@@ -395,7 +395,7 @@ export function resolveAreaTag(area: PolygonArea2DResult, templates: readonly Ta
   const template = templates.find(item => item.id === area.tagTemplateId && isAreaTagTemplate(item));
   if (!template || area.points.length < 3 || !Number.isFinite(area.area) || area.area <= 0
     || !Number.isFinite(area.perimeter)) return undefined;
-  const anchor = computePolygonCentroid(area.points);
+  const anchor = computePolygonSurfaceCentroid(area.points);
   const position = area.tagPosition ?? anchor;
   if (!isPoint(position) || !isPoint(anchor)) return undefined;
   const values = areaTagValues(area);

@@ -99,6 +99,27 @@ export function computePolygonCentroid(points: Point2D[]): Point2D {
   return { x: cx / points.length, y: cy / points.length };
 }
 
+/** Area-weighted geometric centroid for a simple polygon. Unlike the vertex
+ * average, extra points on a straight edge do not shift the center. Work
+ * relative to the first point to avoid cancellation at large coordinates. */
+export function computePolygonSurfaceCentroid(points: Point2D[]): Point2D {
+  if (points.length < 3) return computePolygonCentroid(points);
+  const origin = points[0];
+  let twiceArea = 0, x = 0, y = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    const ax = a.x - origin.x, ay = a.y - origin.y;
+    const bx = b.x - origin.x, by = b.y - origin.y;
+    const cross = ax * by - bx * ay;
+    twiceArea += cross;
+    x += (ax + bx) * cross;
+    y += (ay + by) * cross;
+  }
+  if (!Number.isFinite(twiceArea) || Math.abs(twiceArea) < 1e-12) return computePolygonCentroid(points);
+  const center = { x: origin.x + x / (3 * twiceArea), y: origin.y + y / (3 * twiceArea) };
+  return Number.isFinite(center.x) && Number.isFinite(center.y) ? center : computePolygonCentroid(points);
+}
+
 /**
  * A room area in square metres at one decimal, whatever its size: the Space
  * Sketch bar and its status line both use it, so an empty draft reads

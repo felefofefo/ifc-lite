@@ -61,7 +61,7 @@ export function DrawingDimensionStyles({ settings, unitOverrides, lineweights, s
             }
           }
         }}>
-          <SelectTrigger id="dimension-current-type" className="h-8 min-w-0 text-xs"><SelectValue /></SelectTrigger>
+          <SelectTrigger id="dimension-current-type" className="h-8 w-full min-w-0 text-xs"><SelectValue /></SelectTrigger>
           <DimensionTypeOptions types={types} />
         </Select>
       </div>

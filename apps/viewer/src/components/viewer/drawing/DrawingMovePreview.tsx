@@ -36,7 +36,7 @@ function MoveGhost({ vm, preview }: { vm: DrawingViewModel; preview: MoveGhostDa
     const start = translate(a), end = translate(b);
     return <line key={key} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
   };
-  const snap = preview.reference && screen(preview.reference);
+  const snap = preview.reference && screen(vm.snapDisplayPoint(preview.reference));
   const tag = preview.tag;
   const tagGraphics = tag && vm.tags.items.find(item => item.tag.id === tag.id);
   const p = tag && translate(tag.position);

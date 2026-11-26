@@ -205,12 +205,8 @@ export function DrawingPanel(): React.ReactElement {
           <TooltipContent>{t(isCustomPlane ? 'section2d.matchView.unavailableTitle' : 'section2d.matchView.title')}</TooltipContent>
         </Tooltip>
       </>}
-      <Button variant="ghost" size={tier === 'narrow' ? 'icon-xs' : 'sm'} aria-pressed={viewsOpen}
-        aria-label={t('section2d.views.title')} title={t('section2d.views.title')} onClick={() => setViewsOpen((open) => !open)}
-        className={tier === 'narrow' ? undefined : 'h-7 gap-1 px-2 text-xs'}>
-        <PanelLeft className="h-3.5 w-3.5" />
-        {tier !== 'narrow' && t('section2d.views.title')}
-      </Button>
+      <DrawingHeaderToggle icon={PanelLeft} compact={tier === 'narrow'} label={t('section2d.views.title')}
+        pressed={viewsOpen} onClick={() => setViewsOpen(open => !open)} />
       <div className="inline-flex items-center gap-0.5">
         <DrawingHeaderToggle icon={Magnet} compact={tier === 'narrow'} label={t('section2d.snaps.title')}
           pressed={vm.snapsEnabled} onClick={vm.toggleSnaps} />

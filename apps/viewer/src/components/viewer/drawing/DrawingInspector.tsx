@@ -152,9 +152,9 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
             labelEdit={vm.selectedAnnotation2D?.dimensionLabel && vm.dimensionEditing.selectedDimension ? {
               id: vm.dimensionEditing.selectedDimension.id,
               angle: vm.dimensionEditing.selectedDimension.dimension?.textAngle ?? 0,
-              hasOffset: Boolean(vm.dimensionEditing.selectedDimension.dimension?.textOffset),
+              hasOffset: vm.dimensionEditing.hasLabelOffset,
               rotate: angle => vm.dimensionEditing.updateLabel({ textAngle: angle }),
-              resetPosition: () => vm.dimensionEditing.updateLabel({ textOffset: undefined }),
+              resetPosition: vm.dimensionEditing.resetLabelPosition,
             } : undefined} />
           {!view3D && <><DrawingMarkerStyles kind="section" lineweights={vm.lineweights} /><DrawingMarkerStyles kind="elevation" lineweights={vm.lineweights} /><DrawingAnnotationStyles /></>}
         </TabsContent>
