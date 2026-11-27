@@ -122,8 +122,11 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     ?? (use === 'grid' ? firstPoint : null), angularSnap);
   const stored = useMemo(() => [
     ...readDrawingTags(view?.elementTags).filter(tag => !grids.some(grid => grid.id === tag.id)),
-    ...(drawing ? grids.flatMap(grid => { const tag = projectGrid(grid, drawing, view?.gridExtents?.[grid.id]); return tag ? [tag] : []; }) : []),
-  ], [view?.elementTags, view?.gridExtents, grids, drawing]);
+    ...(drawing ? grids.flatMap(grid => {
+      const tag = projectGrid(grid, drawing, view?.gridExtents?.[grid.id], view?.gridDrawOrder?.[grid.id]);
+      return tag ? [tag] : [];
+    }) : []),
+  ], [view?.elementTags, view?.gridExtents, view?.gridDrawOrder, grids, drawing]);
   const currentTagSelection = selectedTagId;
   const selected = currentTagSelection !== null && currentTagSelection.viewId === view?.id
     ? stored.find(tag => tag.id === currentTagSelection.id) : undefined;

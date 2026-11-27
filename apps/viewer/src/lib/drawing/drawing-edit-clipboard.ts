@@ -110,7 +110,7 @@ export function cloneClipboardPayload(payload: DrawingClipboardPayload, viewKey:
     case 'area': return { kind: 'area', item: { ...structuredClone(payload.item), id: id(), viewKey, drawOrder: undefined } };
     case 'text': return { kind: 'text', item: { ...structuredClone(payload.item), id: id(), viewKey, drawOrder: undefined } };
     case 'cloud': return { kind: 'cloud', item: { ...structuredClone(payload.item), id: id(), viewKey, drawOrder: undefined } };
-    case 'tag': return { kind: 'tag', item: { ...structuredClone(payload.item), id: id() } };
+    case 'tag': return { kind: 'tag', item: { ...structuredClone(payload.item), id: id(), drawOrder: undefined } };
     case 'grid': return { kind: 'grid', item: { ...structuredClone(payload.item), id: id() } };
   }
 }

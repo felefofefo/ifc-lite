@@ -23,10 +23,10 @@ import { toast } from '@/components/ui/toast';
 import { useDialogs } from '@/components/ui/confirm-dialog';
 import { isTextEntryElement } from '@/lib/keyboard-event';
 import { registerKeyboardCommand } from '@/lib/commands/dispatcher';
-import { arrangeDrawingItems, canvasMarkupGroups, canvasArrangeRanks, type DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
+import { canvasMarkupGroups, canvasArrangeRanks, arrangedGridOrders, type DrawingArrangeAction } from '@/lib/drawing/drawing-arrange';
 import { useTranslation } from '@/i18n';
 import { readDrawingTags, collectTagTargets, findTagTarget, isAreaTagTemplate, resolveAreaTag, areaTagScreenRect, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
-import { moveProjectGrid } from '@/lib/drawing/project-grids';
+import { moveProjectGrid, projectGrid } from '@/lib/drawing/project-grids';
 import { collectViewMarkers, DEFAULT_VIEW_MARKERS, markerHeadPoint } from '@/lib/drawing/view-markers';
 import { resolveMarkerHeads } from '@/lib/drawing/drawing-tag-library';
 import type { Vec2 } from '@/lib/snap/types';
@@ -376,9 +376,9 @@ export function useDrawingViewModel() {
     completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, defaultAnnotationStyles?.area); }, cancelPolygonArea2D,
     textAnnotations2D: displayOptions.showAnnotations ? styledNotes : [],
     addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey, appearanceId: defaultAnnotationStyles?.text }); }, setTextAnnotation2DEditing,
-    cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? cloudAnnotations2D : [], addCloudAnnotation2DPoint,
+    cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? styledMarkup('cloud', cloudAnnotations2D) : [], addCloudAnnotation2DPoint,
     completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey, defaultAnnotationStyles?.cloud); }, cancelCloudAnnotation2D,
-    measure2DResults: displayOptions.showAnnotations ? measure2DResults : [], polygonArea2DResults: displayOptions.showAnnotations ? styledAreas : [],
+    measure2DResults: alignmentDimensions, polygonArea2DResults: displayOptions.showAnnotations ? styledAreas : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
     selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D, moveAnnotation2D,
     snapForDrag: measureHandlers.findSnapPoint,
@@ -583,7 +583,8 @@ export function useDrawingViewModel() {
   const canCopy = windowAnnotations.length ? canCopyWindow : !!selectedTag || !!annotationPayload;
   const windowCanvasAnnotations = useMemo(() => windowAnnotations.filter(isCanvasWindowAnnotation), [windowAnnotations]);
   const canDelete = windowAnnotations.length > 0 || !!selectedTag || !!annotationPayload || !!selectedMarker;
-  const canArrange = !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
+  const canArrange = !!annotationPayload || (!!selectedTag && !tags.active && !!savedView
+    && viewKey === 'view:' + savedView.id);
   const canCut = windowAnnotations.length
     ? canCopyWindow && !windowAnnotations.some(item => item.type === 'tag' && projectGrids.some(grid => grid.id === item.id))
     : !!annotationPayload || (!!selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id));
@@ -741,35 +742,46 @@ export function useDrawingViewModel() {
   deletionRef.current = canDelete ? () => { void requestDeleteSelection(); } : null;
 
   function arrangeSelection(action: DrawingArrangeAction) {
-    if (selectedTag && !projectGrids.some(grid => grid.id === selectedTag.id) && savedView) {
-      const latest = useSavedSectionCuts.getState().cuts.find(view => view.id === savedView.id);
-      if (!latest) return;
-      try {
-        updateViewSettings(latest.id, { elementTags: arrangeDrawingItems(readDrawingTags(latest.elementTags), selectedTag.id, action) });
-      } catch (error) { console.warn('Could not arrange drawing tag', error); toast.error(t('section2d.tools.editError')); }
-      return;
+    if (!viewKey || !canArrange || tags.active) return;
+    const selected = selectedTag ? { type: 'tag' as const, id: selectedTag.id } : selectedAnnotation2D;
+    if (!selected || (selected.type !== 'tag' && !annotationPayload)) return;
+    const latest = savedView && viewKey === 'view:' + savedView.id
+      ? useSavedSectionCuts.getState().cuts.find(view => view.id === savedView.id) : undefined;
+    if (selected.type === 'tag' && !latest) return;
+    const storedTags = readDrawingTags(latest?.elementTags);
+    const localTags = storedTags.filter(tag => !projectGrids.some(grid => grid.id === tag.id));
+    // Resolve shared grids in this drawing only. Their order never belongs to ProjectGrid itself.
+    const projectedGrids = latest && drawing ? projectGrids.flatMap(grid => {
+      const tag = projectGrid(grid, drawing, latest.gridExtents?.[grid.id], latest.gridDrawOrder?.[grid.id]);
+      return tag ? [tag] : [];
+    }) : [];
+    const state = useViewerStore.getState();
+    const inView = (item: { viewKey?: string }) => item.viewKey === viewKey;
+    const inMeasureView = (item: typeof state.measure2DResults[number]) => (item.dimension?.viewKey ?? item.viewKey) === viewKey;
+    const groups = canvasMarkupGroups(state.measure2DResults.filter(inMeasureView),
+      state.polygonArea2DResults.filter(inView), state.textAnnotations2D.filter(inView), state.cloudAnnotations2D.filter(inView), [...localTags, ...projectedGrids]);
+    const ranks = canvasArrangeRanks(groups, selected, action);
+    if (!ranks) return;
+    function apply<T extends { id: string; drawOrder?: number }>(items: T[], type: 'measure' | 'polygon' | 'text' | 'cloud' | 'tag', scoped: (item: T) => boolean): T[] {
+      return items.map(item => {
+        if (!scoped(item)) return item;
+        const drawOrder = ranks!.get(`${type}:${item.id}`);
+        return drawOrder === undefined || drawOrder === item.drawOrder ? item : { ...item, drawOrder };
+      });
     }
-    if (!selectedAnnotation2D || !annotationPayload || !viewKey) return;
-    const selected = selectedAnnotation2D;
-    useViewerStore.setState(state => {
-      const inView = (item: { viewKey?: string }) => item.viewKey === viewKey;
-      const inMeasureView = (item: typeof state.measure2DResults[number]) => (item.dimension?.viewKey ?? item.viewKey) === viewKey;
-      const groups = canvasMarkupGroups(state.measure2DResults.filter(inMeasureView),
-        state.polygonArea2DResults.filter(inView), state.textAnnotations2D.filter(inView), state.cloudAnnotations2D.filter(inView));
-      const ranks = canvasArrangeRanks(groups, selected, action);
-      if (!ranks) return state;
-      function apply<T extends { id: string; drawOrder?: number }>(items: T[], type: 'measure' | 'polygon' | 'text' | 'cloud', scoped: (item: T) => boolean): T[] {
-        return items.map(item => {
-          if (!scoped(item)) return item;
-          const drawOrder = ranks!.get(`${type}:${item.id}`);
-          return drawOrder === undefined || drawOrder === item.drawOrder ? item : { ...item, drawOrder };
-        });
+    try {
+      const nextTags = apply(storedTags, 'tag', tag => !projectGrids.some(grid => grid.id === tag.id));
+      const nextGridOrders = arrangedGridOrders(latest?.gridDrawOrder, projectedGrids.map(tag => tag.id), ranks);
+      // Persist tag and grid ranks together before changing the canvas store.
+      if (latest && (nextGridOrders || nextTags.some((tag, index) => tag !== storedTags[index]))) {
+        updateViewSettings(latest.id, { elementTags: nextTags,
+          ...(nextGridOrders && { gridDrawOrder: nextGridOrders }) });
       }
-      return { measure2DResults: apply(state.measure2DResults, 'measure', inMeasureView),
-        polygonArea2DResults: apply(state.polygonArea2DResults, 'polygon', inView),
-        textAnnotations2D: apply(state.textAnnotations2D, 'text', inView),
-        cloudAnnotations2D: apply(state.cloudAnnotations2D, 'cloud', inView) };
-    });
+      useViewerStore.setState(current => ({ measure2DResults: apply(current.measure2DResults, 'measure', inMeasureView),
+        polygonArea2DResults: apply(current.polygonArea2DResults, 'polygon', inView),
+        textAnnotations2D: apply(current.textAnnotations2D, 'text', inView),
+        cloudAnnotations2D: apply(current.cloudAnnotations2D, 'cloud', inView) }));
+    } catch (error) { console.warn('Could not arrange drawing markup', error); toast.error(t('section2d.tools.editError')); }
   }
 
   function cutSelection() {
@@ -1011,7 +1023,7 @@ export function useDrawingViewModel() {
     const reference = measureHandlers.findSnapPoint(point, vertices, excludedChains);
     const directed = moveBase ? resolveMoveDirection(moveBase, point, reference, event.shiftKey) : null;
     const final = directed ?? reference ?? point;
-    return { point: final, reference: reference ?? (directed && angularSnap !== 'off' ? final : null) };
+    return { point: final, reference: directed ?? reference };
   }
 
   function moveClick(event: React.MouseEvent) {
@@ -1281,7 +1293,15 @@ export function useDrawingViewModel() {
     }, cursorClass: tags.active ? 'cursor-crosshair' : cursorClass,
     measure2DMode, measure2DResults, displayedMeasurements, styledAreas, styledNotes, styledClouds, measure2DSnapPoint, dimensionType, selectDimensionType, angularSnap, setAngularSnap,
     objectSnaps, setObjectSnaps, snapsEnabled, toggleSnaps, selectOnly2D, toggleSelectOnly2D,
-    findSnapPoint: measureHandlers.findSnapPoint, snapKindFor: measureHandlers.snapKindFor,
+    findSnapPoint: measureHandlers.findSnapPoint,
+    snapKindFor: (point: { x: number; y: number } | null) => {
+      const kind = measureHandlers.snapKindFor(point);
+      if (kind || !point || annotation2DActiveTool !== 'polygon-area' || polygonArea2DPoints.length < 3) return kind;
+      // Polygon closure and own-vertex snaps do not pass through the IFC solver.
+      const same = (p: { x: number; y: number }) => p.x === point.x && p.y === point.y;
+      return same(polygonArea2DPoints[0]) || (objectSnaps.endpoint && polygonArea2DPoints.slice(1, -1).some(same))
+        ? 'endpoint' as const : null;
+    },
     snapDisplayPoint: measureHandlers.snapDisplayPoint,
     dimensionDraft: measureHandlers.draft, dimensionPreview: measureHandlers.preview,
     continuingDimension: !!continuationDimensions?.length, canContinueDimension, startDimensionContinuation,

@@ -9,18 +9,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useId, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import type { ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
+import { tagOverlayOrder } from '@/lib/drawing/drawing-arrange';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingCycleTarget } from './DrawingModelSelection';
 import { DrawingSnapGlyph } from './DrawingSnapGlyph';
 
-export function DrawingElementTags({ vm, cycleTarget }: { vm: DrawingViewModel; cycleTarget?: DrawingCycleTarget | null }) {
+export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: DrawingViewModel; cycleTarget?: DrawingCycleTarget | null; canvasTagIds?: ReadonlySet<string> }) {
   const { t } = useTranslation();
   const filterId = useId().replace(/:/g, '');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const tags = vm.tags;
   const draft = tags.draft;
   const snap = tags.snapReference && tags.screen(tags.snapReference);
-  const shown = tags.items.filter(item => item.tag.id !== draft?.tag.id);
+  const shown = tags.items.filter(item => item.tag.id !== draft?.tag.id).sort((a, b) => {
+    // SVG fallbacks stay above the canvas until their graphics decode.
+    const aCanvas = canvasTagIds?.has(a.tag.id) ?? false, bCanvas = canvasTagIds?.has(b.tag.id) ?? false;
+    if (aCanvas !== bCanvas) return aCanvas ? -1 : 1;
+    const aa = tagOverlayOrder(a.tag), bb = tagOverlayOrder(b.tag);
+    return aa === bb ? 0 : aa < bb ? -1 : 1;
+  });
   const kind = tags.draftUse ?? tags.use;
   const hint = !tags.canPlace ? t('section2d.tags.saveView')
     : tags.mode && tags.miss
@@ -45,7 +52,8 @@ export function DrawingElementTags({ vm, cycleTarget }: { vm: DrawingViewModel; 
     const highlighted = selected || windowSelected || editing || hovered;
     const weakHighlight = hovered && !selected && !windowSelected && !editing;
     const highlightFilter = highlighted ? `url(#${filterId}-${weakHighlight ? 'hover' : 'selected'})` : undefined;
-    const graphicElement = <g key={tag.id} style={{ outline: 'none' }}
+    // Opacity changes painting only; the same SVG shapes remain the interactive hit targets.
+    const graphicElement = <g key={tag.id} opacity={!preview && canvasTagIds?.has(tag.id) ? 0 : 1} style={{ outline: 'none' }}
       data-window-symbol={interactive ? 'tag' : undefined} data-window-id={interactive ? tag.id : undefined}
       className={dragging ? 'pointer-events-auto cursor-grab touch-none text-primary'
         : highlighted || preview ? 'text-primary' : 'text-foreground'}

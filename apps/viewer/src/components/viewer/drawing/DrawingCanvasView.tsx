@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { createLineworkSource } from '@/lib/snap/sources/linework';
 import { solveSnap } from '@/lib/snap/solve';
 import type { SnapKind, SnapProfile, SnapResult } from '@/lib/snap/types';
-import { snapDrawingAngle } from '@/lib/drawing/dimension-line';
+import { useDrawingDirection } from '@/hooks/useDrawingDirection';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
@@ -38,12 +38,17 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
   const fillPreview = usePublicationFillPreview();
   const areaTagFilterId = useId().replace(/:/g, '');
-  const areaTagImages = useAreaTagImages(vm.areaTags);
+  const areaTagImages = useAreaTagImages([...vm.areaTags, ...vm.tags.items]);
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
-  const selection = useDrawingModelSelection(vm,
-    status === 'ready' && !vm.selectOnly2D && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing, !placement);
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
+  const canvasTags = status === 'ready' && hasContent && displayOptions.showAnnotations && !placement
+    ? vm.tags.items.filter(item => item.tag.id !== vm.tags.draft?.tag.id
+      && (!item.startGraphic || areaTagImages.has(item.startGraphic.href))
+      && (item.hideEnd || !item.graphic || areaTagImages.has(item.graphic.href))) : [];
+  const canvasTagIds = new Set(canvasTags.map(item => item.tag.id));
+  const selection = useDrawingModelSelection(vm,
+    status === 'ready' && !vm.selectOnly2D && vm.annotation2DActiveTool === 'none' && !placement && !vm.textAnnotation2DEditing, !placement, canvasTagIds);
   const snapDisplayPoint = vm.measure2DSnapPoint && vm.snapDisplayPoint(vm.measure2DSnapPoint);
   // While a new SVG loads (or if image decoding fails), keep the original
   // SVG overlay as a visible fallback. Never drop a tag from the drawing.
@@ -118,6 +123,12 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           polygonAreaResults={vm.styledAreas}
           areaTagRects={vm.areaTagRects}
           areaTagImages={areaTagImages}
+          canvasTags={canvasTags}
+          tagPaperUnit={vm.tags.paperUnit}
+          tagFontSize={vm.tags.fontSize}
+          selectedTagIds={[...(vm.tags.selected ? [vm.tags.selected.id] : []),
+            ...vm.windowAnnotations.filter(item => item.type === 'tag').map(item => item.id)]}
+          hoveredTagId={selection.hoveredTagId}
           textAnnotations={vm.styledNotes}
           textAnnotationEditing={vm.textAnnotation2DEditing}
           cloudAnnotationPoints={vm.cloudAnnotation2DPoints}
@@ -137,15 +148,6 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         />
       )}
 
-      {/* Screen-sized snap feedback; unlike model geometry it must not be exported. */}
-      {status === 'ready' && snapDisplayPoint && !placement
-        && (vm.measure2DMode || ['polygon-area', 'text', 'cloud', 'move'].includes(vm.annotation2DActiveTool)
-          || (vm.annotation2DActiveTool === 'none' && vm.selectedAnnotation2D?.type === 'measure'))
-        && <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-          <g transform={`translate(${snapDisplayPoint.x * (drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale) + markupTransform.x} ${snapDisplayPoint.y * (drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale) + markupTransform.y})`}>
-            <DrawingSnapGlyph kind={vm.snapKindFor(vm.measure2DSnapPoint)} />
-          </g>
-        </svg>}
 
       {/* A room footprint is a screen-only reference, not an IFC cut/surface fill
           or an authored Area. Keep it independent of IFC graphic overrides. */}
@@ -202,7 +204,16 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
         role="status">{t(vm.moveBase ? 'section2d.tools.moveTarget' : 'section2d.tools.moveBase')}</div>}
       {status === 'ready' && displayOptions.showAnnotations && !placement && <ViewMarkers vm={vm} cycleTarget={selection.cycleTarget} />}
-      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags vm={vm} cycleTarget={selection.cycleTarget} />}
+      {status === 'ready' && displayOptions.showAnnotations && !placement && <DrawingElementTags vm={vm} cycleTarget={selection.cycleTarget} canvasTagIds={canvasTagIds} />}
+      {/* Screen-sized snap feedback; unlike model geometry it must not be exported. */}
+      {status === 'ready' && snapDisplayPoint && !placement
+        && (vm.measure2DMode || ['polygon-area', 'text', 'cloud', 'move'].includes(vm.annotation2DActiveTool)
+          || (vm.annotation2DActiveTool === 'none' && !!vm.selectedAnnotation2D && !vm.editableAnnotationId))
+        && <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+          <g transform={`translate(${snapDisplayPoint.x * (drawnPlane.axis === 'side' ? -markupTransform.scale : markupTransform.scale) + markupTransform.x} ${snapDisplayPoint.y * (drawnPlane.axis === 'down' ? markupTransform.scale : -markupTransform.scale) + markupTransform.y})`}>
+            <DrawingSnapGlyph kind={vm.snapKindFor(vm.measure2DSnapPoint)} />
+          </g>
+        </svg>}
       {status === 'ready' && selection.windowOverlay}
       {placement && <PlaceVerticalView key={`${placement}:${drawing?.config.plane.position}:${drawnPlane.flipped}`} kind={placement} vm={vm} close={stopPlacement} />}
       {status === 'ready' && !placement && vm.windowAnnotations.length > 0 && vm.annotation2DActiveTool === 'none' && <div role="toolbar"
@@ -318,12 +329,13 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const drag = useRef<{ pointerId: number; index: number; original: {x:number;y:number} } | null>(null);
   const heldSnap = useRef<SnapResult | null>(null);
   const [feedback, setFeedback] = useState<{ point: { x: number; y: number }; kind: SnapKind | null } | null>(null);
+  const { resolve, resetDirection } = useDrawingDirection(id, vm.angularSnap);
   if (!area || !(vm.markupTransform.scale > 0)) return null;
   const { x, y, scale } = vm.markupTransform;
   const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
   const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
   const toScreen = (p: {x:number;y:number}) => ({x:p.x*sx+x,y:p.y*sy+y});
-  function setVertex(index: number, clientX: number, clientY: number) {
+  function setVertex(index: number, clientX: number, clientY: number, shift: boolean) {
     if (!area) return; // Narrow the captured area inside this nested handler.
     const rect = vm.containerRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -361,16 +373,11 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
       && Math.hypot(raw.x - own.x, raw.y - own.y) <= Math.hypot(raw.x - model.x, raw.y - model.y)))
       ? own : model;
     const anchor = area.points[(index + area.points.length - 1) % area.points.length];
-    const increment = vm.angularSnap === 'off' ? 0 : Number(vm.angularSnap);
-    const angled = increment ? snapDrawingAngle(anchor, raw, 0, increment) : null;
-    const onAngle = snapped && increment
-      ? snapDrawingAngle(anchor, snapped, 0, increment) : null;
-    // Same contract as Move: a geometric reference wins only if it is on
-    // the active angular direction; otherwise keep the angular constraint.
-    const point = snapped && (!onAngle || Math.hypot(snapped.x - onAngle.x, snapped.y - onAngle.y) < 1e-8)
-      ? snapped : angled ?? snapped ?? raw;
+    const directed = resolve(anchor, raw, snapped, shift);
+    const reference = directed ?? snapped;
+    const point = reference ?? raw;
     const kind = snapped === own ? result.winner?.kind ?? null : vm.snapKindFor(model);
-    setFeedback(point === snapped && kind ? { point, kind } : null);
+    setFeedback(reference ? { point, kind: point === snapped ? kind : null } : null);
     vm.updateAreaVertex(id,index,point);
   }
   return <svg aria-label="Edit area vertices" className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
@@ -394,15 +401,16 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
           event.preventDefault();event.stopPropagation();
           drag.current={pointerId:event.pointerId,index,original:{...point}};
           heldSnap.current = null;
+          resetDirection();
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={event=>{
           if (drag.current?.pointerId!==event.pointerId || drag.current.index!==index) return;
-          event.stopPropagation();setVertex(index,event.clientX,event.clientY);
+          event.stopPropagation();setVertex(index,event.clientX,event.clientY,event.shiftKey);
         }}
         onPointerUp={event=>{
           if (drag.current?.pointerId!==event.pointerId || drag.current.index!==index) return;
-          event.stopPropagation();setVertex(index,event.clientX,event.clientY);
+          event.stopPropagation();setVertex(index,event.clientX,event.clientY,event.shiftKey);
           drag.current=null;heldSnap.current=null;setFeedback(null);event.currentTarget.releasePointerCapture(event.pointerId);
         }}
         onPointerCancel={event=>{if(drag.current?.pointerId===event.pointerId){event.stopPropagation();vm.updateAreaVertex(id,index,drag.current.original);drag.current=null;heldSnap.current=null;setFeedback(null);}}}
@@ -417,7 +425,7 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
  * of the current view's successful images. Publish at most once per frame. */
 function useAreaTagImages(items: DrawingViewModel['areaTags']) {
   const key = useMemo(() => JSON.stringify([...new Set(items.flatMap(item =>
-    item.graphic ? [item.graphic.href] : []))].sort()), [items]);
+    [item.startGraphic?.href, item.graphic?.href].filter((href): href is string => !!href)))].sort()), [items]);
   const cache = useRef(new Map<string, HTMLImageElement>());
   const [images, setImages] = useState<ReadonlyMap<string, HTMLImageElement>>(() => new Map());
   useEffect(() => {
@@ -454,7 +462,8 @@ function useAreaTagImages(items: DrawingViewModel['areaTags']) {
 /** Drag only the Area's label. Commit once on release, keeping polygon geometry untouched. */
 function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const drag = useRef<{ pointerId: number; x: number; y: number } | null>(null);
-  const [delta, setDelta] = useState<{ x: number; y: number } | null>(null);
+  const [delta, setDelta] = useState<{ x: number; y: number; snapped: boolean; kind: SnapKind | null } | null>(null);
+  const { resolve, resetDirection } = useDrawingDirection(id, vm.angularSnap);
   const rect = vm.areaTagRects.find(item => item.id === id);
   const position = vm.areaTags.find(item => item.tag.id === id)?.tag.position;
   const scale = vm.markupTransform.scale;
@@ -464,14 +473,26 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const move = (dx: number, dy: number) => {
     if (dx || dy) vm.updateAreaTagPosition(id, { x: position.x + dx / sx, y: position.y + dy / sy });
   };
-  const clear = () => { drag.current = null; setDelta(null); };
+  // Resolve in drawing coordinates, preserving the initial mouse-to-tag offset.
+  // Preview and commit use the same constraint; the leader base never moves.
+  const dragDelta = (dx: number, dy: number, shift: boolean) => {
+    // A click without movement must not re-position a tag to a nearby snap.
+    if (Math.hypot(dx, dy) <= 1e-8) return { x: dx, y: dy, snapped: false, kind: null };
+    const raw = { x: position.x + dx / sx, y: position.y + dy / sy };
+    const reference = vm.findSnapPoint(raw);
+    const directed = resolve(position, raw, reference, shift);
+    const final = directed ?? reference ?? raw;
+    return { x: (final.x - position.x) * sx, y: (final.y - position.y) * sy,
+      snapped: !!(directed ?? reference), kind: vm.snapKindFor(directed ?? reference) };
+  };
+  const clear = () => { drag.current = null; resetDirection(); setDelta(null); };
   return <g>
     {delta && rect.leader && <line x1={rect.leader.start.x} y1={rect.leader.start.y}
       x2={rect.leader.end.x + delta.x} y2={rect.leader.end.y + delta.y} stroke="currentColor" strokeWidth={1.5} />}
     {delta && <image href={rect.href} x={rect.x + delta.x} y={rect.y + delta.y}
       width={rect.width} height={rect.height} opacity={0.8} />}
     <rect x={rect.x + (delta?.x ?? 0)} y={rect.y + (delta?.y ?? 0)} width={rect.width} height={rect.height}
-      fill="transparent" stroke="currentColor" strokeWidth={1} strokeDasharray="4 3"
+      fill="transparent" stroke="none"
       className="pointer-events-auto cursor-move touch-none" role="button" tabIndex={0}
       aria-label="Move area tag"
       onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}
@@ -486,6 +507,7 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
       onPointerDown={event => {
         if (event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
+        resetDirection();
         drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
         event.currentTarget.setPointerCapture(event.pointerId);
       }}
@@ -493,19 +515,23 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
         const start = drag.current;
         if (!start || start.pointerId !== event.pointerId) return;
         event.stopPropagation();
-        setDelta({ x: event.clientX - start.x, y: event.clientY - start.y });
+        setDelta(dragDelta(event.clientX - start.x, event.clientY - start.y, event.shiftKey));
       }}
       onPointerUp={event => {
         const start = drag.current;
         if (!start || start.pointerId !== event.pointerId) return;
         event.stopPropagation();
-        const dx = event.clientX - start.x, dy = event.clientY - start.y;
+        const next = dragDelta(event.clientX - start.x, event.clientY - start.y, event.shiftKey);
         clear();
         event.currentTarget.releasePointerCapture(event.pointerId);
-        move(dx, dy);
+        move(next.x, next.y);
       }}
       onPointerCancel={event => { if (drag.current?.pointerId === event.pointerId) clear(); }}
       onLostPointerCapture={clear} />
+    {delta?.snapped && <g aria-hidden="true" pointerEvents="none"
+      transform={`translate(${position.x * sx + vm.markupTransform.x + delta.x} ${position.y * sy + vm.markupTransform.y + delta.y})`}>
+      <DrawingSnapGlyph kind={delta.kind} />
+    </g>}
   </g>;
 }
 
@@ -514,8 +540,10 @@ function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const { t } = useTranslation();
   const cloud = vm.cloudAnnotations2D.find(item => item.id === id);
   const drag = useRef<{ pointerId: number; opposite: { x: number; y: number };
+    origin: { x: number; y: number };
     original: [{ x: number; y: number }, { x: number; y: number }] } | null>(null);
   const [feedback, setFeedback] = useState<{ point: { x: number; y: number }; kind: SnapKind | null } | null>(null);
+  const { resolve, resetDirection } = useDrawingDirection(id, vm.angularSnap);
   if (!cloud || cloud.points.length < 2 || !(vm.markupTransform.scale > 0)) return null;
 
   const [a, b] = cloud.points;
@@ -529,20 +557,21 @@ function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
   const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
   const screen = (p: { x: number; y: number }) => ({ x: p.x * sx + x, y: p.y * sy + y });
-  const fromClient = (clientX: number, clientY: number) => {
+  const resize = (clientX: number, clientY: number, shift: boolean) => {
+    const current = drag.current;
     const rect = vm.containerRef.current?.getBoundingClientRect();
-    if (!rect) return null;
+    if (!current || !rect) return;
     const raw = { x: (clientX - rect.left - x) / sx, y: (clientY - rect.top - y) / sy };
     const snapped = vm.findSnapPoint(raw);
-    const kind = vm.snapKindFor(snapped);
-    setFeedback(snapped && kind ? { point: snapped, kind } : null);
-    return snapped ?? raw;
-  };
-  const resize = (clientX: number, clientY: number) => {
-    const current = drag.current;
-    const point = fromClient(clientX, clientY);
-    if (!current || !point) return;
-    if (Math.abs(point.x - current.opposite.x) < 1e-6 || Math.abs(point.y - current.opposite.y) < 1e-6) return;
+    const directed = resolve(current.origin, raw, snapped, shift);
+    const reference = directed ?? snapped;
+    const point = reference ?? raw;
+    // 90° constrains the corner's displacement, not the rectangle's diagonal.
+    if (Math.abs(point.x - current.opposite.x) < 1e-6 || Math.abs(point.y - current.opposite.y) < 1e-6) {
+      setFeedback(null);
+      return;
+    }
+    setFeedback(reference ? { point, kind: vm.snapKindFor(reference) } : null);
     vm.resizeRevisionCloud(id, [current.opposite, point]);
   };
 
@@ -568,17 +597,18 @@ function CloudResizeHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
         onPointerDown={event => {
           if (event.button !== 0) return;
           event.preventDefault(); event.stopPropagation();
+          resetDirection();
           drag.current = { pointerId: event.pointerId, opposite: { ...corners[(index + 2) % 4] },
-            original: [{ ...cloud.points[0] }, { ...cloud.points[1] }] };
+            origin: { ...corner }, original: [{ ...cloud.points[0] }, { ...cloud.points[1] }] };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={event => {
           if (drag.current?.pointerId !== event.pointerId) return;
-          event.stopPropagation(); resize(event.clientX, event.clientY);
+          event.stopPropagation(); resize(event.clientX, event.clientY, event.shiftKey);
         }}
         onPointerUp={event => {
           if (drag.current?.pointerId !== event.pointerId) return;
-          event.stopPropagation(); resize(event.clientX, event.clientY);
+          event.stopPropagation(); resize(event.clientX, event.clientY, event.shiftKey);
           drag.current = null;
           setFeedback(null);
           event.currentTarget.releasePointerCapture(event.pointerId);

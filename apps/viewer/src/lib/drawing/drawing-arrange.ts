@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import type { Measure2DResult, PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
+import type { DrawingElementTag } from './drawing-element-tags';
 
 /** The order of authored marks within their own view and rendering layer. */
 export type DrawingArrangeAction = 'front' | 'forward' | 'backward' | 'back';
@@ -46,7 +47,8 @@ export type CanvasMarkupEntry =
   | { type: 'measure'; item: Measure2DResult }
   | { type: 'polygon'; item: PolygonArea2DResult }
   | { type: 'text'; item: TextAnnotation2D }
-  | { type: 'cloud'; item: CloudAnnotation2D };
+  | { type: 'cloud'; item: CloudAnnotation2D }
+  | { type: 'tag'; item: DrawingElementTag };
 
 function markupKey(entry: CanvasMarkupEntry): string {
   return entry.type === 'measure' && entry.item.dimension?.chainId
@@ -58,12 +60,14 @@ function markupKey(entry: CanvasMarkupEntry): string {
 export function canvasMarkupGroups(
   measures: readonly Measure2DResult[], areas: readonly PolygonArea2DResult[],
   texts: readonly TextAnnotation2D[], clouds: readonly CloudAnnotation2D[],
+  tags: readonly DrawingElementTag[] = [],
 ) {
   const entries: CanvasMarkupEntry[] = [
     ...measures.map(item => ({ type: 'measure' as const, item })),
     ...areas.map(item => ({ type: 'polygon' as const, item })),
     ...texts.map(item => ({ type: 'text' as const, item })),
     ...clouds.map(item => ({ type: 'cloud' as const, item })),
+    ...tags.map(item => ({ type: 'tag' as const, item })),
   ];
   const groups = new Map<string, { id: string; order: number; entries: CanvasMarkupEntry[] }>();
   for (const entry of entries) {
@@ -79,6 +83,30 @@ export function canvasMarkupGroups(
   return [...groups.values()].sort((a, b) => a.order === b.order ? 0 : a.order < b.order ? -1 : 1);
 }
 
+/** Use the same order for visible hit targets as for the arranged paint pass. */
+export function markupRanks(groups: ReturnType<typeof canvasMarkupGroups>): Map<string, number> {
+  return new Map(groups.flatMap((group, rank) => group.entries.map(entry => [`${entry.type}:${entry.item.id}`, rank] as const)));
+}
+
+/** The same rank orders invisible SVG hit targets and visible fallbacks. */
+export function tagOverlayOrder(tag: DrawingElementTag): number {
+  return typeof tag.drawOrder === 'number' && Number.isFinite(tag.drawOrder)
+    ? tag.drawOrder : Infinity;
+}
+
+/** Update only the grids participating in this view's Arrange operation. */
+export function arrangedGridOrders(previous: Readonly<Record<string, number>> | undefined,
+  gridIds: readonly string[], ranks: ReadonlyMap<string, number>): Record<string, number> | undefined {
+  let next: Record<string, number> | undefined;
+  for (const id of gridIds) {
+    const rank = ranks.get(`tag:${id}`);
+    if (rank === undefined || !Number.isFinite(rank) || previous?.[id] === rank) continue;
+    next ??= { ...previous };
+    Object.defineProperty(next, id, { value: rank, enumerable: true, configurable: true, writable: true });
+  }
+  return next;
+}
+
 /** Resolve all selected segments to their whole chain before reordering. */
 export function canvasArrangeRanks(
   groups: ReturnType<typeof canvasMarkupGroups>, selected: { type: CanvasMarkupEntry['type']; id: string },
@@ -88,5 +116,5 @@ export function canvasArrangeRanks(
   if (!group) return null;
   const reordered = arrangeDrawingItems(groups, group.id, action);
   if (reordered.every((entry, index) => entry === groups[index])) return null;
-  return new Map(reordered.flatMap((group, rank) => group.entries.map(entry => [`${entry.type}:${entry.item.id}`, rank] as const)));
+  return markupRanks(reordered);
 }

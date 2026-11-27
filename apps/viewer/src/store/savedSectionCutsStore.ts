@@ -77,6 +77,8 @@ export interface SavedSectionCut {
   elementTags?: DrawingElementTag[];
   /** Per-view graphic extents of global grids in sections and elevations. */
   gridExtents?: Record<string, GridViewExtents>;
+  /** Paint order of project grids, local to this saved drawing. */
+  gridDrawOrder?: Record<string, number>;
   markerSymbolId?: string;
   markerStyleId?: string;
   id: string;
@@ -249,10 +251,13 @@ export function saveProjectGrid(grid: ProjectGrid, remove = false): void {
     : [...state.grids.filter(item => item.id !== grid.id), { ...grid, name: grid.name.trim() }];
   if (!remove) { commitCuts({ grids }); return; }
   commitCuts({ grids, cuts: state.cuts.map(view => {
-    if (!view.gridExtents?.[grid.id]) return view;
+    const removeExtents = Object.prototype.hasOwnProperty.call(view.gridExtents ?? {}, grid.id);
+    const removeOrder = Object.prototype.hasOwnProperty.call(view.gridDrawOrder ?? {}, grid.id);
+    if (!removeExtents && !removeOrder) return view;
     const gridExtents = { ...view.gridExtents };
-    delete gridExtents[grid.id];
-    return { ...view, gridExtents, updatedAt: Date.now() };
+    const gridDrawOrder = { ...view.gridDrawOrder };
+    delete gridExtents[grid.id]; delete gridDrawOrder[grid.id];
+    return { ...view, ...(removeExtents && { gridExtents }), ...(removeOrder && { gridDrawOrder }), updatedAt: Date.now() };
   }) });
 }
 
@@ -269,8 +274,14 @@ export function saveGridViewExtents(viewId: string, gridId: string, extents: Gri
 export function promoteProjectGrid(grid: ProjectGrid, viewId: string): void {
   const state = useSavedSectionCuts.getState();
   if (state.grids.some(item => item.id === grid.id)) return;
-  commitCuts({ grids: [...state.grids, grid], cuts: state.cuts.map(view => view.id === viewId
-    ? { ...view, elementTags: view.elementTags?.filter(tag => tag.id !== grid.id) } : view) });
+  commitCuts({ grids: [...state.grids, grid], cuts: state.cuts.map(view => {
+    if (view.id !== viewId) return view;
+    const order = view.elementTags?.find(tag => tag.id === grid.id)?.drawOrder;
+    return { ...view, elementTags: view.elementTags?.filter(tag => tag.id !== grid.id),
+      ...(typeof order === 'number' && Number.isFinite(order) && {
+        gridDrawOrder: { ...view.gridDrawOrder, [grid.id]: order },
+      }) };
+  }) });
 }
 
 function numberFolderViews(cuts: SavedSectionCut[], folders: SavedViewFolder[]): SavedSectionCut[] {
@@ -448,6 +459,8 @@ function captureSectionCut(name: string, kind?: SavedViewKind, existing?: SavedS
     annotationOptions: existing?.annotationOptions ?? temporary?.annotationOptions,
     markers: existing?.markers,
     elementTags: existing?.elementTags,
+    gridExtents: existing?.gridExtents,
+    gridDrawOrder: existing?.gridDrawOrder,
     markerSymbolId: existing?.markerSymbolId,
     markerStyleId: existing ? existing.markerStyleId
       : defaultMarkerStyleId(useSavedSectionCuts.getState().tagLibrary, requestedKind),
@@ -614,7 +627,7 @@ export function renameSavedSectionCut(id: string, name: string, code?: string): 
   updateViewSettings(id, { name: trimmed, code: numbered ? cut.code : validateViewCode(savedViewKind(cut), code ?? cut.code, id) });
 }
 
-export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags' | 'gridExtents' | 'markerSymbolId' | 'markerStyleId' | 'annotationOptions'>>): void {
+export function updateViewSettings(id: string, settings: Partial<Pick<SavedSectionCut, 'name' | 'code' | 'markers' | 'visibility' | 'filter' | 'display' | 'graphics' | 'publicationScale' | 'elementTags' | 'gridExtents' | 'gridDrawOrder' | 'markerSymbolId' | 'markerStyleId' | 'annotationOptions'>>): void {
   const { cuts, templateEdit } = useSavedSectionCuts.getState();
   if (templateEdit?.draft.id === id) {
     const { visibility, filter, display, graphics, publicationScale, annotationOptions, ...local } = settings;
@@ -722,12 +735,16 @@ export function deleteDrawingWindowSymbols(viewId: string | null, tagIds: Readon
   const cuts = state.cuts.filter(item => !markerIds.has(item.id)).map(item => {
     const removeLocal = item.id === viewId && item.elementTags?.some(tag => tagIds.has(tag.id));
     const removeExtents = item.gridExtents && [...gridIds].some(id => Object.prototype.hasOwnProperty.call(item.gridExtents, id));
-    if (!removeLocal && !removeExtents) return item;
+    const removeOrder = item.gridDrawOrder && [...gridIds].some(id => Object.prototype.hasOwnProperty.call(item.gridDrawOrder, id));
+    if (!removeLocal && !removeExtents && !removeOrder) return item;
     const gridExtents = { ...item.gridExtents };
+    const gridDrawOrder = { ...item.gridDrawOrder };
     if (removeExtents) for (const id of gridIds) delete gridExtents[id];
+    if (removeOrder) for (const id of gridIds) delete gridDrawOrder[id];
     return { ...item, updatedAt: now,
       ...(removeLocal && { elementTags: item.elementTags?.filter(tag => !tagIds.has(tag.id)) }),
       ...(removeExtents && { gridExtents }),
+      ...(removeOrder && { gridDrawOrder }),
     };
   });
   commitCuts({ cuts, grids: state.grids.filter(grid => !gridIds.has(grid.id)) });

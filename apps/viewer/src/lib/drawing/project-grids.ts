@@ -53,7 +53,7 @@ export function moveProjectGrid(grid: ProjectGrid, plane: SectionPlaneConfig, de
   return { ...grid, start: move(grid.start), end: move(grid.end) };
 }
 
-export function projectGrid(grid: ProjectGrid, drawing: Drawing2D, extents?: GridViewExtents): DrawingElementTag | undefined {
+export function projectGrid(grid: ProjectGrid, drawing: Drawing2D, extents?: GridViewExtents, drawOrder?: number): DrawingElementTag | undefined {
   const plane = drawing.config.plane;
   let start: Point2D, end: Point2D;
   if (plane.axis === 'y' && !plane.customPlane) {
@@ -78,6 +78,7 @@ export function projectGrid(grid: ProjectGrid, drawing: Drawing2D, extents?: Gri
     end = { x: point.x, y: top };
   }
   return { id: grid.id, templateId: grid.templateId, appearanceId: grid.appearanceId, field: grid.name,
+    drawOrder: Number.isFinite(drawOrder) ? drawOrder : undefined,
     gridStart: start, position: end, free: true, leader: false,
     globalId: '', projectId: '', fingerprint: '', anchorOffset: { x: 0, y: 0 } };
 }

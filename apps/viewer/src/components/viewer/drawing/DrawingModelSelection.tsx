@@ -5,6 +5,8 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import type { Point2D } from '@ifc-lite/drawing-2d';
 import { createDrawingModelIndex } from '@/lib/drawing/drawing-model-pick';
+import { canvasMarkupGroups, markupRanks } from '@/lib/drawing/drawing-arrange';
+import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
 import { useViewerStore } from '@/store';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import { isCanvasWindowAnnotation, selectDrawingAnnotations, selectDrawingSymbols, type WindowDrawingSelection } from './drawing-annotation-window';
@@ -18,7 +20,7 @@ import type { SelectedAnnotation2D } from '@/store/slices/drawing2DSlice';
 const PICK_RADIUS_PX = 6;
 const DRAG_THRESHOLD_PX = 4;
 
-export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean, allowAnnotationWindow = true) {
+export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean, allowAnnotationWindow = true, canvasTagIds?: ReadonlySet<string>) {
   const { drawing, markupTransform, drawnPlane, displayOptions } = vm;
   const index = useMemo(() => drawing ? createDrawingModelIndex(drawing, displayOptions.showHiddenLines) : null,
     [drawing, displayOptions.showHiddenLines]);
@@ -26,6 +28,10 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
   const selectedIds = useViewerStore(s => s.selectedEntityIds);
   const [hover, setHover] = useState<number>();
   const [annotationHover, setAnnotationHover] = useState<SelectedAnnotation2D | null>(null);
+  const [tagHover, setTagHover] = useState<string>();
+  const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
+  const ranks = markupRanks(canvasMarkupGroups(vm.displayedMeasurements.filter(item => drawingAnnotationVisible(annotationView, 'dimensions', item.dimension?.styleId)),
+    vm.styledAreas, vm.styledNotes, vm.styledClouds, vm.tags.items.filter(item => canvasTagIds?.has(item.tag.id)).map(item => item.tag)));
   const annotationEnabled = vm.status === 'ready' && vm.annotation2DActiveTool === 'none'
     && !vm.textAnnotation2DEditing && !vm.tags.active && vm.displayOptions.showAnnotations;
   const annotationWindowEnabled = allowAnnotationWindow && annotationEnabled && !vm.editableAnnotationId;
@@ -59,6 +65,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
     suppressClick.current = false;
     setHover(undefined);
     setAnnotationHover(null);
+    setTagHover(undefined);
   }, [enabled, annotationEnabled, windowEnabled, index, drawnPlane.id, markupTransform.x, markupTransform.y, markupTransform.scale]);
 
   const { x, y, scale } = markupTransform;
@@ -119,7 +126,12 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
       : direct ? annotations.find(item => candidateKey(item) === candidateKey(direct)) : undefined;
     const ifc: DrawingCycleTarget[] = enabled && !vm.tags.active && index && scale > 0
       ? index.pick(boxToModel(point), r / scale).map(id => ({ type: 'ifc', id })) : [];
-    const list: DrawingCycleTarget[] = [...(preferred ? [preferred] : []), ...symbols, ...annotations, ...ifc];
+    const order = (item: WindowDrawingSelection) => ranks.get(`${item.type}:${item.id}`) ?? Infinity;
+    const marks = [...symbols, ...annotations].sort((a, b) => {
+      const ar = order(a), br = order(b);
+      return ar === br ? 0 : ar > br ? -1 : 1;
+    });
+    const list: DrawingCycleTarget[] = [...(preferred ? [preferred] : []), ...marks, ...ifc];
     const seen = new Set<string>();
     return list.filter(item => {
       const key = candidateKey(item);
@@ -204,16 +216,39 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
 
   const surfaceSymbol = (target: EventTarget) => (target as Element).closest<SVGGElement>('[data-window-symbol]');
   const onSurface = (event: MouseEvent<HTMLDivElement>) => isCanvas(event) || !!surfaceSymbol(event.target);
+  function nativeAboveTag(id: string | undefined, point: Point2D): SelectedAnnotation2D | null {
+    if (!annotationEnabled || !id || !canvasTagIds?.has(id)) return null;
+    const hit = vm.hitTestAnnotations(point.x, point.y, true);
+    if (!hit) return null;
+    const nativeRank = ranks.get(`${hit.type}:${hit.id}`);
+    const tagRank = ranks.get(`tag:${id}`);
+    return nativeRank !== undefined && tagRank !== undefined && nativeRank > tagRank ? hit : null;
+  }
+  function nativeAboveSymbol(event: { target: EventTarget; clientX: number; clientY: number }) {
+    const group = surfaceSymbol(event.target);
+    return group?.dataset.windowSymbol === 'tag'
+      ? nativeAboveTag(group.dataset.windowId, screenPoint(event.clientX, event.clientY)) : null;
+  }
   const mouseHandlers = {
     ...mouse,
     // SVG symbols can own pointerdown for dragging; intercept only an active
     // Tab cycle so the normal click/drag path remains unchanged otherwise.
     onPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
       suppressCycleClick.current = false;
-      if (event.button === 0 && cycle.current && onSurface(event)) event.stopPropagation();
+      if (event.button === 0 && ((cycle.current && onSurface(event)) || nativeAboveSymbol(event))) event.stopPropagation();
     },
     onMouseDownCapture(event: MouseEvent<HTMLDivElement>) {
       const current = cycle.current;
+      if (!current && event.button === 0 && nativeAboveSymbol(event)) {
+        // Forward the same mousedown to the native selection/drag path, rather
+        // than allowing a visually lower SVG to capture it.
+        event.preventDefault(); event.stopPropagation();
+        press.current = null; suppressClick.current = false; suppressCycleClick.current = true;
+        vm.clearWindowAnnotations();
+        mouse.onMouseDown(event);
+        clearHover(); setTagHover(undefined);
+        return;
+      }
       if (!current || event.button !== 0 || !onSurface(event)) return;
       const point = screenPoint(event.clientX, event.clientY);
       if (Math.hypot(point.x - current.origin.x, point.y - current.origin.y) > DRAG_THRESHOLD_PX) { resetCycle(); return; }
@@ -224,6 +259,13 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
       suppressCycleClick.current = true;
       confirmCycle(current.target);
       clearHover();
+    },
+    onContextMenuCapture(event: MouseEvent<HTMLDivElement>) {
+      const native = nativeAboveSymbol(event);
+      if (!native) return;
+      // Do not open a lower symbol's context menu through an upper native mark.
+      event.preventDefault(); event.stopPropagation();
+      confirmCycle(native); clearHover(); setTagHover(undefined);
     },
     onClickCapture(event: MouseEvent<HTMLDivElement>) {
       if (!suppressCycleClick.current) return;
@@ -241,6 +283,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
     },
     onMouseMoveCapture(event: MouseEvent<HTMLDivElement>) {
       if (event.buttons || !onSurface(event)) {
+        setTagHover(undefined);
         pointer.current = null;
         if (!isCanvas(event)) clearHover();
         return;
@@ -248,7 +291,9 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
       const point = screenPoint(event.clientX, event.clientY);
       const group = surfaceSymbol(event.target);
       const type = group?.dataset.windowSymbol, id = group?.dataset.windowId;
-      pointer.current = { point, symbol: type && id ? `${type}:${id}` : undefined };
+      const native = type === 'tag' ? nativeAboveTag(id, point) : null;
+      setTagHover(type === 'tag' && !native && annotationEnabled ? id : undefined);
+      pointer.current = { point, symbol: type && id && !native ? `${type}:${id}` : undefined };
       const current = cycle.current;
       if (current && Math.hypot(point.x - current.origin.x, point.y - current.origin.y) > DRAG_THRESHOLD_PX) resetCycle();
       if (!isCanvas(event) && !cycle.current) clearHover();
@@ -270,6 +315,10 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
         setSelectionBox(null);
       }
       if (cycle.current && !event.buttons && onSurface(event)) return;
+      if (!event.buttons && !isCanvas(event)) {
+        const native = nativeAboveSymbol(event);
+        if (native) { setAnnotationHover(native); setHover(undefined); return; }
+      }
       if (!isCanvas(event) || event.buttons) {
         clearHover();
         return;
@@ -293,6 +342,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
       finishWindow(event);
     },
     onMouseLeave() {
+      setTagHover(undefined);
       pointer.current = null;
       mouse.onMouseLeave();
       if (press.current?.dragged) suppressClick.current = true;
@@ -343,6 +393,7 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
   return {
     mouseHandlers,
     cycleTarget,
+    hoveredTagId: annotationEnabled ? (cycleTarget ? (cycleTarget.type === 'tag' ? cycleTarget.id : undefined) : tagHover) : undefined,
     annotationHover: annotationEnabled ? previewAnnotation : null,
     overlay: index && (ids.size > 0 || (enabled && previewIfc !== undefined)) ? (
       <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full">

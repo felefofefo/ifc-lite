@@ -18,6 +18,7 @@ import { computePolygonSurfaceCentroid } from '@/components/viewer/tools/compute
 
 export interface DrawingElementTag {
   id: string;
+  drawOrder?: number;
   globalId: string;
   projectId: string;
   fingerprint: string;

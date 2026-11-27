@@ -6,7 +6,7 @@ import { drawingPublicationStrokeStyle } from '@/hooks/drawingPublicationStrokeS
 import type { DimensionSegment } from '@/lib/drawing/dimension-line';
 import { mapDimensionShape } from '@/lib/drawing/dimension-line';
 import { canvasMarkupGroups } from '@/lib/drawing/drawing-arrange';
-import type { areaTagScreenRect } from '@/lib/drawing/drawing-element-tags';
+import type { areaTagScreenRect, ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
 import { DEFAULT_DIMENSION_STYLE, DIMENSION_FONTS, drawDimensionStrokes, formatDimensionLabel, resolveDimensionStyle, styledDimension, type DimensionLabelHit, type DimensionStyle } from '@/lib/drawing/dimension-style';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 import type { DrawingPolygon } from '@ifc-lite/drawing-2d';
@@ -222,6 +222,11 @@ interface Drawing2DCanvasProps {
   polygonAreaResults?: PolygonArea2DResult[];
   areaTagRects?: readonly NonNullable<ReturnType<typeof areaTagScreenRect>>[];
   areaTagImages?: ReadonlyMap<string, HTMLImageElement>;
+  canvasTags?: readonly ResolvedDrawingTag[];
+  tagPaperUnit?: number;
+  tagFontSize?: number;
+  selectedTagIds?: readonly string[];
+  hoveredTagId?: string;
   textAnnotations?: TextAnnotation2D[];
   textAnnotationEditing?: string | null;
   cloudAnnotationPoints?: Point2D[];
@@ -287,6 +292,7 @@ export function Drawing2DCanvas({
   polygonAreaResults = [],
   areaTagRects,
   areaTagImages,
+  canvasTags = [], tagPaperUnit = 1, tagFontSize = 11, selectedTagIds = [], hoveredTagId,
   textAnnotations = [],
   textAnnotationEditing = null,
   cloudAnnotationPoints = [],
@@ -1361,6 +1367,11 @@ export function Drawing2DCanvas({
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
+      paintTagGraphic(rect, image, opacity);
+      ctx.restore();
+    };
+    // Both kinds use the very same SVG tint, including white and alpha preservation.
+    const paintTagGraphic = (rect: { x: number; y: number; width: number; height: number }, image: HTMLImageElement, opacity: number) => {
       let graphic: CanvasImageSource = image;
       // Match the IFC Tag SVG filter: screen blend in sRGB, then clip to
       // SourceAlpha. White stays white; transparent margins stay transparent.
@@ -1384,6 +1395,42 @@ export function Drawing2DCanvas({
         }
       }
       ctx.drawImage(graphic, rect.x, rect.y, rect.width, rect.height);
+    };
+    const tagById = new Map(canvasTags.map(item => [item.tag.id, item] as const));
+    const paintLocalTag = (id: string) => {
+      const item = tagById.get(id);
+      if (!item) return;
+      const { tag, anchor, graphic, startGraphic, hideEnd, text, style, lineWidth } = item;
+      const p = markupToScreen(tag.position), a = markupToScreen(anchor);
+      const opacity = selectedTagIds.includes(id) ? 1 : hoveredTagId === id ? 0.55 : 0;
+      const color = opacity ? primaryColor : paperTheme.ink;
+      ctx.save();
+      if (tag.leader || tag.gridStart) {
+        ctx.strokeStyle = opacity ? primaryColor : style?.color ?? paperTheme.ink;
+        ctx.globalAlpha = opacity || 1;
+        ctx.lineWidth = opacity ? Math.max(1.5, (lineWidth ?? 0) * tagPaperUnit)
+          : lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tagPaperUnit);
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      const paintHead = (head: NonNullable<ResolvedDrawingTag['graphic']>, point: Point2D) => {
+        const image = areaTagImages?.get(head.href);
+        if (image) paintTagGraphic({ x: point.x - head.anchor.x * tagPaperUnit,
+          y: point.y - head.anchor.y * tagPaperUnit, width: head.width * tagPaperUnit,
+          height: head.height * tagPaperUnit }, image, opacity);
+      };
+      if (startGraphic) paintHead(startGraphic, a);
+      if (!hideEnd && graphic) paintHead(graphic, p);
+      else if (!hideEnd) {
+        // Legacy text-only IFC tag: keep its original paper halo and font.
+        ctx.font = `${style?.textHeight ? style.textHeight * tagPaperUnit : tagFontSize}px ${style?.font ?? 'Arial, sans-serif'}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.strokeStyle = paperTheme.paper; ctx.lineWidth = 3; ctx.setLineDash([]);
+        ctx.strokeText(text, p.x, p.y);
+        ctx.fillStyle = color; ctx.globalAlpha = opacity || 1;
+        ctx.fillText(text, p.x, p.y);
+      }
       ctx.restore();
     };
     const paintArea = (result: PolygonArea2DResult) => {
@@ -1537,7 +1584,7 @@ export function Drawing2DCanvas({
     };
 
     // All native marks share one back-to-front order, without separate canvases.
-    for (const group of canvasMarkupGroups(measureResults, polygonAreaResults, textAnnotations, cloudAnnotations)) {
+    for (const group of canvasMarkupGroups(measureResults, polygonAreaResults, textAnnotations, cloudAnnotations, canvasTags.map(item => item.tag))) {
       for (const entry of group.entries) {
         ctx.save();
         switch (entry.type) {
@@ -1545,9 +1592,17 @@ export function Drawing2DCanvas({
           case 'polygon': paintArea(entry.item); break;
           case 'text': paintText(entry.item); break;
           case 'cloud': paintCloud(entry.item); break;
+          case 'tag': paintLocalTag(entry.item.id); break;
         }
         ctx.restore();
       }
+      // Native highlights must not repaint a lower-ranked object above a tag.
+      const matches = (selection: SelectedAnnotation2D) => group.entries.some(entry =>
+        entry.type === selection.type && entry.item.id === selection.id);
+      const selected = selectedAnnotation && matches(selectedAnnotation) ? selectedAnnotation
+        : windowAnnotations?.find(matches);
+      if (selected) highlightAnnotation(selected, 1);
+      else if (hoveredAnnotation && matches(hoveredAnnotation)) highlightAnnotation(hoveredAnnotation, 0.55);
     }
 
     if (measureMode) {
@@ -1662,7 +1717,8 @@ export function Drawing2DCanvas({
     // 8. RENDER SELECTION HIGHLIGHT
     // ═══════════════════════════════════════════════════════════════════════
     // Hover and selection share the same geometry and differ only in intensity.
-    const highlightAnnotation = (target: SelectedAnnotation2D, opacity: number) => {
+    function highlightAnnotation(target: SelectedAnnotation2D, opacity: number) {
+      if (!ctx) return;
       ctx.save();
       ctx.globalAlpha = opacity;
       const SEL_COLOR = primaryColor;
@@ -1722,13 +1778,9 @@ export function Drawing2DCanvas({
         }
       }
       ctx.restore();
-    };
-    if (hoveredAnnotation && hoveredAnnotation.id !== selectedAnnotation?.id
-      && !windowAnnotations?.some(item => item.id === hoveredAnnotation.id && item.type === hoveredAnnotation.type)) highlightAnnotation(hoveredAnnotation, 0.55);
-    if (selectedAnnotation) highlightAnnotation(selectedAnnotation, 1);
-    windowAnnotations?.forEach(item => highlightAnnotation(item, 1));
+    }
     markActiveDrawingCanvasRendered(canvas, snapshotSourceDrawing, textAnnotationEditing === null);
-  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionPreviewStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, areaTagRects, areaTagImages, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, windowAnnotations, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
+  }, [referenceImages, drawing, strokeLines, snapshotSourceDrawing, transform, showHiddenLines, canvasSize, overrideEngine, overridesEnabled, getElementProperties, entityColorMap, useIfcMaterials, fillPreview, lineweights, printPreview, measureMode, markupTransform, dimensionStyle, dimensionPreviewStyle, dimensionStyles, dimensionLabelHits, publicationScale, dimensionPreview, dimensionPoints, measureResults, measureSnapPoint, sheetEnabled, activeSheet, sectionAxis, isPinned, annotation2DActiveTool, annotation2DCursorPos, polygonAreaPoints, polygonAreaResults, areaTagRects, areaTagImages, canvasTags, tagPaperUnit, tagFontSize, selectedTagIds, hoveredTagId, textAnnotations, textAnnotationEditing, cloudAnnotationPoints, cloudAnnotations, selectedAnnotation, hoveredAnnotation, windowAnnotations, ifcAnnotationLines, ifcAnnotationTexts, ifcAnnotationFills, dxfUnderlays, scanPoints, scanOpacity, scanOutline, unitDisplayOverrides, paperTheme]);
 
   return (
     <canvas

@@ -83,6 +83,7 @@ export interface HitTestAnnotationsParams {
   measures: Measure2DResult[];
   paperUnit?: number;
   dimensionLabelId?: string;
+  genuineOnly?: boolean;
   areaTagRects?: readonly { id: string; x: number; y: number; width: number; height: number; leader?: { start: Point2D; end: Point2D } }[];
   measureText?: (text: string, font: string) => number | undefined;
 }
@@ -95,7 +96,7 @@ interface PaddedCandidate {
 
 export function hitTestAnnotations({
   screenX, screenY, threshold, drawingToScreen, texts, clouds, polys, measures,
-  paperUnit = 1, measureText, areaTagRects = [], dimensionLabelId,
+  paperUnit = 1, measureText, areaTagRects = [], dimensionLabelId, genuineOnly = false,
 }: HitTestAnnotationsParams): SelectedAnnotation2D | null {
   // ── Pass 1: genuine hits, reverse paint order (topmost wins) ───────────
   const ranks = new Map<string, number>();
@@ -211,5 +212,5 @@ export function hitTestAnnotations({
     }
   }
 
-  return genuine ?? (best ? best.selection : null);
+  return genuine ?? (!genuineOnly && best ? best.selection : null);
 }
