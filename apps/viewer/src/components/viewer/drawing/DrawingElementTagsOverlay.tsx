@@ -4,6 +4,8 @@
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { ChevronUp } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useId, useState } from 'react';
@@ -152,13 +154,14 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
       <ContextMenuTrigger asChild>{graphicElement}</ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={() => tags.choose(tag)}>{t('section2d.tools.select')}</ContextMenuItem>
-        <ContextMenuItem onSelect={() => tags.editSelected(tag)}>{t('section2d.tools.edit')}</ContextMenuItem>
+        {tags.canEditSymbol(tag) && <ContextMenuItem disabled={hostUnavailable}
+          onSelect={() => tags.editSelected(tag)}>{t('section2d.tools.edit')}</ContextMenuItem>}
       </ContextMenuContent>
     </ContextMenu>;
   }
 
   return <>
-    {!!(shown.length || tags.preview || snap || tags.roomHighlight?.length || tags.hostHighlight) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
+    {!!(shown.length || tags.preview || snap || tags.roomHighlight?.length) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
       <defs className="text-primary">
         {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${filterId}-${state}`} colorInterpolationFilters="sRGB">
           <feFlood floodColor="currentColor" floodOpacity={state === 'hover' ? 0.55 : 1} result="tint" />
@@ -175,18 +178,6 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
           }).join(' ') + ' Z').join(' ')}
           fill="#0d9488" fillOpacity={0.16} fillRule="evenodd"
           stroke="#0d9488" strokeOpacity={0.85} strokeWidth={1.5} />)}
-      </g>}
-      {tags.hostHighlight && <g aria-hidden="true" pointerEvents="none" className="text-primary" data-drawing-tag-host-highlight>
-        {tags.hostHighlight.polygons.map((polygon, index) => <path key={index}
-          d={[polygon.outer, ...polygon.holes].map(ring => ring.map((point, i) => {
-            const p = tags.screen(point);
-            return `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`;
-          }).join(' ') + ' Z').join(' ')}
-          fill="currentColor" fillOpacity={0.18} fillRule="evenodd" stroke="currentColor" strokeWidth={1.5} />)}
-        <path d={tags.hostHighlight.segments.map(([a, b]) => {
-          const p = tags.screen(a), q = tags.screen(b);
-          return `M${p.x} ${p.y}L${q.x} ${q.y}`;
-        }).join(' ')} fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" />
       </g>}
       {shown.map(item => paint(item, false))}
       {tags.preview && <g opacity={tags.placing || tags.placingFree || (!draft && tags.active && !tags.draggingSelectedTag) ? 0.7 : 1}>
@@ -246,15 +237,21 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
       {!tags.selected.free && !tags.selected.gridStart && <Button size="sm" variant={tags.selected.leader ? 'secondary' : 'ghost'}
         aria-pressed={tags.selected.leader} onClick={tags.toggleSelectedLeader}>{t('section2d.tags.leader')}</Button>}
       {!tags.selected.free && !tags.selected.gridStart && <>
-        <span className="max-w-40 shrink-0 truncate px-1 text-muted-foreground" title={tags.selectedHostLabel ?? 'Host unavailable in this view'}>
-          {tags.selectedHostLabel ?? 'Host unavailable'}
-        </span>
-        <Button size="sm" variant={tags.showHost ? 'secondary' : 'ghost'} disabled={!tags.selectedHostLabel}
-          aria-pressed={tags.showHost} onClick={tags.toggleHostHighlight}>Show Host</Button>
-        <Button size="sm" variant="ghost" onClick={tags.beginChangeHost}>Change Host</Button>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" className="shrink-0 gap-1" title={tags.selectedHostLabel ?? 'Host unavailable in this view'}>
+              Host <ChevronUp className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="center"
+            onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+            <DropdownMenuItem className="text-xs" disabled={!tags.selectedHostLabel} onSelect={tags.selectHostIn3D}>Select Element</DropdownMenuItem>
+            <DropdownMenuItem className="text-xs" onSelect={tags.beginChangeHost}>Change Host</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </>}
-      <Button size="sm" variant="ghost" disabled={!tags.selected.free && !tags.selectedHostLabel}
-        onClick={() => tags.editSelected()}>{t('section2d.tools.edit')}</Button>
+      {tags.canEditSymbol(tags.selected) && <Button size="sm" variant="ghost" disabled={!tags.selected.free && !tags.selectedHostLabel}
+        onClick={() => tags.editSelected()}>{t('section2d.tools.edit')}</Button>}
       <Button size="sm" variant="ghost" onClick={tags.clearSelection}>{t('section2d.tags.close')}</Button>
       {tags.failed && <span className="text-destructive" role="alert">{t('section2d.tags.writeFailed')}</span>}
     </div>}

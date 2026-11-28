@@ -388,6 +388,17 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
     </g>;
   }
 
+  // Host feedback is transient and must not modify the IFC selection store.
+  // Use the same filtered linework and face outlines as ordinary selection.
+  const host = allowAnnotationWindow && displayOptions.showAnnotations ? vm.tags.hostHighlight : undefined;
+  const hostId = host?.id;
+  const hostIndexed = hostId !== undefined && index?.byId.has(hostId);
+  // Hidden IfcSpace meshes may be taggable without being in the drawing index.
+  // Use their existing exact footprint, never the raw target's triangulated faces.
+  const hostRoom = host?.ifcClass === 'IfcSpace' && !hostIndexed
+    ? vm.ifcSpaceRooms.find(room => room.id === host.id) : undefined;
+  const renderHost = hostId !== undefined && ((hostIndexed && !ids.has(hostId)) || !!hostRoom);
+
   const previewIfc = cycleTarget ? (cycleTarget.type === 'ifc' ? cycleTarget.id : undefined) : hover;
   const previewAnnotation = cycleTarget ? (cycleTarget.type !== 'ifc' && isCanvasWindowAnnotation(cycleTarget) ? cycleTarget : null) : annotationHover;
   return {
@@ -395,10 +406,18 @@ export function useDrawingModelSelection(vm: DrawingViewModel, enabled: boolean,
     cycleTarget,
     hoveredTagId: annotationEnabled ? (cycleTarget ? (cycleTarget.type === 'tag' ? cycleTarget.id : undefined) : tagHover) : undefined,
     annotationHover: annotationEnabled ? previewAnnotation : null,
-    overlay: index && (ids.size > 0 || (enabled && previewIfc !== undefined)) ? (
+    overlay: (index && (ids.size > 0 || (enabled && previewIfc !== undefined))) || renderHost ? (
       <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full">
         {Array.from(ids, id => highlight(id, false))}
-        {enabled && previewIfc !== undefined && !ids.has(previewIfc) && highlight(previewIfc, true)}
+        {enabled && previewIfc !== undefined && !ids.has(previewIfc)
+          && !(renderHost && previewIfc === hostId) && highlight(previewIfc, true)}
+        {renderHost && hostId !== undefined && <g data-drawing-tag-host-highlight>
+          {hostRoom ? <g className="text-primary" opacity={vm.tags.rehosting ? 0.55 : 1}>
+            {hostRoom.polygons.map((polygon, i) => <path key={i}
+              d={[polygon.outer, ...polygon.holes].map(path).join('')}
+              fill="currentColor" fillOpacity={0.18} fillRule="evenodd" stroke="currentColor" strokeWidth={2} />)}
+          </g> : highlight(hostId, vm.tags.rehosting)}
+        </g>}
       </svg>
     ) : null,
     windowOverlay: windowEnabled && selectionBox ? (

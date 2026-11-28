@@ -59,6 +59,8 @@ export interface PolygonArea2DResult {
   tagName?: string;
   /** Manual label anchor in drawing coordinates; unset follows the polygon center. */
   tagPosition?: Point2D;
+  /** Optional leader origin relative to the area centroid; unset follows the center. */
+  tagLeaderOffset?: Point2D;
   tagLeader?: boolean;
   appearanceId?: string;
   appearance?: AnnotationSymbolStyle;

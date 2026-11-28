@@ -11,6 +11,8 @@ import { Spinner } from '@/components/ui/spinner';
 
 
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu';
+import { ChevronUp } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
@@ -202,6 +204,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         && vm.annotation2DActiveTool === 'none'
         && <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
           <AreaTagMoveHandle key={vm.selectedArea.id} vm={vm} id={vm.selectedArea.id} />
+          {vm.selectedArea.tagLeader && <AreaTagLeaderHandle key={`${vm.selectedArea.id}:leader`} vm={vm} id={vm.selectedArea.id} />}
         </svg>}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'polygon'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
@@ -266,14 +269,18 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               {vm.selectedAnnotationStyle.choices.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
             </SelectContent>
           </Select>}
-          {vm.canContinueDimension && <Button type="button" size="sm" variant="ghost" className="shrink-0"
-            onClick={event => { event.stopPropagation(); vm.startDimensionContinuation(); }}>Continue</Button>}
-          {vm.canContinueDimension && <>
-            <Button type="button" size="sm" variant="ghost" className="shrink-0"
-              onClick={event => { event.stopPropagation(); vm.startDimensionContinuation('insert'); }}>Add Point</Button>
-            <Button type="button" size="sm" variant="ghost" className="shrink-0" disabled={!vm.canRemoveDimensionPoint}
-              onClick={event => { event.stopPropagation(); vm.startDimensionContinuation('remove'); }}>Remove Point</Button>
-          </>}
+          {vm.canContinueDimension && <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" size="sm" variant="ghost" className="shrink-0 gap-1">Chain <ChevronUp className="h-3 w-3" /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="center" onMouseDown={event => event.stopPropagation()}
+              onMouseUp={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+              <DropdownMenuItem className="text-xs" onSelect={() => vm.startDimensionContinuation()}>Continue</DropdownMenuItem>
+              <DropdownMenuItem className="text-xs" onSelect={() => vm.startDimensionContinuation('insert')}>Add Point</DropdownMenuItem>
+              <DropdownMenuItem className="text-xs" disabled={!vm.canRemoveDimensionPoint}
+                onSelect={() => vm.startDimensionContinuation('remove')}>Remove Point</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>}
           {vm.selectedAnnotation2D.type === 'measure' && vm.selectedAnnotation2D.dimensionLabel
             && vm.dimensionEditing.selectedDimension && <Button type="button" size="sm" variant="ghost"
               className="shrink-0" disabled={!vm.dimensionEditing.hasLabelOffset}
@@ -297,9 +304,25 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               && <Input className="h-7 w-32 text-xs" aria-label="Area name"
               placeholder="Area name" maxLength={200} value={vm.selectedArea.tagName ?? ''}
               onChange={event => vm.updateSelectedAreaTag({ tagName: event.target.value })} />}
-            {vm.selectedArea.tagTemplateId && <Button size="sm" variant={vm.selectedArea.tagLeader ? 'secondary' : 'ghost'}
-              aria-pressed={vm.selectedArea.tagLeader === true}
-              onClick={() => vm.updateSelectedAreaTag({ tagLeader: !vm.selectedArea?.tagLeader })}>{t('section2d.tags.leader')}</Button>}
+            {vm.selectedArea.tagTemplateId && <div className="flex shrink-0 items-center">
+              <Button size="sm" variant={vm.selectedArea.tagLeader ? 'secondary' : 'ghost'} className="rounded-r-none"
+                aria-pressed={vm.selectedArea.tagLeader === true}
+                onClick={() => vm.updateSelectedAreaTag({ tagLeader: !vm.selectedArea?.tagLeader })}>{t('section2d.tags.leader')}</Button>
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant={vm.selectedArea.tagLeader ? 'secondary' : 'ghost'} className="rounded-l-none border-l px-1.5"
+                    aria-label="Leader options"><ChevronUp className="h-3 w-3" /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="center" onMouseDown={event => event.stopPropagation()}
+                  onMouseUp={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+                  <DropdownMenuCheckboxItem className="text-xs" checked={vm.selectedArea.tagLeader === true}
+                    onCheckedChange={checked => vm.updateSelectedAreaTag({ tagLeader: checked })}>Show Leader</DropdownMenuCheckboxItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs" disabled={!vm.selectedArea.tagLeaderOffset}
+                    onSelect={() => { if (vm.selectedArea) vm.updateAreaTagLeaderOffset(vm.selectedArea.id, undefined); }}>Reset Leader Anchor</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>}
           </>}
           {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
@@ -555,6 +578,69 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
     {delta?.snapped && <g aria-hidden="true" pointerEvents="none"
       transform={`translate(${position.x * sx + vm.markupTransform.x + delta.x} ${position.y * sy + vm.markupTransform.y + delta.y})`}>
       <DrawingSnapGlyph kind={delta.kind} />
+    </g>}
+  </g>;
+}
+
+/** Independent Area Tag leader origin; the polygon and label stay unchanged. */
+function AreaTagLeaderHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
+  const drag = useRef<{ pointerId: number; clientX: number; clientY: number;
+    original?: { x: number; y: number }; tip: { x: number; y: number }; connection: { x: number; y: number } } | null>(null);
+  const [feedback, setFeedback] = useState<{ point: { x: number; y: number }; kind: SnapKind | null } | null>(null);
+  const { resolve, resetDirection } = useDrawingDirection(`${id}:leader`, vm.angularSnap);
+  const area = vm.selectedArea;
+  const item = vm.areaTags.find(item => item.tag.id === id);
+  const rect = vm.areaTagRects.find(item => item.id === id);
+  const { x, y, scale } = vm.markupTransform;
+  if (!area || area.id !== id || !item || !rect?.leader || !(scale > 0)) return null;
+  const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
+  const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
+  const screen = (p: { x: number; y: number }) => ({ x: p.x * sx + x, y: p.y * sy + y });
+  const at = screen(item.anchor);
+  const original = area.tagLeaderOffset;
+  const update = (offset: { x: number; y: number } | undefined) => vm.updateAreaTagLeaderOffset(id, offset);
+  const move = (event: React.PointerEvent<SVGCircleElement>) => {
+    const start = drag.current;
+    if (!start) return;
+    const dx = event.clientX - start.clientX, dy = event.clientY - start.clientY;
+    if (!dx && !dy) { update(start.original); setFeedback(null); return; }
+    const raw = { x: start.tip.x + dx / sx, y: start.tip.y + dy / sy };
+    const snap = vm.findSnapPoint(raw);
+    const reference = resolve(start.connection, raw, snap, event.shiftKey) ?? snap;
+    const point = reference ?? raw;
+    update({ x: (start.original?.x ?? 0) + point.x - start.tip.x,
+      y: (start.original?.y ?? 0) + point.y - start.tip.y });
+    setFeedback(reference ? { point, kind: vm.snapKindFor(reference) } : null);
+  };
+  const clear = () => { drag.current = null; resetDirection(); setFeedback(null); };
+  const cancel = () => { if (drag.current) update(drag.current.original); clear(); };
+  return <g>
+    <circle cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={2}
+      className="pointer-events-auto cursor-crosshair touch-none" role="button" tabIndex={0} aria-label="Move leader tip"
+      onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}
+      onKeyDown={event => {
+        const dx = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        const dy = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+        if (!dx && !dy) return;
+        event.preventDefault(); event.stopPropagation();
+        const step = event.shiftKey ? 10 : 1;
+        update({ x: (original?.x ?? 0) + dx * step / sx, y: (original?.y ?? 0) + dy * step / sy });
+      }}
+      onPointerDown={event => {
+        if (event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation(); resetDirection();
+        drag.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY,
+          original, tip: { ...item.anchor }, connection: { x: (rect.leader!.end.x - x) / sx, y: (rect.leader!.end.y - y) / sy } };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => { if (drag.current?.pointerId === event.pointerId) { event.stopPropagation(); move(event); } }}
+      onPointerUp={event => { if (drag.current?.pointerId === event.pointerId) {
+        event.stopPropagation(); move(event); clear(); event.currentTarget.releasePointerCapture(event.pointerId);
+      } }}
+      onPointerCancel={event => { if (drag.current?.pointerId === event.pointerId) { event.stopPropagation(); cancel(); } }}
+      onLostPointerCapture={cancel} />
+    {feedback && <g aria-hidden="true" pointerEvents="none" transform={`translate(${screen(feedback.point).x} ${screen(feedback.point).y})`}>
+      <DrawingSnapGlyph kind={feedback.kind} />
     </g>}
   </g>;
 }

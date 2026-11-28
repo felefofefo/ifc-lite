@@ -413,8 +413,10 @@ export function resolveAreaTag(area: PolygonArea2DResult, templates: readonly Ta
   const template = templates.find(item => item.id === area.tagTemplateId && isAreaTagTemplate(item));
   if (!template || area.points.length < 3 || !Number.isFinite(area.area) || area.area <= 0
     || !Number.isFinite(area.perimeter)) return undefined;
-  const anchor = computePolygonSurfaceCentroid(area.points);
-  const position = area.tagPosition ?? anchor;
+  const center = computePolygonSurfaceCentroid(area.points);
+  const anchor = area.tagLeaderOffset
+    ? { x: center.x + area.tagLeaderOffset.x, y: center.y + area.tagLeaderOffset.y } : center;
+  const position = area.tagPosition ?? center;
   if (!isPoint(position) || !isPoint(anchor)) return undefined;
   const values = areaTagValues(area);
   try {

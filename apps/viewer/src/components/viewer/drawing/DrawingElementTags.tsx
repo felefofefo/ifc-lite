@@ -54,7 +54,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
 }) {
   const active = tool === 'tag';
   const [selectedTagId, setSelectedTagId] = useState<{ viewId: string; id: string } | null>(null);
-  const [showHost, setShowHost] = useState(false);
+  const selectedEntityId = useViewerStore(s => s.selectedEntityId);
   const [rehostSession, setRehostSession] = useState<{ viewId: string; projectId: string | null | undefined; id: string } | null>(null);
   const [rehostHoverId, setRehostHoverId] = useState<number>();
   const [session, setSession] = useState<Draft | null>(null);
@@ -205,7 +205,6 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     const next = rehostDrawingTag(selected, hit, p);
     return next && findTagTarget(targets, next)?.id === hit.id ? hit : undefined;
   }
-  useEffect(() => { setShowHost(false); }, [selected?.id, view?.id, projectId, tool]);
   useEffect(() => {
     if (rehostSession && !rehosting) {
       setRehostSession(null); setRehostHoverId(undefined);
@@ -222,8 +221,10 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     window.addEventListener('keydown', cancel, true);
     return () => window.removeEventListener('keydown', cancel, true);
   }, [rehosting, setTool]);
+  // The selected host follows the shared model selection; no second toggle state.
+  // Keep the 9F footprint fallback for spaces absent from the model drawing index.
   const hostHighlight = rehosting ? hostCandidates.find(item => item.id === rehostHoverId)
-    : showHost && tool === 'none' ? selectedTarget : undefined;
+    : tool === 'none' && selectedTarget?.id === selectedEntityId ? selectedTarget : undefined;
   const selectedIfcTemplates = selectedTarget ? templates.filter(item =>
     symbolUse(item) === 'ifc' && item.classes.includes(selectedTarget.ifcClass)) : [];
   const items = useMemo(() => stored.flatMap(tag => {
@@ -337,9 +338,17 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     setTool('none');
   }
 
+  // Use the ordinary drawing selection path (federated renderer IDs).
+  // Hover is still transient; it must not change the 3D selection.
+  function selectHostIn3D(id = selectedTarget?.id) {
+    if (id === undefined) return;
+    const state = useViewerStore.getState();
+    state.clearEntitySelection();
+    state.setSelectedEntityId(id);
+  }
+
   function beginChangeHost() {
     if (tool !== 'none' || !view || !drawing || !selected || selected.free || selected.gridStart) return;
-    setShowHost(false);
     setSession(null); setCursor(null); setMiss(false); setFailed(false);
     setRehostHoverId(undefined);
     setRehostSession({ viewId: view.id, projectId, id: selected.id });
@@ -365,7 +374,10 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       });
       if (!found) throw new Error('Tag no longer exists');
       return next;
-    })) close();
+    })) {
+      selectHostIn3D(hit.id);
+      close();
+    }
   }
 
   function setMeasurement(tag: DrawingElementTag, kind: 'spotElevation' | 'slope') {
@@ -482,8 +494,19 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     setSelectedTagId({ viewId: view.id, id: tag.id });
   }
 
+  // Select already owns style, template, movement, leader and host controls.
+  // Edit is only for additional content or geometry, not a second selection.
+  function canEditSymbol(tag: DrawingElementTag | undefined): boolean {
+    if (!tag) return false;
+    if (!tag.free) return !tag.svg && !tag.templateId; // legacy editable IFC field
+    const template = templates.find(item => item.id === tag.templateId);
+    const kind = template && symbolUse(template);
+    return kind === 'grid' || isMeasurement(kind);
+  }
+
   function editSelected(tag: DrawingElementTag | undefined = selected) {
-    if (!view || !tag || (!tag.free && !findTagTarget(targets, tag))) return;
+    if (!view || tool !== 'none' || !tag || !canEditSymbol(tag)
+      || (!tag.free && !findTagTarget(targets, tag))) return;
     setSelectedTagId({ viewId: view.id, id: tag.id });
     useViewerStore.getState().setSelectedAnnotation2D(null);
     setSession({ viewId: view.id, tag, mode: 'edit' });
@@ -803,11 +826,11 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     beginLeaderBaseDrag, dragLeaderBase, cancelLeaderBaseDrag, nudgeLeaderBase, toggleSelectedLeader,
     resizeGridEndpoint, beginGridResize, cancelGridResize, beginEditDrag, dragEditedSymbol, cancelEditDrag,
     selected, selectedUse, selectedKind, selectedStyles, selectedStyleLocked, selectedIfcTemplates, replaceSelectedIfcTemplate,
-    selectedHostLabel, showHost, rehosting, hostHighlight, beginChangeHost,
-    toggleHostHighlight() { if (tool === 'none' && selectedTarget) setShowHost(value => !value); },
+    selectedHostLabel, rehosting, hostHighlight, beginChangeHost,
+    selectHostIn3D() { if (tool === 'none' && selectedTarget) selectHostIn3D(selectedTarget.id); },
     draggingSelectedTag: dragPreviewTag?.id ?? null,
     selectedStyleId: (selectedKind && viewTypeIds?.[selectedKind]) ?? selected?.appearanceId ?? 'original',
-    editSelected, setSelectedStyle, clearSelection() { setSelectedTagId(null); },
+    canEditSymbol, editSelected, setSelectedStyle, clearSelection() { setSelectedTagId(null); },
     template, draftUse, placingFree: !!freeTemplate, use, firstPoint, symbolValue, mode, overrideText, modelLabel,
     setOverride(value: string) { setOverride(value); setMiss(false); },
     setSymbolValue(value: string) { setSymbolValue(value); setMiss(false); },

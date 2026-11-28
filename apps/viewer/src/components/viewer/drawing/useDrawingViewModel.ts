@@ -1222,6 +1222,13 @@ export function useDrawingViewModel() {
       item.id === id && item.viewKey === viewKey && item.tagTemplateId
         ? { ...item, tagPosition: { ...point } } : item) }));
   }
+  function updateAreaTagLeaderOffset(id: string, offset: { x: number; y: number } | undefined) {
+    if (!viewKey || selectedAnnotation2D?.type !== 'polygon' || selectedAnnotation2D.id !== id
+      || annotation2DActiveTool !== 'none' || (offset && (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)))) return;
+    useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item =>
+      item.id === id && item.viewKey === viewKey && item.tagTemplateId
+        ? { ...item, tagLeaderOffset: offset ? { ...offset } : undefined } : item) }));
+  }
   function editSelectedAnnotation() {
     if (!selectedAnnotation2D) return;
     setEditableAnnotationId(selectedAnnotation2D.id);
@@ -1348,7 +1355,7 @@ export function useDrawingViewModel() {
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
-    editableAnnotationId, resizeRevisionCloud, updateAreaVertex, updateAreaTagPosition,
+    editableAnnotationId, resizeRevisionCloud, updateAreaVertex, updateAreaTagPosition, updateAreaTagLeaderOffset,
     polygonArea2DPoints, polygonArea2DResults, areaTags, areaTagRects, areaTagTemplates, selectedArea, updateSelectedAreaTag,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel, selectedText, updateTextLeader, toggleTextLeader,
     cloudAnnotation2DPoints, cloudAnnotations2D,
