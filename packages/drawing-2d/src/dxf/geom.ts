@@ -10,6 +10,28 @@
 
 import type { DxfVertex } from './types.js';
 
+/** Cardinal extrema of circular segments for writer extents (not extra vertices). */
+export function bulgedPolylineExtrema(vertices: readonly { x: number; y: number; bulge?: number }[], closed: boolean) {
+  const result = vertices.map(({x,y}) => ({x,y}));
+  const tau = 2*Math.PI;
+  for (let i=0; i<vertices.length-(closed?0:1); i++) {
+    const a=vertices[i], b=vertices[(i+1)%vertices.length], bulge=a.bulge ?? 0;
+    if (!bulge || !Number.isFinite(bulge)) continue;
+    const dx=b.x-a.x, dy=b.y-a.y, chord=Math.hypot(dx,dy);
+    if (!(chord>0)) continue;
+    const h=chord*(1/bulge-bulge)/4, radius=Math.hypot(chord/2,h);
+    const cx=a.x+dx/2-dy/chord*h, cy=a.y+dy/2+dx/chord*h;
+    const start=Math.atan2(a.y-cy,a.x-cx), sweep=4*Math.atan(bulge);
+    if (![cx,cy,radius].every(Number.isFinite)) continue;
+    for (const [angle,x,y] of [[0,cx+radius,cy],[Math.PI/2,cx,cy+radius],[Math.PI,cx-radius,cy],[3*Math.PI/2,cx,cy-radius]]) {
+      const turn=((Math.sign(sweep)*(angle-start))%tau+tau)%tau;
+      if (turn<=Math.abs(sweep)+1e-10) result.push({x,y});
+    }
+  }
+  return result;
+}
+
+
 /** Angular resolution for tessellated arcs (radians). ~5 degrees. */
 const ARC_STEP = Math.PI / 36;
 const MIN_ARC_SEGMENTS = 4;

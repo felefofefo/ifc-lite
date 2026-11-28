@@ -80,7 +80,7 @@ import { getDrawingMarkupModelContext } from './drawing-markup-context.js';
  */
 export interface SaveMarkupInput {
   measure2DResults: Array<{ id: string } & MeasureMarkupParams>;
-  polygonArea2DResults: Array<{ id: string } & PolygonAreaMarkupParams>;
+  polygonArea2DResults: Array<{ id: string; pathClosed?: boolean } & PolygonAreaMarkupParams>;
   textAnnotations2D: Array<{ id: string } & TextMarkupParams>;
   cloudAnnotations2D: Array<{ id: string; points: Array<{ x: number; y: number }>; label: string }>;
 }
@@ -205,6 +205,7 @@ function findInvalidMarkup(input: SaveMarkupInput, validClouds: SaveMarkupInput[
     if (!isFiniteNonNegative(m.distance)) return `measurement "${m.id}" has a non-finite or negative distance`;
   }
   for (const p of input.polygonArea2DResults) {
+    if (p.pathClosed !== undefined) return `graphical path "${p.id}" belongs to the Rove project, not the IFC model`;
     if (p.points.length < 3) return `area "${p.id}" needs at least 3 points`;
     if (p.points.some((pt) => !isFinitePoint(pt))) return `area "${p.id}" has a non-finite point`;
     if (!isFiniteNonNegative(p.area)) return `area "${p.id}" has a non-finite or negative area`;

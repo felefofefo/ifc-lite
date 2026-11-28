@@ -36,7 +36,8 @@ import { type CachedSheetTransform } from '@/lib/drawing/sheet-geometry-key';
 import { resolveSheetTransform } from '@/lib/drawing/sheet-transform';
 import { useDrawingElementPropertiesLookup } from '@/hooks/useDrawingElementPropertiesLookup';
 import { markActiveDrawingCanvasRendered, registerActiveDrawingCanvas } from '@/lib/drawing/active-canvas-snapshot';
-import { areaBoundaryStyle, areaHasLegacyBackground, areaHatchLayers, textAnnotationLayout, textBoxStyle, textLeaderTip, textLeaderGeometry, textLeaderStyle } from '@/lib/drawing/annotation-types';
+import { pathDisplayPoints } from '@/lib/drawing/sketch-input';
+import { DETAIL_PATH_WEIGHT_MM, areaBoundaryStyle, areaHasLegacyBackground, areaHatchLayers, textAnnotationLayout, textBoxStyle, textLeaderTip, textLeaderGeometry, textLeaderStyle } from '@/lib/drawing/annotation-types';
 import { resolveCutPolygonStyle } from './drawing/cut-polygon-style';
 import { resolveDrawingPaperTheme, type DrawingPaperTheme } from './drawing/paper-theme';
 
@@ -1438,6 +1439,28 @@ export function Drawing2DCanvas({
       ctx.restore();
     };
     const paintArea = (result: PolygonArea2DResult) => {
+      if (result.pathClosed !== undefined) {
+        const points = pathDisplayPoints(result, 0.2 / Math.max(1, Math.abs(markupTransform.scale)));
+        if (points.length < 2) return;
+        ctx.save();
+        ctx.beginPath();
+        points.forEach((point, index) => {
+          const x = drawingToScreenX(point.x), y = drawingToScreenY(point.y);
+          if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        if (result.pathClosed) ctx.closePath();
+        ctx.strokeStyle = sheetEnabled && activeSheet ? '#000000' : paperTheme.ink;
+        ctx.lineWidth = Math.max(0.01, DETAIL_PATH_WEIGHT_MM * paperUnit);
+        ctx.setLineDash([]);
+        ctx.stroke();
+        const opacity = areaHighlightOpacity(result.id);
+        if (opacity) {
+          ctx.strokeStyle = primaryColor; ctx.globalAlpha = opacity;
+          ctx.lineWidth = Math.max(2.5, ctx.lineWidth); ctx.stroke();
+        }
+        ctx.restore();
+        return;
+      }
       if (result.points.length < 3) return;
 
       const pen = areaBoundaryStyle(result.appearance, lineweights);

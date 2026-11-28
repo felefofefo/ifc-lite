@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { ChevronDown, Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Move, Scissors, Copy, ClipboardPaste, Pin, PinOff, Ruler, Trash2, Type, ZoomIn, ZoomOut, Tag } from 'lucide-react';
+import { ChevronDown, Cloud, Hexagon, Maximize2, MoreHorizontal, MousePointer2, Move, Scissors, Copy, ClipboardPaste, Pin, PinOff, Ruler, Trash2, Type, ZoomIn, ZoomOut, Tag, Pencil } from 'lucide-react';
 import { DIMENSION_TYPES, type DimensionType } from '@/lib/drawing/dimension-line';
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,8 @@ export interface DrawingToolbarProps {
   activeTool: Annotation2DTool;
   onSelectTool: (tool: Annotation2DTool) => void;
   onOpenTags: () => void;
+  drawActive?: boolean;
+  onDraw?: () => void;
   canEdit: boolean;
   canCopy: boolean;
   canDelete: boolean;
@@ -120,9 +122,10 @@ export function DrawingToolbar(p: DrawingToolbarProps) {
           ) : (
             <ToolSegment
               key={tool} icon={icon} label={t(labelKey)}
-              active={p.activeTool === tool} showLabel={showLabels} onSelect={() => p.onSelectTool(tool)}
+              active={p.activeTool === tool && !(tool === 'polygon-area' && p.drawActive)} showLabel={showLabels} onSelect={() => p.onSelectTool(tool)}
             />
           ))}
+          {p.onDraw && <ToolSegment icon={Pencil} label="Draw" active={!!p.drawActive} showLabel={showLabels} onSelect={p.onDraw} />}
         </div>
         <IconAction icon={Tag} label={t('section2d.tagLibrary.title')} text={showLabels ? t('section2d.tagLibrary.button') : undefined}
           pressed={p.activeTool === 'tag'} onClick={p.onOpenTags} />

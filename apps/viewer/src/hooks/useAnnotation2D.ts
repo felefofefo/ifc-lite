@@ -10,7 +10,8 @@
  * measurements and panning.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { constrainSketchPoint, readSketchFields, sketchRectangle, sketchPath, sketchCurve, EMPTY_SKETCH_FIELDS, type SketchFields, type SketchShape, type SketchMode } from '@/lib/drawing/sketch-input';
 import { registerKeyboardCommand, registerKeyboardKeyUp } from '@/lib/commands/dispatcher';
 import type { Drawing2D } from '@ifc-lite/drawing-2d';
 import type {
@@ -38,7 +39,8 @@ export interface UseAnnotation2DParams {
   /** Respect the Endpoint switch for draft polygon vertices. */
   areaEndpointSnaps?: boolean;
   addPolygonArea2DPoint: (pt: Point2D) => void;
-  completePolygonArea2D: (area: number, perimeter: number) => void;
+  completePolygonArea2D: (area: number, perimeter: number, points?: Point2D[], pathClosed?: boolean, pathBulges?: number[]) => void;
+  areaSketchKey?: string;
   cancelPolygonArea2D: () => void;
   // Text state
   textAnnotations2D: TextAnnotation2D[];
@@ -77,6 +79,19 @@ export interface UseAnnotation2DResult {
   handleDoubleClick: (e: React.MouseEvent) => void;
   /** Ref that is true while an annotation drag is in progress (read at call time). */
   isDraggingRef: React.RefObject<boolean>;
+  areaSketch: {
+    mode: SketchMode;
+    selectMode: (mode: SketchMode) => void;
+    shape: SketchShape;
+    selectShape: (shape: SketchShape) => void;
+    dynamicInput: boolean;
+    toggleDynamicInput: () => void;
+    fields: SketchFields;
+    setField: (key: keyof SketchFields, value: string) => void;
+    valid: boolean;
+    addPoint: () => void;
+    finish: () => void;
+  };
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -97,6 +112,7 @@ export function useAnnotation2D({
   setActiveTool,
   polygonArea2DPoints,
   areaEndpointSnaps = true,
+  areaSketchKey,
   addPolygonArea2DPoint,
   completePolygonArea2D,
   cancelPolygonArea2D,
@@ -123,6 +139,25 @@ export function useAnnotation2D({
 }: UseAnnotation2DParams): UseAnnotation2DResult {
 
   const shiftHeldRef = useRef(false);
+  const [sketchMode, setSketchMode] = useState<SketchMode>('area');
+  const [boundaryShape, setBoundaryShape] = useState<SketchShape>('polygon');
+  const [drawShape, setDrawShape] = useState<SketchShape>('line');
+  const areaShape = sketchMode === 'path' ? drawShape : boundaryShape;
+  const [dynamicInput, setDynamicInput] = useState(true);
+  const [sketchFields, setSketchFields] = useState<SketchFields>(EMPTY_SKETCH_FIELDS);
+  const rawAreaCursor = useRef<{ point: Point2D; shift: boolean } | null>(null);
+  const previousSketchKey = useRef(areaSketchKey);
+  const previousSketchTool = useRef(activeTool);
+  useEffect(() => {
+    const viewChanged = previousSketchKey.current !== areaSketchKey;
+    const toolChanged = previousSketchTool.current !== activeTool;
+    previousSketchKey.current = areaSketchKey;
+    previousSketchTool.current = activeTool;
+    if (!viewChanged && !toolChanged) return;
+    setSketchFields(EMPTY_SKETCH_FIELDS);
+    rawAreaCursor.current = null;
+    if (viewChanged && activeTool === 'polygon-area') cancelPolygonArea2D();
+  }, [activeTool, areaSketchKey, cancelPolygonArea2D]);
 
   // ── Ephemeral drag state as refs (no store churn during drag) ──────────
   const isDraggingRef = useRef(false);
@@ -304,10 +339,17 @@ export function useAnnotation2D({
   const { resolve: resolveAreaDirection } = useDrawingDirection(
     activeTool === 'polygon-area' && polygonArea2DPoints.length ? 'drawing-area' : null, angularSnap);
 
-  function resolveAreaPoint(raw: Point2D, shift: boolean): { point: Point2D; reference: Point2D | null } {
+  function resolveAreaPoint(raw: Point2D, shift: boolean, fields = sketchFields): { point: Point2D; reference: Point2D | null; invalid?: boolean } {
     const anchor = polygonArea2DPoints[polygonArea2DPoints.length - 1] ?? null;
-    // Closure wins even when the closing edge is not an angular increment.
-    if (isNearFirstVertex(raw)) {
+    const typed = !!(fields.first.trim() || fields.second.trim());
+    if (areaShape === 'rectangle') {
+      const reference = findSnapPoint(raw);
+      const point = reference ?? raw;
+      return anchor ? constrainSketchPoint(areaShape, anchor, point, reference, fields) ?? { point, reference: null, invalid: true }
+        : { point, reference };
+    }
+    // Existing closure wins, unless explicit numeric locks constrain this segment.
+    if (!typed && (areaShape === 'polygon' || areaShape === 'polyline') && isNearFirstVertex(raw)) {
       const first = polygonArea2DPoints[0];
       return { point: first, reference: first };
     }
@@ -322,10 +364,77 @@ export function useAnnotation2D({
       }
     }
     const reference = own ?? findSnapPoint(raw);
-    const directed = resolveAreaDirection(anchor, raw, reference, shift);
-    const point = directed ?? reference ?? (shift && anchor ? applyShiftConstraint(anchor, raw) : raw);
-    // The resolved point may reject a geometric target under an angular lock.
-    return { point, reference: directed ?? reference };
+    // A typed angle overrides the mouse/Shift/angular increment for this segment only.
+    const explicitAngle = readSketchFields(areaShape, fields)?.second !== undefined;
+    const directed = explicitAngle ? null : resolveAreaDirection(anchor, raw, reference, shift);
+    const point = directed ?? reference ?? (!explicitAngle && shift && anchor ? applyShiftConstraint(anchor, raw) : raw);
+    const resolved = { point, reference: directed ?? reference };
+    return anchor ? constrainSketchPoint(areaShape, anchor, point, resolved.reference, fields) ?? { point, reference: null, invalid: true } : resolved;
+  }
+
+  function updateAreaPreview(fields = sketchFields) {
+    const raw = rawAreaCursor.current;
+    if (!raw || activeTool !== 'polygon-area') return;
+    const next = resolveAreaPoint(raw.point, raw.shift, fields);
+    setAnnotation2DCursorPos(next.point);
+    setMeasure2DSnapPoint(next.reference);
+  }
+
+  function resetAreaSegment(point: Point2D | null) {
+    setSketchFields(EMPTY_SKETCH_FIELDS);
+    rawAreaCursor.current = point ? { point, shift: false } : null;
+    setAnnotation2DCursorPos(null);
+    setMeasure2DSnapPoint(null);
+  }
+
+  function finishArea(closed = false) {
+    if (activeTool !== 'polygon-area') return;
+    if (sketchMode === 'path') {
+      if (areaShape !== 'polyline') return;
+      const path = sketchPath(polygonArea2DPoints, closed);
+      if (!path) return;
+      completePolygonArea2D(path.area, path.perimeter, path.points, path.pathClosed);
+    } else {
+      if (areaShape !== 'polygon' || polygonArea2DPoints.length < 3) return;
+      completePolygonArea2D(computePolygonArea(polygonArea2DPoints), computePolygonPerimeter(polygonArea2DPoints));
+    }
+    resetAreaSegment(null);
+  }
+
+  function commitAreaPoint(raw: Point2D, shift: boolean) {
+    if (activeTool !== 'polygon-area' || !readSketchFields(areaShape, sketchFields)) return;
+    const { point, invalid } = resolveAreaPoint(raw, shift);
+    if (invalid || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    if (areaShape === 'rectangle' && polygonArea2DPoints.length) {
+      const rect = sketchRectangle(polygonArea2DPoints[0], point);
+      if (!rect) return;
+      completePolygonArea2D(sketchMode === 'path' ? 0 : rect.area, rect.perimeter, rect.points,
+        sketchMode === 'path' ? true : undefined);
+      resetAreaSegment(null);
+      return;
+    }
+    const first = polygonArea2DPoints[0];
+    if ((areaShape === 'circle' && polygonArea2DPoints.length === 1) || (areaShape === 'arc' && polygonArea2DPoints.length === 2)) {
+      const curve = sketchCurve(areaShape, polygonArea2DPoints, point);
+      if (!curve) return;
+      completePolygonArea2D(curve.area, curve.perimeter, curve.points, curve.pathClosed, curve.pathBulges);
+      resetAreaSegment(null);
+      return;
+    }
+    if (areaShape === 'line' && first) {
+      const path = sketchPath([first, point], false);
+      if (!path) return;
+      completePolygonArea2D(path.area, path.perimeter, path.points, path.pathClosed);
+      resetAreaSegment(null);
+      return;
+    }
+    if ((areaShape === 'polygon' || areaShape === 'polyline') && polygonArea2DPoints.length >= 3 && first
+      && Math.hypot(first.x - point.x, first.y - point.y) < 1e-8) {
+      finishArea(true);
+    } else if (!polygonArea2DPoints.some(previous => Math.hypot(previous.x - point.x, previous.y - point.y) < 1e-8)) {
+      addPolygonArea2DPoint(point);
+      resetAreaSegment(point);
+    }
   }
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────
@@ -371,12 +480,7 @@ export function useAnnotation2D({
 
       switch (activeTool) {
         case 'polygon-area': {
-          point = resolveAreaPoint(drawingCoord, e.shiftKey || shiftHeldRef.current).point;
-          if (isNearFirstVertex(drawingCoord)) {
-            completePolygonArea2D(computePolygonArea(polygonArea2DPoints), computePolygonPerimeter(polygonArea2DPoints));
-          } else if (!polygonArea2DPoints.some(previous => Math.hypot(previous.x - point.x, previous.y - point.y) < 1e-8)) {
-            addPolygonArea2DPoint(point);
-          }
+          commitAreaPoint(drawingCoord, e.shiftKey || shiftHeldRef.current);
           return true;
         }
         case 'text': {
@@ -438,7 +542,7 @@ export function useAnnotation2D({
     applyShiftConstraint, polygonArea2DPoints, addPolygonArea2DPoint, completePolygonArea2D,
     addTextAnnotation2D, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, addCloudAnnotation2DPoint, completeCloudAnnotation2D,
-    hitTestAnnotations, getAnnotationOrigin, setSelectedAnnotation2D, editableAnnotationId, resolveAreaPoint, resetDragDirection]);
+    hitTestAnnotations, getAnnotationOrigin, setSelectedAnnotation2D, editableAnnotationId, resolveAreaPoint, resetDragDirection, commitAreaPoint]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -478,7 +582,8 @@ export function useAnnotation2D({
     if (activeTool === 'none' || activeTool === 'measure') return;
 
     if (activeTool === 'polygon-area') {
-      const area = resolveAreaPoint(drawingCoord, e.shiftKey || shiftHeldRef.current);
+      rawAreaCursor.current = { point: drawingCoord, shift: e.shiftKey || shiftHeldRef.current };
+      const area = resolveAreaPoint(drawingCoord, rawAreaCursor.current.shift);
       setMeasure2DSnapPoint(area.reference);
       setAnnotation2DCursorPos(area.point);
       return;
@@ -517,9 +622,9 @@ export function useAnnotation2D({
   }, [endDrag]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    if (activeTool === 'polygon-area' && polygonArea2DPoints.length >= 3) {
+    if (activeTool === 'polygon-area') {
       e.preventDefault();
-      completePolygonArea2D(computePolygonArea(polygonArea2DPoints), computePolygonPerimeter(polygonArea2DPoints));
+      finishArea();
       return;
     }
 
@@ -532,7 +637,7 @@ export function useAnnotation2D({
       setTextAnnotation2DEditing(hit.id);
     }
   }, [activeTool, polygonArea2DPoints, completePolygonArea2D, containerRef,
-    hitTestAnnotations, setSelectedAnnotation2D, setTextAnnotation2DEditing]);
+    hitTestAnnotations, setSelectedAnnotation2D, setTextAnnotation2DEditing, finishArea]);
 
   return {
     hitTestAnnotations,
@@ -541,6 +646,45 @@ export function useAnnotation2D({
     handleMouseUp,
     handleDoubleClick,
     isDraggingRef,
+    areaSketch: {
+      mode: sketchMode,
+      selectMode(mode) {
+        setSketchMode(mode);
+        cancelPolygonArea2D();
+        resetAreaSegment(null);
+      },
+      shape: areaShape,
+      selectShape(shape) {
+        if (shape === areaShape || activeTool !== 'polygon-area') return;
+        if (sketchMode === 'path') {
+          if (shape === 'polygon') return;
+          setDrawShape(shape);
+        } else {
+          if (shape !== 'polygon' && shape !== 'rectangle') return;
+          setBoundaryShape(shape);
+        }
+        cancelPolygonArea2D();
+        resetAreaSegment(null);
+      },
+      dynamicInput,
+      toggleDynamicInput() {
+        setDynamicInput(value => !value);
+        setSketchFields(EMPTY_SKETCH_FIELDS);
+        updateAreaPreview(EMPTY_SKETCH_FIELDS);
+      },
+      fields: sketchFields,
+      setField(key, value) {
+        const next = { ...sketchFields, [key]: value };
+        setSketchFields(next);
+        updateAreaPreview(next);
+      },
+      valid: !!readSketchFields(areaShape, sketchFields),
+      addPoint() {
+        const raw = rawAreaCursor.current;
+        if (raw && polygonArea2DPoints.length) commitAreaPoint(raw.point, raw.shift);
+      },
+      finish: () => finishArea(),
+    },
   };
 }
 

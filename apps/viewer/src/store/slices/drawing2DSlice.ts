@@ -21,6 +21,7 @@ import { DEFAULT_SCAN_OUTLINE_MAX_GAP } from '@/lib/scan-outline/scan-outline';
 import { isDegenerateMeasurement, isDegenerateArea, isDegenerateCloud } from './drawing2DDegenerateGuards';
 
 import { repositionCurvedDimension, type DimensionShape } from '@/lib/drawing/dimension-line';
+import { sketchPath } from '@/lib/drawing/sketch-input';
 
 export type Drawing2DStatus = 'idle' | 'generating' | 'ready' | 'error';
 
@@ -65,9 +66,13 @@ export interface PolygonArea2DResult {
   appearanceId?: string;
   appearance?: AnnotationSymbolStyle;
   viewKey?: string;
-  points: Point2D[];  // Closed polygon vertices (drawing coords)
-  area: number;       // Computed area in m²
-  perimeter: number;  // Computed perimeter in m
+  /** Defined only for unfilled graphical paths. Undefined keeps legacy Area semantics. */
+  pathClosed?: boolean;
+  /** Optional DXF-style signed bulge per vertex; absent on legacy straight paths. */
+  pathBulges?: number[];
+  points: Point2D[];  // Boundary/path vertices (drawing coords)
+  area: number;       // Measured area in m²; zero for graphical paths
+  perimeter: number;  // Perimeter or path length in m
 }
 
 /** Text box annotation */
@@ -357,7 +362,7 @@ export interface Drawing2DSlice extends Drawing2DState {
 
   // Polygon Area Actions
   addPolygonArea2DPoint: (point: Point2D) => void;
-  completePolygonArea2D: (area: number, perimeter: number, viewKey?: string, appearanceId?: string) => void;
+  completePolygonArea2D: (area: number, perimeter: number, viewKey?: string, appearanceId?: string, pointsOverride?: Point2D[], pathClosed?: boolean, pathBulges?: number[]) => void;
   cancelPolygonArea2D: () => void;
   removePolygonArea2DResult: (id: string) => void;
   clearPolygonArea2DResults: () => void;
@@ -704,16 +709,28 @@ export const createDrawing2DSlice: StateCreator<Drawing2DSlice, [], [], Drawing2
     polygonArea2DPoints: [...state.polygonArea2DPoints, point],
   })),
 
-  completePolygonArea2D: (area, perimeter, viewKey, appearanceId) => {
+  completePolygonArea2D: (area, perimeter, viewKey, appearanceId, pointsOverride, pathClosed, pathBulges) => {
     const state = get();
-    if (state.polygonArea2DPoints.length < 3) return;
+    const points = pointsOverride ?? state.polygonArea2DPoints;
+    if (pathClosed !== undefined) {
+      if (typeof pathClosed !== 'boolean' || !viewKey) return;
+      const path = sketchPath(points, pathClosed, pathBulges);
+      if (!path) return;
+      const id = globalThis.crypto?.randomUUID?.() ?? `path-${Date.now()}-${Math.random()}`;
+      set({ polygonArea2DResults: [...state.polygonArea2DResults, { id, viewKey, ...path }],
+        polygonArea2DPoints: [], annotation2DCursorPos: null });
+      return;
+    }
+    if (pathBulges !== undefined) return;
+    if (points.length < 3 || (pointsOverride && (!Number.isFinite(area) || !Number.isFinite(perimeter)
+      || perimeter <= 0 || points.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))))) return;
 
     if (isDegenerateArea(area)) { set({ polygonArea2DPoints: [], annotation2DCursorPos: null }); return; } // near-zero-area guard (#4197)
     const result: PolygonArea2DResult = {
       id: `poly-area-${Date.now()}`,
       viewKey,
       appearanceId,
-      points: [...state.polygonArea2DPoints],
+      points: points.map(point => ({ ...point })),
       area,
       perimeter,
     };

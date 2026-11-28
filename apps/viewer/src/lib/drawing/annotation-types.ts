@@ -30,6 +30,8 @@ export type AnnotationSymbolStyle = {
   textLeader?: { enabled: boolean; color?: string; pattern?: LineStylePreset; weight?: typeof LINEWEIGHT_PRESETS[number]; arrowSymbolId?: string };
 };
 
+export const DETAIL_PATH_WEIGHT_MM = 0.25;
+
 export const AREA_BOUNDARY_PATTERNS = ['solid', 'dashed', 'dotted', 'dashdot', 'center'] as const satisfies readonly LineStylePreset[];
 
 export function areaBoundaryStyle(style?: AnnotationSymbolStyle, weights?: LineweightRow) {

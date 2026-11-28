@@ -10,6 +10,7 @@ import { textAnnotationLayout, textBoxStyle, textLeaderGeometry, textLeaderStyle
 import type { resolveTextLeaderArrow } from '@/lib/drawing/drawing-tag-library';
 import { TextLeaderGraphic } from './TextLeaderGraphic';
 import type { DrawingViewModel } from './useDrawingViewModel';
+import { pathDisplayPoints } from '@/lib/drawing/sketch-input';
 
 /** Non-interactive ghost of the selected authored element, in drawing coordinates. */
 type ArrowMap = ReadonlyMap<string, NonNullable<ReturnType<typeof resolveTextLeaderArrow>>>;
@@ -94,9 +95,11 @@ function MoveGhost({ vm, preview, arrows }: { vm: DrawingViewModel; preview: Mov
           </g>;
         });
       })()}
-      {payload?.kind === 'area' && <polygon points={payload.item.points.map(point => {
-        const p = translate(point); return `${p.x},${p.y}`;
-      }).join(' ')} fill="currentColor" fillOpacity="0.08" />}
+      {payload?.kind === 'area' && (() => {
+        const points = pathDisplayPoints(payload.item).map(point => { const p = translate(point); return `${p.x},${p.y}`; }).join(' ');
+        return payload.item.pathClosed === false ? <polyline points={points} fill="none" />
+          : <polygon points={points} fill={payload.item.pathClosed === undefined ? 'currentColor' : 'none'} fillOpacity="0.08" />;
+      })()}
       {payload?.kind === 'cloud' && (() => {
         const [a, b] = payload.item.points.map(translate);
         return a && b ? <rect x={Math.min(a.x, b.x)} y={Math.min(a.y, b.y)}

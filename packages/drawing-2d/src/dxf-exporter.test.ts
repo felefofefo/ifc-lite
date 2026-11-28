@@ -85,6 +85,21 @@ const underlay = (): DxfUnderlay => ({
 });
 
 describe('DXFExporter', () => {
+  for (const version of ['R12', 'R2007'] as const) {
+    it(`preserves native circular bulges in ${version}, including reflected coordinates`, () => {
+      const vertices = [{ x: 2, y: 0, bulge: 1 }, { x: -2, y: 0, bulge: 1 }];
+      const doc = parseDxf(exportToDXF(emptyDrawing(), { version,
+        coordinateTransform: p => ({ x: p.x + 5, y: -p.y + 3 }),
+        polylineLayers: [{ name: 'ROVE-LINES', color: '#000000', closed: true,
+          curveVertices: vertices, polylines: [vertices], lineWeight: 0.25 }],
+      }));
+      const path = doc.entities.find((e): e is DxfPolylineEntity => e.kind === 'polyline' && e.layer === 'ROVE-LINES');
+      expect(path?.vertices).toHaveLength(2);
+      expect(path?.vertices.map(v => v.bulge)).toEqual([-1, -1]);
+      expect(path?.closed).toBe(true);
+    });
+  }
+
   it('produces parseable DXF (R12, no $INSUNITS) stating metres in the leading comment', () => {
     const dxf = exportToDXF(emptyDrawing());
     expect(dxf).toMatch(/^999\n.*metres/);

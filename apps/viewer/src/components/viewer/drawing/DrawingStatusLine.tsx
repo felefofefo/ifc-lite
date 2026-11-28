@@ -31,7 +31,9 @@ export interface DrawingStatusLineProps {
   cloudPointCount: number;
   textEditing: boolean;
   selection: SelectedAnnotation2D | null;
-  counts: { measurements: number; areas: number; texts: number; clouds: number };
+  counts: { measurements: number; areas: number; paths?: number; texts: number; clouds: number };
+  sketchMode?: 'area' | 'path';
+  sketchShape?: 'polygon' | 'rectangle' | 'line' | 'polyline' | 'circle' | 'arc';
   underlayCount: number;
   updating: boolean;
 }
@@ -60,6 +62,13 @@ export function DrawingStatusLine(p: DrawingStatusLineProps) {
         : t('section2d.tip.measureFirst');
       break;
     case 'polygon-area':
+      if (p.sketchShape === 'circle') { hint = p.polygonPointCount ? 'Pick radius' : 'Pick center'; break; }
+      if (p.sketchShape === 'arc') { hint = ['Pick start point', 'Pick point on arc', 'Pick end point'][Math.min(2, p.polygonPointCount)]; break; }
+      if (p.sketchMode === 'path' || p.sketchShape === 'rectangle') {
+        hint = !p.polygonPointCount ? 'Pick first point' : p.sketchShape === 'rectangle' ? 'Pick opposite corner'
+          : p.sketchShape === 'line' ? 'Pick end point' : 'Pick next point · Finish to end · Pick first point to close';
+        break;
+      }
       hint = p.polygonPointCount === 0 ? t('section2d.tip.polygonFirst')
         : p.polygonPointCount < 3 ? t('section2d.tip.polygonNeed', { count: p.polygonPointCount })
           : t('section2d.tip.polygonClose');
@@ -79,6 +88,7 @@ export function DrawingStatusLine(p: DrawingStatusLineProps) {
   const facts: string[] = [];
   if (p.counts.measurements > 0) facts.push(t('section2d.status.measurements', { count: p.counts.measurements }));
   if (p.counts.areas > 0) facts.push(t('section2d.status.areas', { count: p.counts.areas }));
+  if (p.counts.paths) facts.push(`${p.counts.paths} ${p.counts.paths === 1 ? 'path' : 'paths'}`);
   if (p.counts.texts > 0) facts.push(t('section2d.status.texts', { count: p.counts.texts }));
   if (p.counts.clouds > 0) facts.push(t('section2d.status.clouds', { count: p.counts.clouds }));
   if (p.underlayCount > 0) facts.push(t('section2d.status.underlays', { count: p.underlayCount }));

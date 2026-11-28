@@ -48,6 +48,7 @@
 
 import { cssToAci } from './aci-colors.js';
 import type { Point2D } from '../types.js';
+import { bulgedPolylineExtrema } from './geom.js';
 
 /** Line style resolved to a DXF linetype. `dashed` maps to the `DASHED` LTYPE. */
 export type DxfLinetype = 'CONTINUOUS' | 'DASHED';
@@ -235,7 +236,8 @@ export class DxfWriter {
    * category layer but render with distinct colours in the source drawing
    * (matching the SVG exporter's per-entity fill/stroke).
    */
-  addPolyline(points: readonly Point2D[], layer: string, closed: boolean, colorOverride?: string): void {
+  addPolyline(points: readonly (Point2D & { bulge?: number })[], layer: string, closed: boolean, colorOverride?: string): void {
+    if (points.some(p => p.bulge)) for (const p of bulgedPolylineExtrema(points, closed)) this.extend(p);
     if (points.length < 2) return;
     for (const p of points) this.extend(p);
     const pts = points.slice();
@@ -248,6 +250,7 @@ export class DxfWriter {
         '66\n1\n10\n0.0\n20\n0.0\n30\n0.0\n70\n' + (closed ? 1 : 0) + '\n';
       for (const p of pts) {
         s += '0\nVERTEX\n8\n' + layer + '\n10\n' + fmt(p.x) + '\n20\n' + fmt(p.y) + '\n30\n0.0\n';
+        if (p.bulge && Number.isFinite(p.bulge)) s += '42\n' + p.bulge.toPrecision(15) + '\n';
       }
       s += '0\nSEQEND\n8\n' + layer + '\n';
       return s;

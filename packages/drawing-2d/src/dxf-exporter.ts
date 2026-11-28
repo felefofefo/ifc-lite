@@ -96,6 +96,8 @@ export interface DXFPolylineLayer {
   /** CSS colour mapped to the nearest ACI colour by the writer. */
   color: string;
   polylines: readonly (readonly Point2D[])[];
+  /** Exact vertices of a single circular-arc path; polylines supply non-similarity fallback. */
+  curveVertices?: readonly (Point2D & { bulge: number })[];
   /** Close every polyline back to its first point. Default true. */
   closed?: boolean;
   lineWeight?: number;
@@ -245,8 +247,16 @@ export class DXFExporter {
 
     for (const extra of polylineLayers) {
       const layer = writer.layer(extra.name, extra.color);
-      for (const polyline of extra.polylines) {
-        const points = polyline.map(map);
+      let native: (Point2D & { bulge: number })[] | null = null;
+      if (extra.curveVertices) {
+        const origin = map({x:0,y:0}), u = map({x:1,y:0}), v = map({x:0,y:1});
+        const ux=u.x-origin.x, uy=u.y-origin.y, vx=v.x-origin.x, vy=v.y-origin.y;
+        const sx=Math.hypot(ux,uy), sy=Math.hypot(vx,vy), det=ux*vy-uy*vx;
+        const similarity = sx > 0 && sy > 0 && Math.abs(sx-sy) <= 1e-6*Math.max(sx,sy) && Math.abs(ux*vx+uy*vy) <= 1e-6*sx*sy;
+        if (similarity) native = extra.curveVertices.map(p => ({...map(p), bulge: p.bulge * Math.sign(det)}));
+      }
+      for (const polyline of native ? [native] : extra.polylines) {
+        const points = native ?? polyline.map(map);
         if (writer instanceof ModernDxfWriter && (extra.lineWeight !== undefined || extra.dash?.length)) {
           writer.addPolyline(points, layer, extra.closed ?? true, undefined, {
             color: extra.color, lineWeight: extra.lineWeight ?? 0.25, dash: extra.dash,

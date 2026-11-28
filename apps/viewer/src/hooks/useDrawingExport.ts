@@ -50,7 +50,8 @@ import { resolveCutPolygonStyle, type CutPolygonStyleContext } from '@/component
 import { publicationCutSvg, svgDash } from '@/lib/export/drawing-publication-svg';
 import { pdfColor } from '@/lib/export/pdf-color';
 import { drawingAnnotationDxf } from '@/lib/export/drawing-annotation-dxf';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { pathDisplayPoints, curveSvgPath } from '@/lib/drawing/sketch-input';
+import { DETAIL_PATH_WEIGHT_MM, textAnnotationLayout } from '@/lib/drawing/annotation-types';
 import { drawDrawingAnnotationsPdf, expandDrawingAnnotationBounds } from '@/lib/export/drawing-annotation-pdf';
 import { drawCutPolygonsPdf, isPagePoint, prepareCutPolygonsPdf, type PdfCutPolygon } from '@/lib/export/section-pdf-cut-polygons';
 import { viewMarkersSvg, viewMarkersDxf, drawViewMarkersPdf, viewMarkerExportBounds, useDrawingViewMarkers } from '@/lib/export/drawing-view-markers';
@@ -428,12 +429,23 @@ function useDrawingExport({
     if (polygonArea2DResults.length > 0) {
       svg += '  <g id="polygon-area-measurements">\n';
       for (const result of polygonArea2DResults) {
-        if (result.points.length < 3) continue;
-        const pointsStr = result.points.map(p => {
+        const points = pathDisplayPoints(result);
+        if (points.length < (result.pathClosed === false ? 2 : 3)) continue;
+        const pointsStr = points.map(p => {
           const pt = mapPoint(p.x, p.y);
           return `${pt.x.toFixed(4)},${pt.y.toFixed(4)}`;
         }).join(' ');
 
+        if (result.pathClosed !== undefined) {
+          const curve = result.pathBulges && curveSvgPath(result, p => mapPoint(p.x, p.y));
+          if (curve) {
+            svg += `    <path d="${curve}" fill="none" stroke="#000000" stroke-width="${mmToTarget(DETAIL_PATH_WEIGHT_MM).toFixed(4)}"/>\n`;
+            continue;
+          }
+          const element = result.pathClosed ? 'polygon' : 'polyline';
+          svg += `    <${element} points="${pointsStr}" fill="none" stroke="#000000" stroke-width="${mmToTarget(DETAIL_PATH_WEIGHT_MM).toFixed(4)}"/>\n`;
+          continue;
+        }
         const measureColor = result.appearance?.color ?? '#2196F3';
         const lineWidth = mmToTarget(0.3);
 

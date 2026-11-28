@@ -7,7 +7,8 @@ import type { DXFExportOptions, DXFPolylineLayer, Point2D } from '@ifc-lite/draw
 import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { pathDisplayPoints } from '@/lib/drawing/sketch-input';
+import { DETAIL_PATH_WEIGHT_MM, textAnnotationLayout } from '@/lib/drawing/annotation-types';
 
 type DxfLabel = NonNullable<DXFExportOptions['labels']>[number];
 
@@ -26,6 +27,12 @@ export function drawingAnnotationDxf(
   const mm = (value: number) => value * scale / 1000;
 
   for (const area of areas) {
+    if (area.pathClosed !== undefined) {
+      const points = pathDisplayPoints(area);
+      if (points.length >= (area.pathClosed ? 3 : 2)) polylineLayers.push({ name: 'ROVE-LINES', color: '#000000',
+        closed: area.pathClosed, lineWeight: DETAIL_PATH_WEIGHT_MM, polylines: [points], ...(area.pathBulges && { curveVertices: area.points.map((p, i) => ({ ...p, bulge: area.pathBulges![i] })) }) });
+      continue;
+    }
     if (area.points.length < 3) continue;
     const color = area.appearance?.color ?? '#2196F3';
     polylineLayers.push({

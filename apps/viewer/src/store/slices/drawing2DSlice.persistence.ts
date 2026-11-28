@@ -165,7 +165,13 @@ function isPolygonArea2DResult(v: unknown): v is PolygonArea2DResult {
   return (
     typeof r.id === 'string' && r.id.length > 0 &&
     (r.viewKey === undefined || typeof r.viewKey === 'string') &&
-    isPoint2DArray(r.points) && r.points.length >= 3 &&
+    isPoint2DArray(r.points) &&
+    (r.pathClosed === undefined ? r.points.length >= 3 && r.pathBulges === undefined : typeof r.pathClosed === 'boolean' &&
+      r.points.length >= (r.pathClosed && r.pathBulges === undefined ? 3 : 2) &&
+      (r.pathBulges === undefined || (Array.isArray(r.pathBulges) && r.pathBulges.length === r.points.length &&
+        r.pathBulges.every(b => typeof b === 'number' && Number.isFinite(b) && Math.abs(b) <= 1e6) &&
+        (r.pathClosed || r.pathBulges[r.pathBulges.length - 1] === 0))) && r.area === 0 && typeof r.perimeter === 'number' && r.perimeter > 0 &&
+      r.tagTemplateId === undefined && r.tagName === undefined && r.tagPosition === undefined && r.tagLeaderOffset === undefined && r.tagLeader === undefined) &&
     (r.tagTemplateId === undefined || (typeof r.tagTemplateId === 'string' && r.tagTemplateId.length > 0)) &&
     (r.tagName === undefined || (typeof r.tagName === 'string' && r.tagName.length <= 200)) &&
     (r.tagPosition === undefined || isPoint2D(r.tagPosition)) &&

@@ -10,6 +10,7 @@ import {
 import { cssToAci } from './aci-colors.js';
 import { DxfWriter, type DxfLinetype, type DxfTextHAlign, type DxfTextVAlign } from './writer.js';
 import type { Point2D } from '../types.js';
+import { bulgedPolylineExtrema } from './geom.js';
 
 const toPoint3d = ({ x, y }: Point2D) => point3d(x, y, 0);
 const horizontal = { left: TextHorizontalAlignment.Left, center: TextHorizontalAlignment.Center, right: TextHorizontalAlignment.Right };
@@ -133,15 +134,21 @@ export class ModernDxfWriter extends DxfWriter {
   }
 
   override addPolyline(
-    points: readonly Point2D[], layer: string, closed: boolean, colorOverride?: string, style?: DxfObjectStroke,
+    points: readonly (Point2D & { bulge?: number })[], layer: string, closed: boolean, colorOverride?: string, style?: DxfObjectStroke,
   ): void {
     if (points.length < 2) return;
-    const entity = this.cad.addLWPolyline(points.map(({ x, y }) => ({ point: { x, y } })), {
+    const entity = this.cad.addLWPolyline(points.map(({ x, y, bulge }) => ({ point: { x, y }, ...(bulge && { bulge }) })), {
       layerName: layer,
       flags: closed ? LWPolylineFlags.Closed : LWPolylineFlags.None,
       ...(style ? { ...entityColor(style.color), lineType: this.lineType(style.dash) }
         : { colorNumber: colorOverride === undefined ? undefined : cssToAci(colorOverride) }),
     });
+    if (points.some(p => p.bulge)) {
+      const bounds = bulgedPolylineExtrema(points, closed);
+      const minX = Math.min(...bounds.map(p => p.x)), maxX = Math.max(...bounds.map(p => p.x));
+      const minY = Math.min(...bounds.map(p => p.y)), maxY = Math.max(...bounds.map(p => p.y));
+      entity.boundingBox = () => ({ tl: point3d(minX, maxY, 0), br: point3d(maxX, minY, 0) });
+    }
     if (style) writeObjectLineweight(entity, style.lineWeight);
   }
 

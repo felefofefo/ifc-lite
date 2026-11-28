@@ -410,6 +410,7 @@ export function areaTagValues(area: Pick<PolygonArea2DResult, 'area' | 'perimete
 }
 
 export function resolveAreaTag(area: PolygonArea2DResult, templates: readonly TagTemplate[]): ResolvedDrawingTag | undefined {
+  if (area.pathClosed !== undefined) return undefined;
   const template = templates.find(item => item.id === area.tagTemplateId && isAreaTagTemplate(item));
   if (!template || area.points.length < 3 || !Number.isFinite(area.area) || area.area <= 0
     || !Number.isFinite(area.perimeter)) return undefined;

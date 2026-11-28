@@ -31,6 +31,7 @@
  */
 
 import { dimensionArc } from '@/lib/drawing/dimension-line';
+import { pathDisplayPoints } from '@/lib/drawing/sketch-input';
 import { canvasMarkupGroups } from '@/lib/drawing/drawing-arrange';
 import type {
   Point2D, TextAnnotation2D, SelectedAnnotation2D,
@@ -145,7 +146,7 @@ export function hitTestAnnotations({
 
   for (let i = polys.length - 1; i >= 0; i--) {
     const result = polys[i];
-    if (result.points.length >= 3 && insideRing({ x: screenX, y: screenY }, result.points.map(drawingToScreen))) {
+    if (result.pathClosed === undefined && result.points.length >= 3 && insideRing({ x: screenX, y: screenY }, result.points.map(drawingToScreen))) {
       offer({ type: 'polygon', id: result.id });
     }
   }
@@ -177,11 +178,15 @@ export function hitTestAnnotations({
 
   for (let i = polys.length - 1; i >= 0; i--) {
     const result = polys[i];
-    if (result.points.length < 3) continue;
-    for (let j = 0; j < result.points.length; j++) {
-      const a = drawingToScreen(result.points[j]);
-      const b = drawingToScreen(result.points[(j + 1) % result.points.length]);
+    const origin = drawingToScreen({ x: 0, y: 0 }), unit = drawingToScreen({ x: 1, y: 0 });
+    const scale = Math.hypot(unit.x - origin.x, unit.y - origin.y);
+    const points = pathDisplayPoints(result, 0.2 / Math.max(1, scale));
+    if (points.length < (result.pathClosed === false ? 2 : 3)) continue;
+    for (let j = 0; j < points.length - (result.pathClosed === false ? 1 : 0); j++) {
+      const a = drawingToScreen(points[j]);
+      const b = drawingToScreen(points[(j + 1) % points.length]);
       const { dist } = nearestPointOnScreenSegment({ x: screenX, y: screenY }, a, b);
+      if (result.pathClosed !== undefined && dist <= 1) offer({ type: 'polygon', id: result.id });
       if (dist < threshold && preferred({ type: 'polygon', id: result.id }, dist, best)) {
         best = { dist, selection: { type: 'polygon', id: result.id } };
       }

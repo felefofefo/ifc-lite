@@ -275,6 +275,7 @@ export function DrawingPanel(): React.ReactElement {
         view3D={!!selected3D}
         tier={tier}
         activeTool={vm.annotation2DActiveTool} onSelectTool={vm.selectTool}
+        drawActive={vm.annotation2DActiveTool === 'polygon-area' && vm.areaSketch.mode === 'path'} onDraw={vm.selectDrawTool}
         onOpenTags={() => setTagLibraryOpen(true)}
         canEdit={vm.canEdit} canCopy={vm.canCopy} canDelete={vm.canDelete} canCut={vm.canCut} canPaste={vm.canPaste}
         canArrange={vm.canArrange} onArrange={vm.arrangeSelection}
@@ -328,7 +329,7 @@ export function DrawingPanel(): React.ReactElement {
         cloudPointCount={vm.cloudAnnotation2DPoints.length}
         textEditing={vm.textAnnotation2DEditing !== null}
         selection={vm.selectedAnnotation2D}
-        counts={vm.markupCounts}
+        counts={vm.markupCounts} sketchMode={vm.areaSketch.mode} sketchShape={vm.areaSketch.shape}
         underlayCount={layers.dxfUnderlayData.length}
         updating={vm.runtime.isRegenerating}
       />}

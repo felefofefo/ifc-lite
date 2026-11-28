@@ -9,7 +9,8 @@ import type { PolygonArea2DResult, TextAnnotation2D, CloudAnnotation2D } from '@
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { lineweightsAtScale, type LineweightTable } from '@/lib/drawing/lineweight-table';
 import { pdfColor } from './pdf-color';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { pathDisplayPoints } from '@/lib/drawing/sketch-input';
+import { DETAIL_PATH_WEIGHT_MM, textAnnotationLayout } from '@/lib/drawing/annotation-types';
 import { isPagePoint } from './section-pdf-cut-polygons';
 
 type MapPoint = (x: number, y: number) => Point2D;
@@ -33,8 +34,9 @@ export function expandDrawingAnnotationBounds(
     result.max.y = Math.max(result.max.y, y);
   };
   for (const area of areas) {
-    if (area.points.length < 3) continue;
-    area.points.forEach(include);
+    const points = pathDisplayPoints(area);
+    if (points.length < (area.pathClosed === false ? 2 : 3)) continue;
+    points.forEach(include);
   }
   for (const note of texts) {
     if (!note.text.trim()) continue;
@@ -106,9 +108,18 @@ export function drawDrawingAnnotationsPdf(
     doc.setLineJoin('round');
     doc.setFont('helvetica', 'normal');
     for (const area of areas) {
-      if (area.points.length < 3) continue;
-      const ring = area.points.map(point);
+      const points = pathDisplayPoints(area, scale * 0.02 / 1000);
+      if (points.length < (area.pathClosed === false ? 2 : 3)) continue;
+      const ring = points.map(point);
       if (!ring.every(valid)) continue;
+      if (area.pathClosed !== undefined) {
+        doc.setDrawColor('#000000'); doc.setLineWidth(DETAIL_PATH_WEIGHT_MM); doc.setLineDashPattern([], 0);
+        doc.moveTo(ring[0].x, ring[0].y);
+        for (const p of ring.slice(1)) doc.lineTo(p.x, p.y);
+        if (area.pathClosed) doc.close();
+        doc.stroke();
+        continue;
+      }
       const ink = color(area.appearance?.color ?? '#2196F3', '#2196F3');
       fillWithAlpha(ring, ink.color, 0.1 * ink.alpha);
       doc.setDrawColor(ink.color);

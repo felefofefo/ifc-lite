@@ -24,6 +24,7 @@ interface UseMeasure2DParams {
   objectSnaps?: DrawingObjectSnaps;
   /** Visible extra geometry, e.g. read-only IFC room boundaries. */
   extraSnapContours?: readonly (readonly Point2D[])[];
+  extraSnapPaths?: readonly { points: readonly Point2D[]; closed: boolean }[];
   alignmentDimensions?: readonly Measure2DResult[];
   /** Undefined for normal creation; an empty array blocks an invalid continuation. */
   continuationDimensions?: readonly Measure2DResult[];
@@ -43,7 +44,7 @@ interface UseMeasure2DParams {
 }
 
 export function useMeasure2D({
-  drawing, drawingKey, objectSnaps = DEFAULT_OBJECT_SNAPS, extraSnapContours, alignmentDimensions, continuationDimensions, chainMode = 'continue', onContinue, viewTransform, setViewTransform, sectionAxis, containerRef,
+  drawing, drawingKey, objectSnaps = DEFAULT_OBJECT_SNAPS, extraSnapContours, extraSnapPaths, alignmentDimensions, continuationDimensions, chainMode = 'continue', onContinue, viewTransform, setViewTransform, sectionAxis, containerRef,
   measure2DMode, dimensionType, angularSnap = 'off', showHiddenLines, setMeasure2DSnapPoint, onCancel, onPlace,
 }: UseMeasure2DParams) {
   const pan = useRef<Point2D | null>(null);
@@ -108,8 +109,12 @@ export function useMeasure2D({
       add(line.line.start, line.line.end);
     }
     for (const contour of extraSnapContours ?? []) ring(contour);
+    for (const path of extraSnapPaths ?? []) {
+      if (path.closed) ring(path.points);
+      else for (let i = 1; i < path.points.length; i++) add(path.points[i - 1], path.points[i]);
+    }
     return createLineworkSource({ segments, midpoints: objectSnaps.midpoint });
-  }, [drawing, showHiddenLines, extraSnapContours, objectSnaps.midpoint]);
+  }, [drawing, showHiddenLines, extraSnapContours, extraSnapPaths, objectSnaps.midpoint]);
 
   // Keep the existing four toggles. Angular constraints stay in useDrawingDirection;
   // this solver is responsible only for geometric targets and their stability.

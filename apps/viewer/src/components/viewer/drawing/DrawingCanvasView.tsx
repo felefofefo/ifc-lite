@@ -21,6 +21,7 @@ import { solveSnap } from '@/lib/snap/solve';
 import type { SnapKind, SnapProfile, SnapResult } from '@/lib/snap/types';
 import { useDrawingDirection } from '@/hooks/useDrawingDirection';
 import { tagLeaderEnd } from '@/lib/drawing/drawing-tag-svg';
+import { sketchCurve, curveMeasurements, curveSvgPath, sketchMeasures } from '@/lib/drawing/sketch-input';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
@@ -130,7 +131,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           cachedSheetTransformRef={vm.cachedSheetTransformRef}
           annotation2DActiveTool={vm.annotation2DActiveTool}
           annotation2DCursorPos={vm.annotation2DCursorPos}
-          polygonAreaPoints={vm.polygonArea2DPoints}
+          polygonAreaPoints={vm.areaSketch.shape === 'rectangle' || vm.areaSketch.mode === 'path' ? [] : vm.polygonArea2DPoints}
           polygonAreaResults={vm.styledAreas}
           areaTagRects={vm.areaTagRects}
           areaTagImages={areaTagImages}
@@ -216,6 +217,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
         && !vm.textAnnotation2DEditing && vm.annotation2DActiveTool === 'none'
         && <TextLeaderHandle key={vm.selectedText.id} vm={vm} id={vm.selectedText.id} />}
       {status === 'ready' && <DrawingMovePreview vm={vm} arrows={textLeaderArrows} />}
+      {status === 'ready' && !placement && vm.annotation2DActiveTool === 'polygon-area' && <AreaSketchControls vm={vm} />}
       {status === 'ready' && vm.continuingDimension && <div
         className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
         role="status">{vm.dimensionChainMode === 'insert' ? 'Pick a measured point inside the chain · Esc to finish'
@@ -256,7 +258,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}>
           <span className="max-w-36 shrink-0 truncate px-2 font-medium">
             {vm.selectedAnnotation2D.type === 'measure' ? t('section2d.dimensionStyle.title')
-              : vm.selectedAnnotation2D.type === 'polygon' ? t('section2d.annotationKind.area')
+              : vm.selectedAnnotation2D.type === 'polygon' ? (vm.selectedPath ? 'Path' : t('section2d.annotationKind.area'))
               : vm.selectedAnnotation2D.type === 'cloud' ? t('section2d.annotationKind.cloud')
               : t('section2d.annotationKind.text')}
           </span>
@@ -324,7 +326,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               </DropdownMenu>
             </div>}
           </>}
-          {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
+          {vm.selectedAnnotation2D.type !== 'measure' && !vm.selectedPath && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
             onClick={vm.editSelectedAnnotation}>{t('section2d.tools.edit')}</Button>}
           {vm.editableAnnotationId === vm.selectedAnnotation2D.id
@@ -367,6 +369,92 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
 }
 
 /** Area editing uses the existing authored polygon; room IFC meshes remain read-only. */
+/** Temporary sketch feedback only: never an authored dimension or export item. */
+function AreaSketchControls({ vm }: { vm: DrawingViewModel }) {
+  const { t } = useTranslation();
+  const sketch = vm.areaSketch;
+  const rectangle = sketch.shape === 'rectangle';
+  const path = sketch.mode === 'path';
+  const circle = sketch.shape === 'circle', arc = sketch.shape === 'arc';
+  const finishable = sketch.shape === 'polygon' || sketch.shape === 'polyline';
+  const points = vm.polygonArea2DPoints;
+  const anchor = points[points.length - 1];
+  const cursor = vm.annotation2DCursorPos;
+  const a = anchor && vm.tags.screen(anchor);
+  const b = cursor && vm.tags.screen(cursor);
+  const curve = cursor && (sketch.shape === 'circle' || sketch.shape === 'arc') ? sketchCurve(sketch.shape, points, cursor) : null;
+  const curveInfo = curve ? curveMeasurements(curve) : undefined;
+  const curveD = curve ? curveSvgPath(curve, vm.tags.screen) : null;
+  const values = anchor && cursor ? sketchMeasures(sketch.shape, anchor, cursor) : undefined;
+  const lengthPx = a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 0;
+  const nx = a && b && lengthPx > 1e-8 ? -(b.y - a.y) / lengthPx : 0;
+  const ny = a && b && lengthPx > 1e-8 ? (b.x - a.x) / lengthPx : -1;
+  const angleRad = (values?.second ?? 0) * Math.PI / 180;
+  const signX = vm.drawnPlane.axis === 'side' ? -1 : 1;
+  const signY = vm.drawnPlane.axis === 'down' ? 1 : -1;
+  const angleRadius = Math.min(24, Math.max(12, lengthPx * 0.35));
+  const firstLabel = rectangle ? 'Width (m)' : circle ? 'Radius (m)' : arc ? 'Chord (m)' : 'Length (m)';
+  const secondLabel = rectangle ? 'Height (m)' : 'Angle (°)';
+  const field = (key: 'first' | 'second', label: string, value: number | undefined) => (
+    <Input className="h-7 w-24 shrink-0 text-xs tabular-nums" aria-label={label}
+      title={label} inputMode="decimal" placeholder={value === undefined ? label : `${value.toFixed(key === 'second' && !rectangle ? 1 : 3)} ${key === 'second' && !rectangle ? '°' : 'm'}`}
+      value={sketch.fields[key]} aria-invalid={!sketch.valid}
+      onChange={event => sketch.setField(key, event.target.value)}
+      onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); sketch.addPoint(); } }} />
+  );
+  return <>
+    {path && !rectangle && points.length > 0 && <svg className="pointer-events-none absolute inset-0 h-full w-full text-primary" aria-hidden="true">
+      {curveD ? <path d={curveD} fill="none" stroke="currentColor" strokeWidth={1.5} strokeDasharray="5 3" />
+        : <polyline points={[...points, ...(cursor ? [cursor] : [])].map(p => { const at = vm.tags.screen(p); return `${at.x},${at.y}`; }).join(' ')}
+        fill="none" stroke="currentColor" strokeWidth={1.5} strokeDasharray="5 3" />}
+      {points.map((point, index) => { const at = vm.tags.screen(point); return <circle key={index} cx={at.x} cy={at.y} r={index === 0 && points.length >= 3 ? 5 : 3} fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={1.5} />; })}
+    </svg>}
+    {a && b && values && <svg className="pointer-events-none absolute inset-0 h-full w-full text-primary" aria-hidden="true">
+      {rectangle && <rect x={Math.min(a.x, b.x)} y={Math.min(a.y, b.y)} width={Math.abs(b.x - a.x)} height={Math.abs(b.y - a.y)}
+        fill={path ? "none" : "currentColor"} fillOpacity={0.08} stroke="currentColor" strokeWidth={1.5} strokeDasharray="5 3" />}
+      {sketch.dynamicInput && <g fontSize={11} fill="currentColor" stroke="var(--paper, #fff)" strokeWidth={3} paintOrder="stroke" textAnchor="middle">
+        {circle ? <>
+          <path d={`M${a.x} ${a.y}L${b.x} ${b.y}`} fill="none" stroke="currentColor" strokeWidth={0.75} strokeDasharray="3 3" />
+          <text x={(a.x+b.x)/2+nx*15} y={(a.y+b.y)/2+ny*15}>R {values.first.toFixed(3)} m</text>
+        </> : rectangle ? <>
+          <path d={`M${a.x} ${a.y - 12}H${b.x}M${b.x + 12} ${a.y}V${b.y}`} fill="none" stroke="currentColor" strokeWidth={0.8} />
+          <text x={(a.x + b.x) / 2} y={a.y - 16}>{values.first.toFixed(3)} m</text>
+          <text x={b.x + 15} y={(a.y + b.y) / 2} textAnchor="start">{values.second.toFixed(3)} m</text>
+        </> : <>
+          {lengthPx > 12 && <path d={`M${a.x} ${a.y}L${a.x + nx * 13} ${a.y + ny * 13}L${b.x + nx * 13} ${b.y + ny * 13}L${b.x} ${b.y}`}
+            fill="none" stroke="currentColor" strokeWidth={0.75} />}
+          <text x={(a.x + b.x) / 2 + nx * 20} y={(a.y + b.y) / 2 + ny * 20}>{values.first.toFixed(3)} m</text>
+          {values.second > 0.1 && values.second < 359.9 && lengthPx > 12 && <>
+            <path d={`M${a.x} ${a.y}h${signX * angleRadius * 1.4}`} strokeDasharray="3 3" fill="none" stroke="currentColor" strokeWidth={0.75} />
+            <path d={`M${a.x + signX * angleRadius} ${a.y}A${angleRadius} ${angleRadius} 0 ${angleRad > Math.PI ? 1 : 0} ${signX * signY > 0 ? 1 : 0} ${a.x + signX * angleRadius * Math.cos(angleRad)} ${a.y + signY * angleRadius * Math.sin(angleRad)}`}
+              fill="none" stroke="currentColor" strokeWidth={0.75} />
+          </>}
+          <text x={a.x + signX * (angleRadius + 13) * Math.cos(angleRad / 2)} y={a.y + signY * (angleRadius + 13) * Math.sin(angleRad / 2) + 4}>{values.second.toFixed(1)}°</text>
+        </>}
+        {arc && curveInfo && <text x={b.x + 12} y={b.y + 24} textAnchor="start">R {curveInfo.radius.toFixed(3)} m · {curveInfo.sweep.toFixed(1)}°</text>}
+      </g>}
+    </svg>}
+    <div role="toolbar" aria-label={path ? "Draw sketch" : "Area sketch"} className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
+      onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()}
+      onMouseMove={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+      <span className="px-2 font-medium">{path ? 'Draw' : t('section2d.annotationKind.area')}</span>
+      <Select value={sketch.shape} onValueChange={value => { if (value === 'polygon' || value === 'rectangle' || value === 'line' || value === 'polyline' || value === 'circle' || value === 'arc') sketch.selectShape(value); }}>
+        <SelectTrigger className="h-7 w-28 text-xs" aria-label="Boundary shape"><SelectValue /></SelectTrigger>
+        <SelectContent side="top">{path ? <><SelectItem value="line">Line</SelectItem><SelectItem value="polyline">Polyline</SelectItem><SelectItem value="circle">Circle</SelectItem><SelectItem value="arc">Arc</SelectItem></> : <SelectItem value="polygon">Polygon</SelectItem>}<SelectItem value="rectangle">Rectangle</SelectItem></SelectContent>
+      </Select>
+      <Button size="sm" variant={sketch.dynamicInput ? 'secondary' : 'ghost'} className="shrink-0" aria-pressed={sketch.dynamicInput}
+        onClick={sketch.toggleDynamicInput}>Dynamic Input</Button>
+      {sketch.dynamicInput && anchor && <>
+        {field('first', firstLabel, values?.first)}{!circle && field('second', secondLabel, values?.second)}
+        <Button size="sm" variant="ghost" className="shrink-0" disabled={!sketch.valid || (!cursor && !sketch.fields.first && !sketch.fields.second)} onClick={sketch.addPoint}>{rectangle || circle || sketch.shape === 'line' || (arc && points.length === 2) ? 'Create' : 'Add Point'}</Button>
+      </>}
+      {finishable && <Button size="sm" variant="ghost" className="shrink-0" disabled={points.length < (path ? 2 : 3)} onClick={sketch.finish}>Finish</Button>}
+      <Button size="sm" variant="ghost" className="shrink-0" onClick={() => vm.selectTool('none')}>Cancel</Button>
+      {!sketch.valid && <span className="text-destructive" role="alert">Invalid value</span>}
+    </div>
+  </>;
+}
+
 function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const area = vm.polygonArea2DResults.find(item => item.id === id);
   const drag = useRef<{ pointerId: number; index: number; original: {x:number;y:number} } | null>(null);

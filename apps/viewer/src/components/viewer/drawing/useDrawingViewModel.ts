@@ -323,6 +323,10 @@ export function useDrawingViewModel() {
       setAnnotation2DActiveTool('none');
     }
   }, [dimensionContinuation, annotation2DActiveTool, continuationDimensions, setAnnotation2DActiveTool]);
+  const pathSnapContours = useMemo(() => displayOptions.showAnnotations && annotation2DActiveTool !== 'move'
+    ? polygonArea2DResults.flatMap(item => item.pathClosed !== undefined && !item.pathBulges && item.id !== selectedAnnotation2D?.id
+      ? [{ points: item.points, closed: item.pathClosed }] : []) : [],
+    [displayOptions.showAnnotations, annotation2DActiveTool, polygonArea2DResults, selectedAnnotation2D?.id]);
   const measureHandlers = useMeasure2D({
     continuationDimensions,
     chainMode: dimensionContinuation?.mode,
@@ -331,7 +335,7 @@ export function useDrawingViewModel() {
       && (dimensionContinuation.mode === 'continue'
         ? dimensions.continueChain(dimensionContinuation.chainId, point)
         : dimensions.editChain(dimensionContinuation.chainId, point, dimensionContinuation.mode, 12 / markupTransform.scale)),
-    objectSnaps, extraSnapContours: roomSnapContours, alignmentDimensions,
+    objectSnaps, extraSnapContours: roomSnapContours, extraSnapPaths: pathSnapContours, alignmentDimensions,
     drawing: status === 'ready' && viewKey ? drawing : null,
     drawingKey: viewKey ?? undefined,
     viewTransform: markupTransform, setViewTransform, sectionAxis: drawnPlane.axis, containerRef,
@@ -374,7 +378,8 @@ export function useDrawingViewModel() {
     activeTool: annotation2DActiveTool, setActiveTool: setAnnotation2DActiveTool,
     polygonArea2DPoints, addPolygonArea2DPoint,
     areaEndpointSnaps: objectSnaps.endpoint,
-    completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, defaultAnnotationStyles?.area); }, cancelPolygonArea2D,
+    areaSketchKey: `${drawingProjectId ?? ''}:${viewKey ?? ''}`,
+    completePolygonArea2D: (area, perimeter, points, pathClosed, pathBulges) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, pathClosed === undefined ? defaultAnnotationStyles?.area : undefined, points, pathClosed, pathBulges); }, cancelPolygonArea2D,
     textAnnotations2D: displayOptions.showAnnotations ? styledNotes : [],
     addTextAnnotation2D: annotation => {
       if (!viewKey) return;
@@ -1141,11 +1146,12 @@ export function useDrawingViewModel() {
 
   const markupCounts = useMemo(() => ({
     measurements: measure2DResults.length,
-    areas: polygonArea2DResults.length,
+    areas: polygonArea2DResults.filter(item => item.pathClosed === undefined).length,
+    paths: polygonArea2DResults.filter(item => item.pathClosed !== undefined).length,
     texts: textAnnotations2D.length,
     clouds: cloudAnnotations2D.length,
-  }), [measure2DResults.length, polygonArea2DResults.length, textAnnotations2D.length, cloudAnnotations2D.length]);
-  const hasMarkup = markupCounts.measurements + markupCounts.areas + markupCounts.texts + markupCounts.clouds > 0;
+  }), [measure2DResults.length, polygonArea2DResults, textAnnotations2D.length, cloudAnnotations2D.length]);
+  const hasMarkup = markupCounts.measurements + markupCounts.areas + markupCounts.paths + markupCounts.texts + markupCounts.clouds > 0;
 
   // Cursor style based on active tool
   const cursorClass = useMemo(() => {
@@ -1176,6 +1182,7 @@ export function useDrawingViewModel() {
     const source = selection.type === 'polygon' ? polygonArea2DResults.find(item => item.id === selection.id)
       : selection.type === 'text' ? textAnnotations2D.find(item => item.id === selection.id)
       : cloudAnnotations2D.find(item => item.id === selection.id);
+    if (selection.type === 'polygon' && source && 'pathClosed' in source && source.pathClosed !== undefined) return null;
     return { kind, value: viewAnnotationOptions?.styleIds?.[kind] ?? source?.appearanceId ?? 'original',
       choices: (annotationStyles ?? []).filter(style => style.kind === kind).map(style => ({ id: style.id, name: style.name })),
       locked: !!viewAnnotationOptions?.styleIds?.[kind] };
@@ -1203,8 +1210,10 @@ export function useDrawingViewModel() {
     updateTextLeader(selectedText.id, selectedText.leaderOffset ? undefined
       : defaultTextLeaderOffset(textPaperUnit / markupTransform.scale, drawnPlane.axis));
   }
-  const selectedArea = selectedAnnotation2D?.type === 'polygon'
+  const selectedBoundary = selectedAnnotation2D?.type === 'polygon'
     ? polygonArea2DResults.find(item => item.id === selectedAnnotation2D.id) : undefined;
+  const selectedPath = selectedBoundary?.pathClosed !== undefined ? selectedBoundary : undefined;
+  const selectedArea = selectedBoundary?.pathClosed === undefined ? selectedBoundary : undefined;
   function updateSelectedAreaTag(patch: { tagTemplateId?: string; tagName?: string; tagLeader?: boolean }) {
     if (!selectedArea || !viewKey) return;
     if (patch.tagTemplateId !== undefined && !areaTagTemplates.some(template => template.id === patch.tagTemplateId)) return;
@@ -1230,7 +1239,7 @@ export function useDrawingViewModel() {
         ? { ...item, tagLeaderOffset: offset ? { ...offset } : undefined } : item) }));
   }
   function editSelectedAnnotation() {
-    if (!selectedAnnotation2D) return;
+    if (!selectedAnnotation2D || selectedPath) return;
     setEditableAnnotationId(selectedAnnotation2D.id);
     if (selectedAnnotation2D.type === 'text') setTextAnnotation2DEditing(selectedAnnotation2D.id);
   }
@@ -1239,6 +1248,7 @@ export function useDrawingViewModel() {
       || editableAnnotationId !== id) return;
     useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item => {
       if (item.id !== id || item.viewKey !== viewKey) return item;
+      if (item.pathClosed !== undefined) return item; // Unified path node editor follows in 10D.
       const edited = editedPolygonAreaVertex(item.points, index, point);
       return edited ? { ...item, ...edited } : item;
     }) }));
@@ -1286,6 +1296,7 @@ export function useDrawingViewModel() {
   function styledMarkup<T extends { appearanceId?: string }>(kind: 'area' | 'text' | 'cloud', items: T[]) {
     const options = viewAnnotationOptions;
     return items.flatMap(item => {
+      if (kind === 'area' && 'pathClosed' in item && typeof item.pathClosed === 'boolean') return [item];
       const id = options?.styleIds?.[kind] ?? item.appearanceId;
       if (!drawingAnnotationVisible(annotationView, kind, id)) return [];
       const appearance = annotationAppearance(kind, id, annotationStyles, options?.styles?.[kind]);
@@ -1351,12 +1362,16 @@ export function useDrawingViewModel() {
     canRemoveDimensionPoint, dimensionChainMode: dimensionContinuation?.mode,
     chainPreviewRemovedIds: measureHandlers.chainEditPreview?.removedIds,
     continuationStyleId,
-    annotation2DActiveTool, selectTool, annotation2DCursorPos,
+    annotation2DActiveTool, selectTool: (tool: Annotation2DTool) => {
+      if (tool === 'polygon-area') annotationHandlers.areaSketch.selectMode('area');
+      selectTool(tool);
+    }, selectDrawTool: () => { annotationHandlers.areaSketch.selectMode('path'); selectTool('polygon-area'); },
+    annotation2DCursorPos, areaSketch: annotationHandlers.areaSketch,
     canEdit, canCopy, canDelete, canCut, canArrange, canPaste: !!clipboard, startMove, copySelection, cutSelection, pasteSelection, deleteSelection, requestDeleteSelection, requestDeleteTag, requestDeleteMarker, arrangeSelection,
     moveBase, moveCursor, movePreview, selectedMarker, setSelectedMarker,
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
     editableAnnotationId, resizeRevisionCloud, updateAreaVertex, updateAreaTagPosition, updateAreaTagLeaderOffset,
-    polygonArea2DPoints, polygonArea2DResults, areaTags, areaTagRects, areaTagTemplates, selectedArea, updateSelectedAreaTag,
+    polygonArea2DPoints, polygonArea2DResults, areaTags, areaTagRects, areaTagTemplates, selectedArea, selectedPath, updateSelectedAreaTag,
     textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel, selectedText, updateTextLeader, toggleTextLeader,
     cloudAnnotation2DPoints, cloudAnnotations2D,
     windowAnnotations, windowCanvasAnnotations, selectWindowAnnotations, clearWindowAnnotations,

@@ -9,6 +9,7 @@ import { DEFAULT_DIMENSION_STYLE, resolveDimensionStyle, styledDimension } from 
 import { mapDimensionShape } from '@/lib/drawing/dimension-line';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
 import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
+import { pathDisplayPoints } from '@/lib/drawing/sketch-input';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 type Shape = { points: readonly Point2D[]; closed?: boolean; filled?: boolean };
@@ -112,8 +113,9 @@ export function selectDrawingAnnotations(vm: DrawingViewModel, a: Point2D, b: Po
     add('text', note.id, shapes);
   }
   for (const area of vm.styledAreas) {
-    if (area.points.length < 3) continue;
-    const shapes: Shape[] = [{ points: area.points.map(screen), closed: true, filled: true }];
+    const points = pathDisplayPoints(area, 0.2 / Math.max(1, scale));
+    if (points.length < (area.pathClosed === false ? 2 : 3)) continue;
+    const shapes: Shape[] = [{ points: points.map(screen), closed: area.pathClosed ?? true, filled: area.pathClosed === undefined }];
     const tag = vm.areaTagRects.find(item => item.id === area.id);
     if (tag) {
       shapes.push(rectangle(tag.x, tag.y, tag.width, tag.height));
