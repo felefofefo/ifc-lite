@@ -55,24 +55,57 @@ export function readTagSvg(source: string, requireFields = true): string {
   return result;
 }
 
-// The circle is a registration point in the author's artwork, not a visible mark.
-function readAnchor(svg: Element): { x: number; y: number } | undefined {
-  const markers = svg.querySelectorAll('[id="tag-anchor"]');
-  const marker = markers[0];
-  let point: { x: number; y: number } | undefined;
-  if (marker?.localName === 'circle') {
-    point = { x: Number(marker.getAttribute('cx') ?? 0), y: Number(marker.getAttribute('cy') ?? 0) };
-    for (let element: Element | null = marker; element && element !== svg; element = element.parentElement) {
-      const transforms = (element as SVGGraphicsElement).transform?.baseVal;
-      if (!transforms) continue;
-      for (let i = transforms.numberOfItems - 1; i >= 0; i--) {
-        const { a, b, c, d, e, f } = transforms.getItem(i).matrix;
-        point = { x: a * point.x + c * point.y + e, y: b * point.x + d * point.y + f };
-      }
+type TagPoint = { x: number; y: number };
+
+// Registration and connection circles are authoring metadata, not visible marks.
+function readMarkerPoint(svg: Element, marker: Element | undefined): TagPoint | undefined {
+  if (marker?.localName !== 'circle') return undefined;
+  let point = { x: Number(marker.getAttribute('cx') ?? 0), y: Number(marker.getAttribute('cy') ?? 0) };
+  for (let element: Element | null = marker; element && element !== svg; element = element.parentElement) {
+    const transforms = (element as SVGGraphicsElement).transform?.baseVal;
+    if (!transforms) continue;
+    for (let i = transforms.numberOfItems - 1; i >= 0; i--) {
+      const { a, b, c, d, e, f } = transforms.getItem(i).matrix;
+      point = { x: a * point.x + c * point.y + e, y: b * point.x + d * point.y + f };
     }
   }
+  return Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined;
+}
+
+function readAnchor(svg: Element): TagPoint | undefined {
+  const markers = svg.querySelectorAll('[id="tag-anchor"]');
+  const point = readMarkerPoint(svg, markers[0]);
   markers.forEach(element => element.remove());
-  return point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined;
+  return point;
+}
+
+function readConnectionPoints(svg: Element): TagPoint[] {
+  const markers = svg.querySelectorAll('[id^="leader-point-"]');
+  const points: TagPoint[] = [];
+  for (const marker of markers) {
+    const point = readMarkerPoint(svg, marker);
+    if (point) points.push(point);
+  }
+  markers.forEach(element => element.remove());
+  return points;
+}
+
+/** Resolve only the leader end, in the caller's paper/screen coordinates.
+ * The insertion anchor remains fixed. Prefer the primary/earlier point in a
+ * 0.1 mm near-tie, so all painting and hit-testing use the same stable result.
+ * With no secondary points, legacy artwork behaves exactly as before. */
+export function tagLeaderEnd(
+  graphic: { anchor: TagPoint; connectionPoints?: readonly TagPoint[] } | undefined,
+  position: TagPoint, host: TagPoint, paperUnit: number,
+): TagPoint {
+  if (!graphic?.connectionPoints?.length || !Number.isFinite(paperUnit) || paperUnit <= 0) return position;
+  const candidates = [position, ...graphic.connectionPoints.map(point => ({
+    x: position.x + (point.x - graphic.anchor.x) * paperUnit,
+    y: position.y + (point.y - graphic.anchor.y) * paperUnit,
+  }))].filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
+  const distances = candidates.map(point => Math.hypot(point.x - host.x, point.y - host.y));
+  const nearest = Math.min(...distances);
+  return candidates.find((_, index) => distances[index] <= nearest + paperUnit * 0.1) ?? position;
 }
 
 function anchorOnPaper(
@@ -135,6 +168,9 @@ export function renderTagSvg(source: string, values: ReadonlyMap<string, string>
   const aspect = svg.getAttribute('preserveAspectRatio')?.trim() || 'xMidYMid meet';
   const box = ratio ? viewBox : undefined;
   const anchor = anchorOnPaper(readAnchor(svg), box, width, height, aspect);
+  const connectionPoints = readConnectionPoints(svg)
+    .map(point => anchorOnPaper(point, box, width, height, aspect))
+    .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
   const direction = directionAngle === undefined ? null : svg.querySelector('g[id="marker-direction"]');
   if (direction && directionAngle !== undefined && Number.isFinite(directionAngle)) {
     const zero = anchorOnPaper({ x: 0, y: 0 }, box, width, height, aspect);
@@ -166,6 +202,7 @@ export function renderTagSvg(source: string, values: ReadonlyMap<string, string>
   svg.setAttribute('height', String(height * 96 / 25.4));
   return {
     width, height, anchor, directional: !!direction, text: text.join(' / '),
+    ...(connectionPoints.length ? { connectionPoints } : {}),
     href: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg)),
   };
 }

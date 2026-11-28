@@ -18,6 +18,7 @@ import { createLineworkSource } from '@/lib/snap/sources/linework';
 import { solveSnap } from '@/lib/snap/solve';
 import type { SnapKind, SnapProfile, SnapResult } from '@/lib/snap/types';
 import { useDrawingDirection } from '@/hooks/useDrawingDirection';
+import { tagLeaderEnd } from '@/lib/drawing/drawing-tag-svg';
 import { useTranslation } from '@/i18n';
 import { Drawing2DCanvas } from '../Drawing2DCanvas';
 import { TextAnnotationEditor } from '../TextAnnotationEditor';
@@ -28,7 +29,9 @@ import { DrawingElementTags } from './DrawingElementTags';
 import { useDrawingModelSelection } from './DrawingModelSelection';
 import { PlaceVerticalView, type VerticalViewKind } from './PlaceVerticalView';
 import { drawingAnnotationVisible } from '@/store/savedSectionCutsStore';
-import { textAnnotationScreenSize } from '@/lib/drawing/annotation-types';
+import { textAnnotationScreenSize, textLeaderTip, textLeaderGeometry, textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { resolveTextLeaderArrow } from '@/lib/drawing/drawing-tag-library';
+import { useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingLayers } from './useDrawingLayers';
 
@@ -38,7 +41,13 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
   const annotationView = vm.savedView ?? (vm.viewAnnotationOptions ? { annotationOptions: vm.viewAnnotationOptions } : undefined);
   const fillPreview = usePublicationFillPreview();
   const areaTagFilterId = useId().replace(/:/g, '');
-  const areaTagImages = useAreaTagImages([...vm.areaTags, ...vm.tags.items]);
+  const templates = useSavedSectionCuts(state => state.tagLibrary.templates);
+  const arrowKey = JSON.stringify([...new Set(vm.styledNotes.map(note => note.appearance?.textLeader?.arrowSymbolId).filter(Boolean))].sort());
+  const textLeaderArrows = useMemo(() => new Map((JSON.parse(arrowKey) as string[]).flatMap(id => {
+    const graphic = resolveTextLeaderArrow(templates, id);
+    return graphic ? [[id, graphic] as const] : [];
+  })), [templates, arrowKey]);
+  const areaTagImages = useAreaTagImages([...vm.areaTags, ...vm.tags.items, ...Array.from(textLeaderArrows.values(), graphic => ({ graphic }))]);
   const { t } = useTranslation();
   const { drawing, status, drawnPlane, viewTransform, markupTransform, displayOptions } = vm;
   const hasContent = !!drawing && (drawing.cutPolygons.length > 0 || drawing.lines?.length > 0 || layers.dxfUnderlayData.length > 0 || vm.hasReferences);
@@ -130,6 +139,7 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
             ...vm.windowAnnotations.filter(item => item.type === 'tag').map(item => item.id)]}
           hoveredTagId={selection.hoveredTagId}
           textAnnotations={vm.styledNotes}
+          textLeaderArrows={textLeaderArrows}
           textAnnotationEditing={vm.textAnnotation2DEditing}
           cloudAnnotationPoints={vm.cloudAnnotation2DPoints}
           cloudAnnotations={vm.styledClouds}
@@ -188,13 +198,21 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           })}
         </svg>}
       {status === 'ready' && selection.overlay}
+      {status === 'ready' && !placement && displayOptions.showAnnotations && vm.selectedArea?.tagTemplateId
+        && vm.annotation2DActiveTool === 'none'
+        && <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
+          <AreaTagMoveHandle key={vm.selectedArea.id} vm={vm} id={vm.selectedArea.id} />
+        </svg>}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'polygon'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
         && <AreaVertexHandles key={vm.editableAnnotationId} vm={vm} id={vm.editableAnnotationId} />}
       {status === 'ready' && vm.editableAnnotationId && vm.selectedAnnotation2D?.type === 'cloud'
         && vm.selectedAnnotation2D.id === vm.editableAnnotationId && vm.annotation2DActiveTool === 'none'
         && <CloudResizeHandles vm={vm} id={vm.editableAnnotationId} />}
-      {status === 'ready' && <DrawingMovePreview vm={vm} />}
+      {status === 'ready' && !placement && displayOptions.showAnnotations && vm.selectedText?.leaderOffset
+        && !vm.textAnnotation2DEditing && vm.annotation2DActiveTool === 'none'
+        && <TextLeaderHandle key={vm.selectedText.id} vm={vm} id={vm.selectedText.id} />}
+      {status === 'ready' && <DrawingMovePreview vm={vm} arrows={textLeaderArrows} />}
       {status === 'ready' && vm.continuingDimension && <div
         className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-background/95 px-3 py-1.5 text-xs shadow-sm"
         role="status">{vm.dimensionChainMode === 'insert' ? 'Pick a measured point inside the chain · Esc to finish'
@@ -262,6 +280,8 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               onClick={event => { event.stopPropagation(); vm.dimensionEditing.resetLabelPosition(); }}>
               {t('section2d.dimensionStyle.resetPosition')}
             </Button>}
+          {vm.selectedText && !vm.textAnnotation2DEditing && <Button size="sm" variant={vm.selectedText.leaderOffset ? 'secondary' : 'ghost'}
+            aria-pressed={!!vm.selectedText.leaderOffset} onClick={vm.toggleTextLeader}>{t('section2d.tags.leader')}</Button>}
           {vm.selectedArea && <>
             <Select value={vm.selectedArea.tagTemplateId ?? '__no_area_tag__'}
               onValueChange={id => vm.updateSelectedAreaTag({ tagTemplateId: id === '__no_area_tag__' ? undefined : id })}>
@@ -277,12 +297,9 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
               && <Input className="h-7 w-32 text-xs" aria-label="Area name"
               placeholder="Area name" maxLength={200} value={vm.selectedArea.tagName ?? ''}
               onChange={event => vm.updateSelectedAreaTag({ tagName: event.target.value })} />}
-            {vm.selectedArea.tagTemplateId && vm.editableAnnotationId === vm.selectedArea.id &&
-              <label className="flex shrink-0 items-center gap-1 px-1">
-                <input type="checkbox" checked={vm.selectedArea.tagLeader === true}
-                  onChange={event => vm.updateSelectedAreaTag({ tagLeader: event.currentTarget.checked })} />
-                {t('section2d.tags.leader')}
-              </label>}
+            {vm.selectedArea.tagTemplateId && <Button size="sm" variant={vm.selectedArea.tagLeader ? 'secondary' : 'ghost'}
+              aria-pressed={vm.selectedArea.tagLeader === true}
+              onClick={() => vm.updateSelectedAreaTag({ tagLeader: !vm.selectedArea?.tagLeader })}>{t('section2d.tags.leader')}</Button>}
           </>}
           {vm.selectedAnnotation2D.type !== 'measure' && <Button size="sm" variant={vm.editableAnnotationId === vm.selectedAnnotation2D.id ? 'secondary' : 'ghost'}
             disabled={vm.editableAnnotationId === vm.selectedAnnotation2D.id}
@@ -302,6 +319,9 @@ export function DrawingCanvasView({ vm, layers, placement, stopPlacement }: {
           <TextAnnotationEditor
             key={editingAnnotation.id}
             annotation={editingAnnotation}
+            lineweights={vm.lineweights}
+            leaderTip={(() => { const tip = textLeaderTip(editingAnnotation); return tip ? vm.tags.screen(tip) : undefined; })()}
+            leaderArrow={textLeaderArrows.get(editingAnnotation.appearance?.textLeader?.arrowSymbolId ?? '')}
             fontSize={textAnnotationScreenSize(editingAnnotation, paperUnit)}
             screenX={editingAnnotation.position.x * scaleX + markupTransform.x}
             screenY={editingAnnotation.position.y * scaleY + markupTransform.y}
@@ -381,7 +401,6 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
     vm.updateAreaVertex(id,index,point);
   }
   return <svg aria-label="Edit area vertices" className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
-    <AreaTagMoveHandle vm={vm} id={id} />
     {area.points.map((point,index) => {
       const at=toScreen(point);
       return <circle key={index} cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)"
@@ -423,7 +442,7 @@ function AreaVertexHandles({ vm, id }: { vm: DrawingViewModel; id: string }) {
 
 /** Decode only changed authored SVGs, not on pan/zoom. Keep a bounded cache
  * of the current view's successful images. Publish at most once per frame. */
-function useAreaTagImages(items: DrawingViewModel['areaTags']) {
+function useAreaTagImages(items: readonly { graphic?: { href: string }; startGraphic?: { href: string } }[]) {
   const key = useMemo(() => JSON.stringify([...new Set(items.flatMap(item =>
     [item.startGraphic?.href, item.graphic?.href].filter((href): href is string => !!href)))].sort()), [items]);
   const cache = useRef(new Map<string, HTMLImageElement>());
@@ -465,7 +484,8 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
   const [delta, setDelta] = useState<{ x: number; y: number; snapped: boolean; kind: SnapKind | null } | null>(null);
   const { resolve, resetDirection } = useDrawingDirection(id, vm.angularSnap);
   const rect = vm.areaTagRects.find(item => item.id === id);
-  const position = vm.areaTags.find(item => item.tag.id === id)?.tag.position;
+  const item = vm.areaTags.find(item => item.tag.id === id);
+  const position = item?.tag.position;
   const scale = vm.markupTransform.scale;
   if (!rect || !position || !(scale > 0)) return null;
   const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
@@ -486,9 +506,13 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
       snapped: !!(directed ?? reference), kind: vm.snapKindFor(directed ?? reference) };
   };
   const clear = () => { drag.current = null; resetDirection(); setDelta(null); };
+  const primary = vm.tags.screen(position);
+  const previewEnd = delta && rect.leader && item?.graphic
+    ? tagLeaderEnd(item.graphic, { x: primary.x + delta.x, y: primary.y + delta.y },
+        rect.leader.start, rect.width / item.graphic.width) : null;
   return <g>
     {delta && rect.leader && <line x1={rect.leader.start.x} y1={rect.leader.start.y}
-      x2={rect.leader.end.x + delta.x} y2={rect.leader.end.y + delta.y} stroke="currentColor" strokeWidth={1.5} />}
+      x2={previewEnd?.x ?? rect.leader.end.x + delta.x} y2={previewEnd?.y ?? rect.leader.end.y + delta.y} stroke="currentColor" strokeWidth={1.5} />}
     {delta && <image href={rect.href} x={rect.x + delta.x} y={rect.y + delta.y}
       width={rect.width} height={rect.height} opacity={0.8} />}
     <rect x={rect.x + (delta?.x ?? 0)} y={rect.y + (delta?.y ?? 0)} width={rect.width} height={rect.height}
@@ -533,6 +557,68 @@ function AreaTagMoveHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
       <DrawingSnapGlyph kind={delta.kind} />
     </g>}
   </g>;
+}
+
+/** Drag the arrow tip independently; all offsets are stored in drawing coordinates. */
+function TextLeaderHandle({ vm, id }: { vm: DrawingViewModel; id: string }) {
+  const note = vm.styledNotes.find(item => item.id === id);
+  const drag = useRef<{ pointerId: number; original: { x: number; y: number }; anchor: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
+  const [feedback, setFeedback] = useState<{ point: { x: number; y: number }; kind: SnapKind | null } | null>(null);
+  const { resolve, resetDirection } = useDrawingDirection(id, vm.angularSnap);
+  const tip = note && textLeaderTip(note);
+  const { x, y, scale } = vm.markupTransform;
+  if (!note || !tip || !note.leaderOffset || !(scale > 0)) return null;
+  const sx = vm.drawnPlane.axis === 'side' ? -scale : scale;
+  const sy = vm.drawnPlane.axis === 'down' ? scale : -scale;
+  const screen = (p: { x: number; y: number }) => ({ x: p.x * sx + x, y: p.y * sy + y });
+  const fromScreen = (p: { x: number; y: number }) => ({ x: (p.x - x) / sx, y: (p.y - y) / sy });
+  const unit = vm.sheetEnabled && vm.activeSheet ? vm.viewTransform.scale : scale * (vm.publicationScale || 100) / 1000;
+  const at = screen(tip);
+  const update = (point: { x: number; y: number }) => vm.updateTextLeader(id, { x: point.x - note.position.x, y: point.y - note.position.y });
+  const resize = (event: React.PointerEvent<SVGCircleElement>) => {
+    const current = drag.current;
+    if (!current) return;
+    const dx = event.clientX - current.clientX, dy = event.clientY - current.clientY;
+    if (!dx && !dy) { vm.updateTextLeader(id, current.original); setFeedback(null); return; }
+    const raw = { x: note.position.x + current.original.x + dx / sx, y: note.position.y + current.original.y + dy / sy };
+    const snap = vm.findSnapPoint(raw);
+    const reference = resolve(current.anchor, raw, snap, event.shiftKey) ?? snap;
+    update(reference ?? raw);
+    setFeedback(reference ? { point: reference, kind: vm.snapKindFor(reference) } : null);
+  };
+  const clear = () => { drag.current = null; resetDirection(); setFeedback(null); };
+  return <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full text-primary">
+    <circle cx={at.x} cy={at.y} r={6} fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={2}
+      className="pointer-events-auto cursor-crosshair touch-none" role="button" tabIndex={0} aria-label="Move leader tip"
+      onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}
+      onKeyDown={event => {
+        const dx = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        const dy = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+        if (!dx && !dy) return;
+        event.preventDefault(); event.stopPropagation();
+        const step = event.shiftKey ? 10 : 1;
+        update({ x: tip.x + dx * step / sx, y: tip.y + dy * step / sy });
+      }}
+      onPointerDown={event => {
+        if (event.button !== 0 || !note.leaderOffset) return;
+        event.preventDefault(); event.stopPropagation(); resetDirection();
+        const p = screen(note.position);
+        const ctx = vm.containerRef.current?.ownerDocument.createElement('canvas').getContext('2d');
+        const layout = textAnnotationLayout(note, unit, (text, font) => {
+          if (!ctx) return undefined;
+          ctx.font = font; return ctx.measureText(text).width;
+        });
+        const geometry = textLeaderGeometry({ ...p, width: layout.bgW, height: layout.bgH }, at, unit);
+        drag.current = { pointerId: event.pointerId, original: { ...note.leaderOffset }, anchor: geometry ? fromScreen(geometry.start) : note.position,
+          clientX: event.clientX, clientY: event.clientY };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => { if (drag.current?.pointerId === event.pointerId) { event.stopPropagation(); resize(event); } }}
+      onPointerUp={event => { if (drag.current?.pointerId === event.pointerId) { event.stopPropagation(); resize(event); clear(); event.currentTarget.releasePointerCapture(event.pointerId); } }}
+      onPointerCancel={event => { if (drag.current?.pointerId === event.pointerId) { vm.updateTextLeader(id, drag.current.original); clear(); } }}
+      onLostPointerCapture={() => { if (drag.current) vm.updateTextLeader(id, drag.current.original); clear(); }} />
+    {feedback && <g transform={`translate(${screen(feedback.point).x} ${screen(feedback.point).y})`}><DrawingSnapGlyph kind={feedback.kind} /></g>}
+  </svg>;
 }
 
 /** Edit a revision cloud by dragging its corners; Move remains a separate command. */

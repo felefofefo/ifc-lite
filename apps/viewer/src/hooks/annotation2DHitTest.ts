@@ -37,7 +37,7 @@ import type {
   Measure2DResult, PolygonArea2DResult, CloudAnnotation2D,
 } from '@/store/slices/drawing2DSlice';
 import { insideRing } from '@/lib/drawing/drawing-model-pick';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { textAnnotationLayout, textLeaderTip, textLeaderGeometry } from '@/lib/drawing/annotation-types';
 
 /** Nearest point on segment a-b to p, in drawing coordinates. */
 export function nearestPointOnSegment(
@@ -188,6 +188,18 @@ export function hitTestAnnotations({
     }
   }
 
+  for (const note of texts) {
+    const tip = textLeaderTip(note);
+    if (!tip || !note.text.trim()) continue;
+    const p = drawingToScreen(note.position);
+    const { bgW, bgH } = textAnnotationLayout(note, paperUnit, measureText);
+    const leader = textLeaderGeometry({ ...p, width: bgW, height: bgH }, drawingToScreen(tip), paperUnit);
+    if (!leader) continue;
+    const { dist } = nearestPointOnScreenSegment({ x: screenX, y: screenY }, leader.start, leader.tip);
+    const selection: SelectedAnnotation2D = { type: 'text', id: note.id };
+    if (dist <= 1) offer(selection);
+    if (dist < threshold && preferred(selection, dist, best)) best = { dist, selection };
+  }
   for (const rect of areaTagRects) {
     if (!rect.leader || !polys.some(area => area.id === rect.id)) continue;
     const { dist } = nearestPointOnScreenSegment({ x: screenX, y: screenY }, rect.leader.start, rect.leader.end);

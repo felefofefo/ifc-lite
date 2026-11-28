@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useId, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import type { ResolvedDrawingTag } from '@/lib/drawing/drawing-element-tags';
+import { tagLeaderEnd } from '@/lib/drawing/drawing-tag-svg';
 import { tagOverlayOrder } from '@/lib/drawing/drawing-arrange';
 import type { DrawingViewModel } from './useDrawingViewModel';
 import type { DrawingCycleTarget } from './DrawingModelSelection';
@@ -28,6 +29,10 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
     const aa = tagOverlayOrder(a.tag), bb = tagOverlayOrder(b.tag);
     return aa === bb ? 0 : aa < bb ? -1 : 1;
   });
+  const leaderItem = draft?.mode === 'edit' ? tags.preview
+    : tags.tool === 'none' && !tags.draggingSelectedTag ? shown.find(item => item.tag.id === tags.selected?.id) : undefined;
+  const leaderTip = leaderItem && tags.selectedHostLabel && leaderItem.tag.leader && !leaderItem.tag.free && !leaderItem.tag.gridStart
+    ? tags.screen(leaderItem.anchor) : undefined;
   const kind = tags.draftUse ?? tags.use;
   const hint = !tags.canPlace ? t('section2d.tags.saveView')
     : tags.mode && tags.miss
@@ -41,8 +46,9 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
     : tags.miss ? t('section2d.tagLibrary.targetMiss') : t('section2d.tags.pick');
 
   function paint(item: ResolvedDrawingTag, preview: boolean) {
-    const { tag, text, anchor, graphic, startGraphic, hideEnd, style, lineWidth } = item;
+    const { tag, text, anchor, graphic, startGraphic, hideEnd, style, lineWidth, hostUnavailable } = item;
     const p = tags.screen(tag.position), a = tags.screen(anchor);
+    const end = tag.gridStart ? p : tagLeaderEnd(graphic, p, a, tags.paperUnit);
     const interactive = !preview && tags.tool === 'none';
     const editing = preview && draft?.mode === 'edit' && draft.tag.id === tag.id;
     const selected = !preview && tags.selected?.id === tag.id;
@@ -55,7 +61,7 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
     // Opacity changes painting only; the same SVG shapes remain the interactive hit targets.
     const graphicElement = <g key={tag.id} opacity={!preview && canvasTagIds?.has(tag.id) ? 0 : 1} style={{ outline: 'none' }}
       data-window-symbol={interactive ? 'tag' : undefined} data-window-id={interactive ? tag.id : undefined}
-      className={dragging ? 'pointer-events-auto cursor-grab touch-none text-primary'
+      className={dragging ? 'pointer-events-auto cursor-move touch-none text-primary'
         : highlighted || preview ? 'text-primary' : 'text-foreground'}
       onPointerDown={dragging ? event => {
         if (event.button !== 0 || !tags.beginEditDrag(event.clientX, event.clientY)) return;
@@ -64,18 +70,18 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
       } : undefined}
       onPointerMove={dragging ? event => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.stopPropagation(); tags.dragEditedSymbol(event.clientX, event.clientY);
+          event.stopPropagation(); tags.dragEditedSymbol(event.clientX, event.clientY, false, event.shiftKey);
         }
       } : undefined}
       onPointerUp={dragging ? event => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.stopPropagation(); tags.dragEditedSymbol(event.clientX, event.clientY, true);
+          event.stopPropagation(); tags.dragEditedSymbol(event.clientX, event.clientY, true, event.shiftKey);
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
       } : undefined}
       onPointerCancel={dragging ? event => { event.stopPropagation(); tags.cancelEditDrag(); } : undefined}
       onLostPointerCapture={dragging ? () => tags.cancelEditDrag() : undefined}>
-      {(tag.leader || tag.gridStart) && <line data-window-shape="true" x1={a.x} y1={a.y} x2={p.x} y2={p.y} stroke={highlighted || preview ? "currentColor" : style?.color ?? "currentColor"}
+      {!hostUnavailable && (tag.leader || tag.gridStart) && <line data-window-shape="true" x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke={highlighted || preview ? "currentColor" : style?.color ?? "currentColor"}
         strokeOpacity={weakHighlight ? 0.55 : 1}
         strokeWidth={highlighted ? Math.max(1.5, (lineWidth ?? 0) * tags.paperUnit) : lineWidth === undefined ? 1 : Math.max(0.75, lineWidth * tags.paperUnit)} />}
       {editing && tag.gridStart && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
@@ -93,7 +99,7 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
         onKeyDown={interactive ? e => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); tags.choose(tag); }
         } : undefined}>
-        {interactive && (tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={p.x} y2={p.y}
+        {interactive && !hostUnavailable && (tag.leader || tag.gridStart) && <line x1={a.x} y1={a.y} x2={end.x} y2={end.y}
           stroke="transparent" strokeWidth={12} pointerEvents="stroke" />}
         {startGraphic && <image data-window-shape="true" href={startGraphic.href} filter={highlightFilter}
           x={a.x - startGraphic.anchor.x * tags.paperUnit} y={a.y - startGraphic.anchor.y * tags.paperUnit}
@@ -140,29 +146,6 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
           }}
           onLostPointerCapture={tags.cancelGridResize} />;
       })}
-      {editing && tag.leader && !tag.free && !tag.gridStart && <circle
-        cx={a.x} cy={a.y} r={6} fill="var(--paper, #fff)" stroke="currentColor"
-        strokeWidth={2} className="pointer-events-auto cursor-grab touch-none text-primary active:cursor-grabbing"
-        role="button" tabIndex={0}
-        aria-label={`${t('section2d.tools.edit')} · ${t('section2d.tags.leader')}`}
-        onMouseDown={event => event.stopPropagation()}
-        onClick={event => event.stopPropagation()}
-        onPointerDown={event => {
-          if (event.button !== 0 || !tags.beginLeaderBaseDrag()) return;
-          event.preventDefault(); event.stopPropagation();
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={event => {
-          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-          event.stopPropagation(); tags.dragLeaderBase(event.clientX, event.clientY);
-        }}
-        onPointerUp={event => {
-          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-          event.stopPropagation(); tags.dragLeaderBase(event.clientX, event.clientY, true);
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }}
-        onPointerCancel={event => { event.stopPropagation(); tags.cancelLeaderBaseDrag(); }}
-        onLostPointerCapture={tags.cancelLeaderBaseDrag} />}
     </g>;
     if (!interactive) return graphicElement;
     return <ContextMenu key={tag.id}>
@@ -175,7 +158,7 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
   }
 
   return <>
-    {!!(shown.length || tags.preview || snap || tags.roomHighlight?.length) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
+    {!!(shown.length || tags.preview || snap || tags.roomHighlight?.length || tags.hostHighlight) && <svg className="pointer-events-none absolute inset-0 h-full w-full">
       <defs className="text-primary">
         {(['hover', 'selected'] as const).map(state => <filter key={state} id={`${filterId}-${state}`} colorInterpolationFilters="sRGB">
           <feFlood floodColor="currentColor" floodOpacity={state === 'hover' ? 0.55 : 1} result="tint" />
@@ -193,10 +176,50 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
           fill="#0d9488" fillOpacity={0.16} fillRule="evenodd"
           stroke="#0d9488" strokeOpacity={0.85} strokeWidth={1.5} />)}
       </g>}
+      {tags.hostHighlight && <g aria-hidden="true" pointerEvents="none" className="text-primary" data-drawing-tag-host-highlight>
+        {tags.hostHighlight.polygons.map((polygon, index) => <path key={index}
+          d={[polygon.outer, ...polygon.holes].map(ring => ring.map((point, i) => {
+            const p = tags.screen(point);
+            return `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`;
+          }).join(' ') + ' Z').join(' ')}
+          fill="currentColor" fillOpacity={0.18} fillRule="evenodd" stroke="currentColor" strokeWidth={1.5} />)}
+        <path d={tags.hostHighlight.segments.map(([a, b]) => {
+          const p = tags.screen(a), q = tags.screen(b);
+          return `M${p.x} ${p.y}L${q.x} ${q.y}`;
+        }).join(' ')} fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" />
+      </g>}
       {shown.map(item => paint(item, false))}
       {tags.preview && <g opacity={tags.placing || tags.placingFree || (!draft && tags.active && !tags.draggingSelectedTag) ? 0.7 : 1}>
         {paint(tags.preview, true)}
       </g>}
+      {leaderTip && <circle key={leaderItem?.tag.id} cx={leaderTip.x} cy={leaderTip.y} r={6}
+        fill="var(--paper, #fff)" stroke="currentColor" strokeWidth={2}
+        className="pointer-events-auto cursor-crosshair touch-none text-primary" role="button" tabIndex={0}
+        aria-label="Move leader tip"
+        onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+          const dx = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+          const dy = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+          if (!dx && !dy) return;
+          event.preventDefault(); event.stopPropagation();
+          const step = event.shiftKey ? 10 : 1;
+          tags.nudgeLeaderBase(dx * step, dy * step);
+        }}
+        onPointerDown={event => {
+          if (event.button !== 0 || !tags.beginLeaderBaseDrag(event.clientX, event.clientY)) return;
+          event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          event.stopPropagation(); tags.dragLeaderBase(event.clientX, event.clientY, false, event.shiftKey);
+        }}
+        onPointerUp={event => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          event.stopPropagation(); tags.dragLeaderBase(event.clientX, event.clientY, true, event.shiftKey);
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={event => { event.stopPropagation(); tags.cancelLeaderBaseDrag(); }}
+        onLostPointerCapture={tags.cancelLeaderBaseDrag} />}
       {snap && <g aria-hidden="true" transform={`translate(${snap.x} ${snap.y})`}>
        <DrawingSnapGlyph kind={vm.snapKindFor(tags.snapReference ?? null)} />
       </g>}
@@ -220,7 +243,18 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
           {tags.selectedStyles.map(style => <SelectItem key={style.id} value={style.id}>{style.name}</SelectItem>)}
         </SelectContent>
       </Select>}
-      <Button size="sm" variant="ghost" onClick={() => tags.editSelected()}>{t('section2d.tools.edit')}</Button>
+      {!tags.selected.free && !tags.selected.gridStart && <Button size="sm" variant={tags.selected.leader ? 'secondary' : 'ghost'}
+        aria-pressed={tags.selected.leader} onClick={tags.toggleSelectedLeader}>{t('section2d.tags.leader')}</Button>}
+      {!tags.selected.free && !tags.selected.gridStart && <>
+        <span className="max-w-40 shrink-0 truncate px-1 text-muted-foreground" title={tags.selectedHostLabel ?? 'Host unavailable in this view'}>
+          {tags.selectedHostLabel ?? 'Host unavailable'}
+        </span>
+        <Button size="sm" variant={tags.showHost ? 'secondary' : 'ghost'} disabled={!tags.selectedHostLabel}
+          aria-pressed={tags.showHost} onClick={tags.toggleHostHighlight}>Show Host</Button>
+        <Button size="sm" variant="ghost" onClick={tags.beginChangeHost}>Change Host</Button>
+      </>}
+      <Button size="sm" variant="ghost" disabled={!tags.selected.free && !tags.selectedHostLabel}
+        onClick={() => tags.editSelected()}>{t('section2d.tools.edit')}</Button>
       <Button size="sm" variant="ghost" onClick={tags.clearSelection}>{t('section2d.tags.close')}</Button>
       {tags.failed && <span className="text-destructive" role="alert">{t('section2d.tags.writeFailed')}</span>}
     </div>}
@@ -264,10 +298,8 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
         <SelectTrigger className="h-7 w-32 text-xs" aria-label="IFC tag template"><SelectValue placeholder="IFC tag" /></SelectTrigger>
         <SelectContent>{tags.selectedIfcTemplates.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
       </Select>}
-      {!draft.tag.free && <label className="flex shrink-0 items-center gap-1 px-1">
-        <input type="checkbox" checked={draft.tag.leader} onChange={event => tags.change({ leader: event.currentTarget.checked })} />
-        {t('section2d.tags.leader')}
-      </label>}
+      {!draft.tag.free && <Button size="sm" variant={draft.tag.leader ? 'secondary' : 'ghost'}
+        aria-pressed={draft.tag.leader} onClick={() => tags.change({ leader: !draft.tag.leader })}>{t('section2d.tags.leader')}</Button>}
       {tags.selectedKind && <Select disabled={tags.selectedStyleLocked}
         value={tags.selectedStyleLocked ? tags.selectedStyleId : draft.tag.appearanceId ?? 'original'}
         onValueChange={id => tags.change({ appearanceId: id === 'original' ? undefined : id })}>
@@ -281,7 +313,15 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
       <Button size="sm" variant="ghost" className="shrink-0" onClick={tags.close}>{t('section2d.tags.close')}</Button>
       {tags.failed && <span role="alert" className="px-2 text-xs text-destructive">{t('section2d.tags.writeFailed')}</span>}
     </div>}
-    {tags.active && !(draft && draft.mode === 'edit') && <div role="toolbar" aria-label={t('section2d.tags.edit')} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); tags.close(); } }} className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
+    {tags.rehosting && <div role="toolbar" aria-label="Change host"
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
+      onMouseDown={event => event.stopPropagation()} onMouseUp={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+      <span className="shrink-0 px-2 font-medium">Change Host</span>
+      <output className="text-muted-foreground">{tags.miss ? 'Pick a compatible IFC element' : 'Select a compatible IFC element · Esc to cancel'}</output>
+      <Button size="sm" variant="ghost" onClick={tags.close}>{t('section2d.create.cancel')}</Button>
+      {tags.failed && <span role="alert" className="text-destructive">{t('section2d.tags.writeFailed')}</span>}
+    </div>}
+    {tags.active && !tags.rehosting && !(draft && draft.mode === 'edit') && <div role="toolbar" aria-label={t('section2d.tags.edit')} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); tags.close(); } }} className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-md border bg-background p-1 text-xs shadow-sm"
       onMouseDown={e => e.stopPropagation()} onMouseMove={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       <strong className="shrink-0 px-2">{kind && kind !== 'section' && kind !== 'elevation' ? t(`section2d.annotationKind.${kind}`) : t('section2d.tools.tag')}</strong>
       {kind === 'grid' && <Input className="h-7 w-20 text-xs" aria-label={t('section2d.symbols.gridName')}
@@ -314,10 +354,8 @@ export function DrawingElementTags({ vm, cycleTarget, canvasTagIds }: { vm: Draw
             </SelectContent>
           </Select>
         </div>}
-        {!draft.tag.free && <label className="flex items-center gap-2">
-          <input type="checkbox" checked={draft.tag.leader} onChange={e => tags.change({ leader: e.currentTarget.checked })} />
-          {t('section2d.tags.leader')}
-        </label>}
+        {!draft.tag.free && <Button size="sm" variant={draft.tag.leader ? 'secondary' : 'ghost'}
+          aria-pressed={draft.tag.leader} onClick={() => tags.change({ leader: !draft.tag.leader })}>{t('section2d.tags.leader')}</Button>}
         {draft.mode === 'edit' && <div className="flex flex-wrap gap-1">
           <Button size="sm" disabled={kind === 'grid' && !draft.tag.field.trim()} onClick={tags.apply}>{t('section2d.tags.apply')}</Button>
           <Button size="sm" variant="ghost" className="text-destructive" onClick={tags.remove}>{t('section2d.tags.remove')}</Button>

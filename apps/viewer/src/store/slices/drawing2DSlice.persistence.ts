@@ -189,6 +189,7 @@ function isTextAnnotation2D(v: unknown): v is TextAnnotation2D {
     (a.align === undefined || a.align === 'left' || a.align === 'center' || a.align === 'right') &&
     typeof a.color === 'string' &&
     typeof a.backgroundColor === 'string' &&
+    (a.leaderOffset === undefined || isPoint2D(a.leaderOffset)) &&
     typeof a.borderColor === 'string'
   );
 }

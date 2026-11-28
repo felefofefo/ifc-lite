@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { GraphicOverrideEngine, suppressCutJoints, suppressDrawingCutJoints } from '@ifc-lite/drawing-2d';
 import { useDrawingDirection, type AngularSnap } from '@/hooks/useDrawingDirection';
+import { defaultTextLeaderOffset, textLeaderTip } from '@/lib/drawing/annotation-types';
 import * as IfcWasm from '@ifc-lite/wasm';
 import { createMeshOutlineProvider, type MeshOutline2dFn } from '@/hooks/meshOutlineProvider';
 import { selectModelMeshes } from '@/lib/type-view-visibility';
@@ -375,12 +376,32 @@ export function useDrawingViewModel() {
     areaEndpointSnaps: objectSnaps.endpoint,
     completePolygonArea2D: (area, perimeter) => { if (viewKey) completePolygonArea2D(area, perimeter, viewKey, defaultAnnotationStyles?.area); }, cancelPolygonArea2D,
     textAnnotations2D: displayOptions.showAnnotations ? styledNotes : [],
-    addTextAnnotation2D: annotation => { if (viewKey) addTextAnnotation2D({ ...annotation, viewKey, appearanceId: defaultAnnotationStyles?.text }); }, setTextAnnotation2DEditing,
+    addTextAnnotation2D: annotation => {
+      if (!viewKey) return;
+      const appearanceId = defaultAnnotationStyles?.text;
+      const styleId = viewAnnotationOptions?.styleIds?.text ?? appearanceId;
+      const style = annotationAppearance('text', styleId, annotationStyles, viewAnnotationOptions?.styles?.text);
+      addTextAnnotation2D({ ...annotation, viewKey, appearanceId,
+        leaderOffset: style?.textLeader?.enabled ? defaultTextLeaderOffset(textPaperUnit / markupTransform.scale, drawnPlane.axis) : undefined });
+    }, setTextAnnotation2DEditing,
     cloudAnnotation2DPoints, cloudAnnotations2D: displayOptions.showAnnotations ? styledMarkup('cloud', cloudAnnotations2D) : [], addCloudAnnotation2DPoint,
     completeCloudAnnotation2D: label => { if (viewKey) completeCloudAnnotation2D(label, viewKey, defaultAnnotationStyles?.cloud); }, cancelCloudAnnotation2D,
     measure2DResults: alignmentDimensions, polygonArea2DResults: displayOptions.showAnnotations ? styledAreas : [],
     pickDimensionLabel: displayOptions.showAnnotations ? dimensions.pickDimensionLabel : undefined,
-    selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D, moveAnnotation2D,
+    selectedAnnotation2D, editableAnnotationId, setSelectedAnnotation2D,
+    moveAnnotation2D: (selection, position) => {
+      // Direct dragging moves the box but keeps its arrow on the referenced point.
+      // The explicit Move command still translates both, using the existing store action.
+      if (selection.type === 'text') {
+        const note = useViewerStore.getState().textAnnotations2D.find(item => item.id === selection.id && item.viewKey === viewKey);
+        const tip = note && textLeaderTip(note);
+        if (note && tip) {
+          updateTextAnnotation2D(note.id, { position, leaderOffset: { x: tip.x - position.x, y: tip.y - position.y } });
+          return;
+        }
+      }
+      moveAnnotation2D(selection, position);
+    },
     snapForDrag: measureHandlers.findSnapPoint,
     snapDraggedAnnotation: (point, selected) => {
       const result = selected.type === 'measure' && !selected.dimensionLabel
@@ -965,7 +986,10 @@ export function useDrawingViewModel() {
       if (!excluded.has('polygon:' + item.tag.id)) add(item.tag.position);
     }
     for (const note of styledNotes) {
-      if (!excluded.has('text:' + note.id)) add(note.position);
+      if (excluded.has('text:' + note.id)) continue;
+      add(note.position);
+      const tip = textLeaderTip(note);
+      if (tip) add(tip);
     }
     const bounds = geometryResult?.coordinateInfo.shiftedBounds;
     if (bounds && drawnPlane.axis === 'down' && !drawnPlane.custom) {
@@ -1167,6 +1191,18 @@ export function useDrawingViewModel() {
       ...(selection.type === 'cloud' && { cloudAnnotations2D: state.cloudAnnotations2D.map(item => item.id === selection.id ? { ...item, appearanceId } : item) }),
     }));
   }
+  const selectedText = selectedAnnotation2D?.type === 'text'
+    ? styledNotes.find(item => item.id === selectedAnnotation2D.id) : undefined;
+  function updateTextLeader(id: string, offset: { x: number; y: number } | undefined) {
+    if (!viewKey || selectedText?.id !== id || (offset && (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)))) return;
+    useViewerStore.setState(state => ({ textAnnotations2D: state.textAnnotations2D.map(note =>
+      note.id === id && note.viewKey === viewKey ? { ...note, leaderOffset: offset } : note) }));
+  }
+  function toggleTextLeader() {
+    if (!selectedText) return;
+    updateTextLeader(selectedText.id, selectedText.leaderOffset ? undefined
+      : defaultTextLeaderOffset(textPaperUnit / markupTransform.scale, drawnPlane.axis));
+  }
   const selectedArea = selectedAnnotation2D?.type === 'polygon'
     ? polygonArea2DResults.find(item => item.id === selectedAnnotation2D.id) : undefined;
   function updateSelectedAreaTag(patch: { tagTemplateId?: string; tagName?: string; tagLeader?: boolean }) {
@@ -1175,13 +1211,13 @@ export function useDrawingViewModel() {
     if (patch.tagName !== undefined
       && (editableAnnotationId !== selectedArea.id || patch.tagName.length > 200)) return;
     if (patch.tagLeader !== undefined
-      && (editableAnnotationId !== selectedArea.id || !selectedArea.tagTemplateId || typeof patch.tagLeader !== 'boolean')) return;
+      && (!selectedArea.tagTemplateId || typeof patch.tagLeader !== 'boolean')) return;
     useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item =>
       item.id === selectedArea.id && item.viewKey === viewKey ? { ...item, ...patch } : item) }));
   }
   function updateAreaTagPosition(id: string, point: { x: number; y: number }) {
     if (!viewKey || selectedAnnotation2D?.type !== 'polygon' || selectedAnnotation2D.id !== id
-      || editableAnnotationId !== id || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+      || annotation2DActiveTool !== 'none' || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
     useViewerStore.setState(state => ({ polygonArea2DResults: state.polygonArea2DResults.map(item =>
       item.id === id && item.viewKey === viewKey && item.tagTemplateId
         ? { ...item, tagPosition: { ...point } } : item) }));
@@ -1314,7 +1350,7 @@ export function useDrawingViewModel() {
     selectedAnnotationStyle, changeSelectedAnnotationStyle, editSelectedAnnotation, clearAnnotationSelection,
     editableAnnotationId, resizeRevisionCloud, updateAreaVertex, updateAreaTagPosition,
     polygonArea2DPoints, polygonArea2DResults, areaTags, areaTagRects, areaTagTemplates, selectedArea, updateSelectedAreaTag,
-    textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel,
+    textAnnotations2D, textAnnotation2DEditing, handleTextConfirm, handleTextCancel, selectedText, updateTextLeader, toggleTextLeader,
     cloudAnnotation2DPoints, cloudAnnotations2D,
     windowAnnotations, windowCanvasAnnotations, selectWindowAnnotations, clearWindowAnnotations,
     selectedAnnotation2D, clearAllAnnotations2D: () => { if (tags.clear()) { dimensions.clearAllAnnotations2D(); clearWindowAnnotations(); } },

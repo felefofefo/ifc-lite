@@ -12,7 +12,10 @@ import { AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import type { TextAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { useTranslation } from '@/i18n';
 import { Button } from '@/components/ui/button';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { textAnnotationLayout, textBoxStyle, textLeaderGeometry, textLeaderStyle } from '@/lib/drawing/annotation-types';
+import type { resolveTextLeaderArrow } from '@/lib/drawing/drawing-tag-library';
+import { TextLeaderGraphic } from './drawing/TextLeaderGraphic';
+import type { LineweightRow } from '@/lib/drawing/lineweight-table';
 
 interface TextAnnotationEditorProps {
   /** The text annotation being edited */
@@ -22,6 +25,9 @@ interface TextAnnotationEditorProps {
   screenY: number;
   /** Font size in screen pixels, consistent with the drawing canvas. */
   fontSize?: number;
+  lineweights?: LineweightRow;
+  leaderTip?: { x: number; y: number };
+  leaderArrow?: ReturnType<typeof resolveTextLeaderArrow>;
   /** Called with the new text when user confirms (Enter) */
   onConfirm: (id: string, text: string, format?: Pick<TextAnnotation2D, 'bold' | 'italic' | 'align' | 'widthMm'>) => void;
   /** Called when user cancels (Escape) or submits empty text */
@@ -33,6 +39,8 @@ export function TextAnnotationEditor({
   screenX,
   screenY,
   fontSize,
+  lineweights,
+  leaderTip, leaderArrow,
   onConfirm,
   onCancel,
 }: TextAnnotationEditorProps): React.ReactElement {
@@ -56,6 +64,9 @@ export function TextAnnotationEditor({
       return measureContext.measureText(line).width;
     });
   const textColor = annotation.appearance?.color ?? annotation.color;
+  const box = textBoxStyle(annotation, lineweights);
+  const leader = leaderTip && textLeaderGeometry({ x: 0, y: 0, width: layout.bgW, height: layout.bgH },
+    { x: leaderTip.x - screenX, y: leaderTip.y - screenY }, paperUnit);
   // Guard against blur firing during the initial click that created this editor.
   // Without this, the mouseup from the placement click can steal focus from the
   // textarea before the user has a chance to type, causing an immediate cancel.
@@ -146,6 +157,9 @@ export function TextAnnotationEditor({
          <Button type="button" size="sm" className="shrink-0" disabled={!text.trim()}
            onClick={handleBlur}>{t('section2d.tags.apply')}</Button>
        </div>
+      {leader && <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+        <TextLeaderGraphic geometry={leader} pen={textLeaderStyle(annotation.appearance, lineweights)} unit={paperUnit} arrow={leaderArrow} />
+      </svg>}
       <textarea
         ref={textareaRef}
         value={text}
@@ -153,7 +167,7 @@ export function TextAnnotationEditor({
         onKeyDown={handleKeyDown}
         placeholder={t('textAnnotationEditor.placeholder')}
         aria-label={t('textAnnotationEditor.inputLabel')}
-        className="block box-border resize-none overflow-hidden border-0 outline outline-1 outline-primary"
+        className="relative block box-border resize-none overflow-hidden border-0 outline outline-1 outline-offset-2 outline-primary"
         wrap={widthMm === undefined ? 'off' : 'soft'}
         rows={1}
         style={{
@@ -165,11 +179,17 @@ export function TextAnnotationEditor({
           font: layout.font,
           lineHeight: `${layout.lineHeight}px`,
           textAlign: align,
-          backgroundColor: annotation.backgroundColor,
+          backgroundColor: box.background ?? 'transparent',
           color: textColor,
           caretColor: textColor,
         }}
       />
+      {box.border && paperUnit > 0 && <svg aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+        <rect x={0} y={0} width="100%" height="100%" fill="none" stroke={box.border.color}
+          strokeWidth={box.border.weight * paperUnit}
+          strokeDasharray={box.border.dash.map(value => value * paperUnit).join(' ') || undefined} />
+      </svg>}
       {paperUnit > 0 && <button type="button" aria-label="Resize text width"
         title="Resize text width" className="absolute -right-1.5 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-primary bg-background cursor-ew-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-primary"
         onPointerDown={event => {

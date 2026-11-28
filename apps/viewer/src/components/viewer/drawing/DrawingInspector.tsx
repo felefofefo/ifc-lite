@@ -156,7 +156,7 @@ export function DrawingInspector({ vm, layers, panelWidth, view3D }: DrawingInsp
               rotate: angle => vm.dimensionEditing.updateLabel({ textAngle: angle }),
               resetPosition: vm.dimensionEditing.resetLabelPosition,
             } : undefined} />
-          {!view3D && <><DrawingMarkerStyles kind="section" lineweights={vm.lineweights} /><DrawingMarkerStyles kind="elevation" lineweights={vm.lineweights} /><DrawingAnnotationStyles /></>}
+          {!view3D && <><DrawingMarkerStyles kind="section" lineweights={vm.lineweights} /><DrawingMarkerStyles kind="elevation" lineweights={vm.lineweights} /><DrawingAnnotationStyles lineweights={vm.lineweights} /></>}
         </TabsContent>
         <TabsContent value="patterns" className="m-0 h-full overflow-auto text-xs">
           <DrawingMaterials settings={vm.materialSettings} sidebar />

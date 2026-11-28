@@ -27,7 +27,7 @@ const USE_LABEL = {
 } as const;
 // ISO 129-1:2018 §7.10: open arrowhead on vertical views, crossed lines in plan.
 const STANDARD_SYMBOLS: Record<SymbolUse, string> = {
-  ifc: '<path d="M4 1h23v6H4z" fill="white" stroke="#202124" stroke-width=".18"/><text x="5" y="4.9">{{Name}}</text>',
+  ifc: '<circle id="leader-point-1" cx="15.5" cy="1" r=".5"/><circle id="leader-point-2" cx="27" cy="4" r=".5"/><circle id="leader-point-3" cx="15.5" cy="7" r=".5"/><path d="M4 1h23v6H4z" fill="white" stroke="#202124" stroke-width=".18"/><text x="5" y="4.9">{{Name}}</text>',
   free: '<path d="M4 1.5 6.5 4 4 6.5 1.5 4Z" fill="white" stroke="#202124" stroke-width=".18"/>',
   section: '<g id="marker-direction" fill="none" stroke="#202124" stroke-width=".35"><path d="M4 6V2m-1.5 1.5L4 2l1.5 1.5"/></g><text x="8" y="4.9">{{ViewCode}}</text>',
   elevation: '<g id="marker-direction" fill="none" stroke="#202124" stroke-width=".18"><path d="M4 1.5 5.5 4h-3z"/></g><text x="8" y="4.9">{{ViewCode}}</text>',
@@ -81,7 +81,8 @@ export function DrawingTagLibraryDialog({ canInsert, close, insert }: {
   const template = shown.find(item => item.id === selected) ?? shown[0];
   const use = template ? symbolUse(template) : undefined;
   const isMarker = use === 'section' || use === 'elevation';
-  const inUse = !!template && (library.markerStyles?.some(style => style.symbolId === template.id || style.startSymbolId === template.id) ||
+  const inUse = !!template && (library.annotationStyles?.some(style => style.kind === 'text' && style.style.textLeader?.arrowSymbolId === template.id) ||
+    library.markerStyles?.some(style => style.symbolId === template.id || style.startSymbolId === template.id) ||
     cuts.some(view => view.markerSymbolId === template.id || view.elementTags?.some(tag => tag.templateId === template.id)));
   const source = template?.svg;
   const preview = useMemo(() => {
@@ -318,7 +319,8 @@ export function DrawingTagLibraryDialog({ canInsert, close, insert }: {
                   <Button type="button" variant="ghost" size="icon-xs" disabled={inUse}
                     aria-label={t('section2d.tagLibrary.deleteTemplate')} onClick={() => {
                       const current = useSavedSectionCuts.getState();
-                      if (current.tagLibrary.markerStyles?.some(style => style.symbolId === template.id || style.startSymbolId === template.id) ||
+                      if (current.tagLibrary.annotationStyles?.some(style => style.kind === 'text' && style.style.textLeader?.arrowSymbolId === template.id) ||
+                        current.tagLibrary.markerStyles?.some(style => style.symbolId === template.id || style.startSymbolId === template.id) ||
                         current.cuts.some(view => view.markerSymbolId === template.id ||
                           view.elementTags?.some(tag => tag.templateId === template.id))) return;
                       if (save(latest => ({ ...latest, templates: latest.templates.filter(item => item.id !== template.id) }))) setSelected(undefined);

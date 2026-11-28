@@ -24,6 +24,10 @@ export type AnnotationSymbolStyle = {
   weight?: typeof LINEWEIGHT_PRESETS[number];
   boundaryPattern?: LineStylePreset;
   areaFill?: HatchPaints;
+  /** Optional per-style text box graphics. Absent fields keep legacy artwork. */
+  textBackground?: { enabled: boolean; color?: string };
+  textBorder?: { enabled: boolean; color?: string; pattern?: LineStylePreset; weight?: typeof LINEWEIGHT_PRESETS[number] };
+  textLeader?: { enabled: boolean; color?: string; pattern?: LineStylePreset; weight?: typeof LINEWEIGHT_PRESETS[number]; arrowSymbolId?: string };
 };
 
 export const AREA_BOUNDARY_PATTERNS = ['solid', 'dashed', 'dotted', 'dashdot', 'center'] as const satisfies readonly LineStylePreset[];
@@ -35,6 +39,85 @@ export function areaBoundaryStyle(style?: AnnotationSymbolStyle, weights?: Linew
     weight: style?.weight ? weights?.[style.weight] ?? 0.3 : 0.3,
     dash: pattern && AREA_BOUNDARY_PATTERNS.includes(pattern) ? LINE_STYLE_PRESET_DASHES[pattern] : [1, 0.5],
   };
+}
+
+/** Shared appearance for completed text, inline editing and style previews.
+ * Undefined style properties preserve existing notes without migration. */
+export function textBoxStyle(annotation: {
+  appearance?: AnnotationSymbolStyle; backgroundColor: string; borderColor: string;
+}, weights?: LineweightRow) {
+  const background = annotation.appearance?.textBackground;
+  const border = annotation.appearance?.textBorder;
+  const pattern = border?.pattern;
+  return {
+    background: background?.enabled === false ? undefined : background?.color ?? annotation.backgroundColor,
+    border: border?.enabled === false ? undefined : {
+      color: border?.color ?? annotation.borderColor,
+      weight: border?.weight ? weights?.[border.weight] ?? 0.15 : 0.15,
+      dash: pattern && AREA_BOUNDARY_PATTERNS.includes(pattern) ? LINE_STYLE_PRESET_DASHES[pattern] : [],
+    },
+  };
+}
+
+function validTextBoxPaint(value: unknown, isBorder: boolean): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as NonNullable<AnnotationSymbolStyle['textBorder']>;
+  return typeof item.enabled === 'boolean'
+    && (item.color === undefined || (typeof item.color === 'string' && /^#[0-9a-f]{6}$/i.test(item.color)))
+    && (isBorder
+      ? (item.pattern === undefined || AREA_BOUNDARY_PATTERNS.includes(item.pattern))
+        && (item.weight === undefined || LINEWEIGHT_PRESETS.includes(item.weight))
+      : item.pattern === undefined && item.weight === undefined);
+}
+
+type LeaderPoint = { x: number; y: number };
+
+/** Offset in drawing coordinates; translating the note also translates its leader. */
+export function textLeaderTip(note: { position: LeaderPoint; leaderOffset?: LeaderPoint }): LeaderPoint | undefined {
+  const offset = note.leaderOffset;
+  if (!offset || !Number.isFinite(offset.x) || !Number.isFinite(offset.y)) return undefined;
+  const point = { x: note.position.x + offset.x, y: note.position.y + offset.y };
+  return Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined;
+}
+
+export function defaultTextLeaderOffset(unit: number, axis: 'down' | 'front' | 'side'): LeaderPoint {
+  const mm = Number.isFinite(unit) && unit > 0 ? unit : 0.1;
+  return { x: (axis === 'side' ? 1 : -1) * 12 * mm, y: (axis === 'down' ? 1 : -1) * 8 * mm };
+}
+
+export function textLeaderStyle(style?: AnnotationSymbolStyle, weights?: LineweightRow) {
+  const leader = style?.textLeader;
+  const pattern = leader?.pattern;
+  return { color: leader?.color ?? style?.color ?? '#000000',
+    weight: leader?.weight ? weights?.[leader.weight] ?? 0.15 : 0.15,
+    dash: pattern && AREA_BOUNDARY_PATTERNS.includes(pattern) ? LINE_STYLE_PRESET_DASHES[pattern] : [],
+    arrowSymbolId: leader?.arrowSymbolId };
+}
+
+/** Screen/paper coordinates, with the same four automatic side connections at every zoom. */
+export function textLeaderGeometry(box: { x: number; y: number; width: number; height: number }, tip: LeaderPoint, unit: number) {
+  const { x, y, width, height } = box;
+  if (![x, y, width, height, tip.x, tip.y, unit].every(Number.isFinite) || width <= 0 || height <= 0 || unit <= 0) return undefined;
+  if (tip.x >= x && tip.x <= x + width && tip.y >= y && tip.y <= y + height) return undefined;
+  // Only outward-facing sides qualify; a leader must never cross the text box.
+  const points = [
+    ...(tip.x < x ? [{ x, y: y + height / 2 }] : []),
+    ...(tip.x > x + width ? [{ x: x + width, y: y + height / 2 }] : []),
+    ...(tip.y < y ? [{ x: x + width / 2, y }] : []),
+    ...(tip.y > y + height ? [{ x: x + width / 2, y: y + height }] : []),
+  ];
+  const distance = (p: LeaderPoint) => Math.hypot(p.x - tip.x, p.y - tip.y);
+  const nearest = Math.min(...points.map(distance));
+  const start = points.find(p => distance(p) <= nearest + unit * 0.1);
+  if (!start) return undefined;
+  const length = distance(start);
+  if (!(length > 0)) return undefined;
+  const ux = (tip.x - start.x) / length, uy = (tip.y - start.y) / length;
+  const size = Math.min(2.5 * unit, length);
+  const base = { x: tip.x - ux * size, y: tip.y - uy * size };
+  return { start, tip, angle: Math.atan2(uy, ux) * 180 / Math.PI + 90,
+    triangle: [tip, { x: base.x - uy * size * 0.28, y: base.y + ux * size * 0.28 },
+      { x: base.x + uy * size * 0.28, y: base.y - ux * size * 0.28 }] };
 }
 
 /** No explicit background preserves the legacy translucent area fill. */
@@ -179,7 +262,11 @@ export function validAnnotationStyles(styles: unknown): boolean {
       && [item.startSymbolId, item.endSymbolId].every(id => id === undefined || (typeof id === 'string' && id.length < 200))
       && (item.weight === undefined || LINEWEIGHT_PRESETS.includes(item.weight))
       && (item.boundaryPattern === undefined || (kind === 'area' && AREA_BOUNDARY_PATTERNS.includes(item.boundaryPattern)))
-      && (item.areaFill === undefined || (kind === 'area' && validAreaFill(item.areaFill)));
+      && (item.areaFill === undefined || (kind === 'area' && validAreaFill(item.areaFill)))
+      && (item.textBackground === undefined || (kind === 'text' && validTextBoxPaint(item.textBackground, false)))
+      && (item.textBorder === undefined || (kind === 'text' && validTextBoxPaint(item.textBorder, true)))
+      && (item.textLeader === undefined || (kind === 'text' && validTextBoxPaint(item.textLeader, true)
+        && (item.textLeader.arrowSymbolId === undefined || (typeof item.textLeader.arrowSymbolId === 'string' && item.textLeader.arrowSymbolId.length < 200))));
   });
 }
 

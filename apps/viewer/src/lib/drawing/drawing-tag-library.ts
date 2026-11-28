@@ -96,6 +96,13 @@ export function resolveMarkerHeads(
   });
 }
 
+/** Free SVG symbols can also be used as arrowheads. Author pointing up, with tag-anchor at the tip. */
+export function resolveTextLeaderArrow(templates: readonly TagTemplate[], id: string | undefined) {
+  const template = id && templates.find(item => item.id === id && symbolUse(item) === 'free');
+  if (!template) return undefined;
+  try { return renderTagSvg(template.svg, new Map()); } catch { return undefined; }
+}
+
 export type TagLibrary = {
   folders: TagFolder[];
   templates: TagTemplate[];

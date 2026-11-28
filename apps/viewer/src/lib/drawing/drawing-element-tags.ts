@@ -7,7 +7,7 @@ import type { Drawing2D, DXFExportOptions, Point2D } from '@ifc-lite/drawing-2d'
 import type { jsPDF } from 'jspdf';
 import { resolveEntityRef, useViewerStore } from '@/store';
 import { resolveEntityRefGlobalId } from '@/store/resolveEntityRef';
-import { MAX_TAG_SVG_SIZE, renderTagSvg } from './drawing-tag-svg';
+import { MAX_TAG_SVG_SIZE, renderTagSvg, tagLeaderEnd } from './drawing-tag-svg';
 import { drawingTagClass, isPlacedSymbol, symbolUse, type SymbolUse, type TagClass, type TagTemplate } from './drawing-tag-library';
 import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle } from './annotation-types';
 import type { LineweightRow } from './lineweight-table';
@@ -69,6 +69,7 @@ function formattedSymbolValue(input: string, kind: SymbolUse, style?: Annotation
 
 export interface ResolvedDrawingTag {
   tag: DrawingElementTag;
+  hostUnavailable?: true;
   text: string;
   anchor: Point2D;
   style?: AnnotationSymbolStyle;
@@ -376,6 +377,22 @@ export function resolveDrawingTag(
   };
 }
 
+/** A missing target is not necessarily deleted: it may be outside this view.
+ * Keep a selectable placeholder without inventing IFC values or a leader tip. */
+export function unresolvedDrawingTag(tag: DrawingElementTag): ResolvedDrawingTag {
+  return { tag, hostUnavailable: true, anchor: tag.position, text: 'Host unavailable' };
+}
+
+/** Rebind only identity and leader reference; keep label position and all style data. */
+export function rehostDrawingTag(tag: DrawingElementTag, target: TagTarget, point: Point2D): DrawingElementTag | undefined {
+  if (tag.free || tag.gridStart || !target.globalId || !(target.projectId || target.fingerprint)
+    || !isPoint(point) || !isPoint(target.center)) return undefined;
+  if (tag.globalId === target.globalId && tag.projectId === target.projectId && tag.fingerprint === target.fingerprint) return tag;
+  const anchorOffset = { x: point.x - target.center.x, y: point.y - target.center.y };
+  if (!isPoint(anchorOffset)) return undefined;
+  return { ...tag, globalId: target.globalId, projectId: target.projectId, fingerprint: target.fingerprint, anchorOffset };
+}
+
 /** Reuse Space-compatible SVGs without pretending an authored polygon is IFC. */
 export function isAreaTagTemplate(template: TagTemplate): boolean {
   return symbolUse(template) === 'ifc' && template.classes.includes('IfcSpace');
@@ -417,7 +434,7 @@ export function areaTagScreenRect(item: ResolvedDrawingTag, screen: (point: Poin
   const p = screen(item.tag.position);
   return { id: item.tag.id, href: graphic.href, x: p.x - graphic.anchor.x * paperUnit,
     y: p.y - graphic.anchor.y * paperUnit, width: graphic.width * paperUnit, height: graphic.height * paperUnit,
-    leader: item.tag.leader ? { start: screen(item.anchor), end: p } : undefined };
+    leader: item.tag.leader ? { start: screen(item.anchor), end: tagLeaderEnd(graphic, p, screen(item.anchor), paperUnit) } : undefined };
 }
 
 const tagHeight = 2.5;

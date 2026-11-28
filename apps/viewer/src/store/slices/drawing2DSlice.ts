@@ -83,6 +83,7 @@ export interface TextAnnotation2D {
   align?: 'left' | 'center' | 'right';
   fontSize: number;        // Font size in screen px (default 14)
   widthMm?: number;        // Fixed outer box width in paper mm; undefined = automatic
+  leaderOffset?: Point2D;  // Optional arrow tip relative to the text position in drawing coordinates
   color: string;           // Text color (default '#000000')
   backgroundColor: string; // Background fill
   borderColor: string;     // Border color

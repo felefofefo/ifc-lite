@@ -4,7 +4,7 @@
 
 import type { Point2D, SelectedAnnotation2D } from '@/store/slices/drawing2DSlice';
 import { bounds, boxContains, boxesOverlap, insideRing, segmentCrossesBox } from '@/lib/drawing/drawing-model-pick';
-import { textAnnotationLayout } from '@/lib/drawing/annotation-types';
+import { textAnnotationLayout, textLeaderTip, textLeaderGeometry } from '@/lib/drawing/annotation-types';
 import { DEFAULT_DIMENSION_STYLE, resolveDimensionStyle, styledDimension } from '@/lib/drawing/dimension-style';
 import { mapDimensionShape } from '@/lib/drawing/dimension-line';
 import { generateCloudArcs } from '@/components/viewer/tools/cloudPathGenerator';
@@ -105,7 +105,11 @@ export function selectDrawingAnnotations(vm: DrawingViewModel, a: Point2D, b: Po
     if (!note.text.trim()) continue;
     const p = screen(note.position);
     const layout = textAnnotationLayout(note, paperUnit, measure);
-    add('text', note.id, [rectangle(p.x, p.y, layout.bgW, layout.bgH)]);
+    const shapes: Shape[] = [rectangle(p.x, p.y, layout.bgW, layout.bgH)];
+    const tip = textLeaderTip(note);
+    const leader = tip && textLeaderGeometry({ ...p, width: layout.bgW, height: layout.bgH }, screen(tip), paperUnit);
+    if (leader) shapes.push({ points: [leader.start, leader.tip] });
+    add('text', note.id, shapes);
   }
   for (const area of vm.styledAreas) {
     if (area.points.length < 3) continue;

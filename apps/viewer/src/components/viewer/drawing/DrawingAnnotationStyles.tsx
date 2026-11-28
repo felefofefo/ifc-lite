@@ -5,16 +5,19 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { DrawingSettingSwitch } from './DrawingSettingSwitch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useTranslation } from '@/i18n';
-import { AREA_BOUNDARY_PATTERNS, ANNOTATION_FONTS, ANNOTATION_STYLE_KINDS, type AnnotationStyleKind, type AnnotationSymbolStyle, type NamedAnnotationStyle } from '@/lib/drawing/annotation-types';
+import { AREA_BOUNDARY_PATTERNS, ANNOTATION_FONTS, ANNOTATION_STYLE_KINDS, textBoxStyle, textAnnotationLayout, textLeaderGeometry, textLeaderStyle, type AnnotationStyleKind, type AnnotationSymbolStyle, type NamedAnnotationStyle } from '@/lib/drawing/annotation-types';
 import { renderTagSvg } from '@/lib/drawing/drawing-tag-svg';
 import { DrawingFillControl } from './DrawingHatchSelect';
-import { symbolUse } from '@/lib/drawing/drawing-tag-library';
-import { LINEWEIGHT_PRESETS } from '@/lib/drawing/lineweight-table';
+import { symbolUse, resolveTextLeaderArrow } from '@/lib/drawing/drawing-tag-library';
+import { TextLeaderGraphic } from './TextLeaderGraphic';
+import { LINEWEIGHT_PRESETS, type LineweightRow } from '@/lib/drawing/lineweight-table';
 import { saveDrawingTagLibrary, useSavedSectionCuts } from '@/store/savedSectionCutsStore';
 
-export function DrawingAnnotationStyles() {
+export function DrawingAnnotationStyles({ lineweights }: { lineweights?: LineweightRow }) {
   const { t } = useTranslation();
   const projectId = useSavedSectionCuts(state => state.projectId);
   const library = useSavedSectionCuts(state => state.tagLibrary);
@@ -22,9 +25,26 @@ export function DrawingAnnotationStyles() {
   const [draft, setDraft] = useState<NamedAnnotationStyle>();
   const [failed, setFailed] = useState(false);
   const style = draft?.style ?? {};
+  const textBox = textBoxStyle({ appearance: style, backgroundColor: 'rgba(255,255,255,0.9)', borderColor: '#333333' }, lineweights);
+  const textPreview = kind === 'text' ? textAnnotationLayout({
+    text: 'Existing concrete wall\nTo be retained', fontSize: 14, widthMm: 38, appearance: style,
+  }, 1) : undefined;
+  const textColorField = (id: string, label: string, value: string, onChange: (value: string) => void) => (
+    <div className="col-span-full flex items-center justify-between gap-2">
+      <Label className="text-xs" htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground tabular-nums">{value.toUpperCase()}</span>
+        <Input id={id} type="color" className="h-8 w-9 shrink-0 cursor-pointer p-1" value={value}
+          onChange={event => onChange(event.target.value)} />
+      </div>
+    </div>
+  );
   const hasUnits = kind === 'level' || kind === 'spotElevation' || kind === 'slope';
   const units: NonNullable<AnnotationSymbolStyle['unit']>[] = kind === 'slope' ? ['%', '°'] : ['m', 'cm', 'mm'];
   const gridSymbols = library.templates.filter(symbol => symbolUse(symbol) === 'grid');
+  const arrowSymbols = library.templates.filter(symbol => symbolUse(symbol) === 'free');
+  const leaderPen = textLeaderStyle(style, lineweights);
+  const leaderArrow = resolveTextLeaderArrow(library.templates, leaderPen.arrowSymbolId);
   const styles = library.annotationStyles ?? [];
   function gridPreviewMarker(slot: 'start' | 'end') {
     const id = slot === 'start' ? style.startSymbolId : style.endSymbolId;
@@ -74,7 +94,7 @@ export function DrawingAnnotationStyles() {
     })}
     {failed && !kind && <p className="px-3 text-xs text-destructive" role="alert">{t('section2d.views.saveError')}</p>}
     <Dialog open={!!kind} onOpenChange={open => { if (!open) { setKind(undefined); setFailed(false); } }}>
-      {kind && draft && <DialogContent className="sm:max-w-xl" scrollBody>
+      {kind && draft && <DialogContent className={kind === 'text' ? "gap-3 p-4 sm:max-w-3xl sm:p-6" : "sm:max-w-xl"} scrollBody>
         <DialogHeader>
           <DialogTitle>{t(`section2d.annotationKind.${kind}`)}</DialogTitle>
           <DialogDescription>{t('section2d.annotationStyles.libraryHelp')}</DialogDescription>
@@ -105,41 +125,156 @@ export function DrawingAnnotationStyles() {
             if (save({ ...latest, annotationStyles: items.some(item => item.id === draft.id)
               ? items.map(item => item.id === draft.id ? next : item) : [...items, next] })) setKind(undefined);
           }}>
-            <label className="grid gap-1 text-sm sm:col-span-2">{t('section2d.annotationStyles.name')}
-              <Input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
+            <label className={kind === 'text' ? "grid gap-1.5 text-xs sm:col-span-2" : "grid gap-1 text-sm sm:col-span-2"}>{t('section2d.annotationStyles.name')}
+              <Input className={kind === 'text' ? "h-8" : undefined} required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
             </label>
-            {kind === 'text' && <><div className="grid gap-1 text-sm">
-              <label htmlFor="annotation-type-font">{t('section2d.annotationStyles.font')}</label>
-              <Select value={style.font ?? 'inherit'} onValueChange={font => change({ font: ANNOTATION_FONTS.find(item => item === font) })}>
-                <SelectTrigger id="annotation-type-font"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="inherit">{t('section2d.annotationStyles.fromSymbol')}</SelectItem>
-                  {ANNOTATION_FONTS.map(font => <SelectItem key={font} value={font}>{t(`section2d.annotationStyles.font.${font}`)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <label className="grid gap-1 text-sm">{t('section2d.dimensionStyle.textSize')}
-              <Input type="number" min={0.5} max={12} step="any" value={style.textHeight ?? ''}
-                placeholder={t('section2d.annotationStyles.fromSymbol')}
-                onChange={event => change({ textHeight: event.target.value ? event.target.valueAsNumber : undefined })} />
-            </label>
-            </>}
-             {kind === 'text' && <div className="grid gap-2 sm:col-span-2">
-               <div className="flex flex-wrap gap-4 text-sm">
-                 <label className="inline-flex items-center gap-2"><input type="checkbox" checked={style.bold === true}
-                   onChange={event => change({ bold:event.target.checked })} />Bold</label>
-                 <label className="inline-flex items-center gap-2"><input type="checkbox" checked={style.italic === true}
-                   onChange={event => change({ italic:event.target.checked })} />Italic</label>
-               </div>
-               <label className="grid gap-1 text-sm">Alignment
-                 <Select value={style.align ?? 'left'} onValueChange={align => change({ align: align as 'left'|'center'|'right' })}>
-                   <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-                     <SelectItem value="left">Left</SelectItem><SelectItem value="center">Center</SelectItem>
-                     <SelectItem value="right">Right</SelectItem>
-                   </SelectContent>
-                 </Select>
-               </label>
-             </div>}
+            {kind === 'text' && <div className="min-w-0 sm:col-span-2 grid items-start gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+              {textPreview && (() => {
+                const { bgW, bgH, lines, lineHeight, padding } = textPreview;
+                const height = Math.max(26, bgH + 10);
+                const x = style.textLeader?.enabled ? 17 : 7, y = (height - bgH) / 2;
+                const leader = style.textLeader?.enabled ? textLeaderGeometry({ x, y, width: bgW, height: bgH }, { x: 4, y: height - 4 }, 1) : undefined;
+                const align = style.align ?? 'left';
+                const textX = align === 'center' ? x + bgW / 2 : align === 'right' ? x + bgW - padding : x + padding;
+                return <svg viewBox={`0 0 ${bgW + x + 7} ${height}`}
+                  className="block h-36 w-full rounded-md border bg-paper text-paper-ink md:sticky md:top-0 md:h-48"
+                  role="img" aria-label={t('section2d.dimensionStyle.preview')}>
+                  {leader && <TextLeaderGraphic geometry={leader} pen={leaderPen} unit={1} arrow={leaderArrow} />}
+                  <rect x={x} y={y} width={bgW} height={bgH} fill={textBox.background ?? 'none'}
+                    stroke={textBox.border?.color ?? 'none'} strokeWidth={textBox.border?.weight ?? 0}
+                    strokeDasharray={textBox.border?.dash.join(' ') || undefined} />
+                  <text x={textX} y={y + padding} dominantBaseline="text-before-edge"
+                    textAnchor={align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start'}
+                    fontFamily={style.font ?? 'system-ui, sans-serif'} fontSize={style.textHeight ?? 2.5}
+                    fontWeight={style.bold ? 'bold' : 'normal'} fontStyle={style.italic ? 'italic' : 'normal'}
+                    fill={style.color ?? '#000000'}>
+                    {lines.map((line, i) => <tspan key={i} x={textX} y={y + padding + i * lineHeight}>{line}</tspan>)}
+                  </text>
+                </svg>;
+              })()}
+              <div className="min-w-0 space-y-3">
+                <fieldset className="min-w-0 rounded-md border p-3">
+                  <legend className="sr-only">{t('section2d.dimensionStyle.textGroup')}</legend>
+                  <div aria-hidden="true" className="mb-2 text-xs font-medium">{t('section2d.dimensionStyle.textGroup')}</div>
+                  <div className="grid grid-cols-2 items-start gap-2.5">
+                    <div className="min-w-0 space-y-1.5">
+                      <Label className="text-xs" htmlFor="annotation-type-font">{t('section2d.annotationStyles.font')}</Label>
+                      <Select value={style.font ?? 'inherit'} onValueChange={font => change({ font: ANNOTATION_FONTS.find(item => item === font) })}>
+                        <SelectTrigger id="annotation-type-font" className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="inherit">{t('section2d.annotationStyles.fromSymbol')}</SelectItem>
+                          {ANNOTATION_FONTS.map(font => <SelectItem key={font} value={font}>{t(`section2d.annotationStyles.font.${font}`)}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="min-w-0 space-y-1.5">
+                      <Label className="text-xs" htmlFor="text-style-height">{t('section2d.dimensionStyle.textSize')}</Label>
+                      <Input id="text-style-height" className="h-8 tabular-nums" type="number" min={0.5} max={12} step="any"
+                        value={style.textHeight ?? ''} placeholder="2.5"
+                        onChange={event => change({ textHeight: event.target.value ? event.target.valueAsNumber : undefined })} />
+                    </div>
+                    <div className="col-span-full min-w-0 space-y-1.5">
+                      <Label className="text-xs" htmlFor="text-style-align">Alignment</Label>
+                      <Select value={style.align ?? 'left'} onValueChange={align => change({ align: align as 'left'|'center'|'right' })}>
+                        <SelectTrigger id="text-style-align" className="h-8"><SelectValue /></SelectTrigger><SelectContent>
+                          <SelectItem value="left">Left</SelectItem><SelectItem value="center">Center</SelectItem>
+                          <SelectItem value="right">Right</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <DrawingSettingSwitch label="Bold" checked={style.bold === true} onCheckedChange={bold => change({ bold })} />
+                    <DrawingSettingSwitch label="Italic" checked={style.italic === true} onCheckedChange={italic => change({ italic })} />
+                    {textColorField('text-style-color', t('section2d.dimensionStyle.textColor'), style.color ?? '#000000', color => change({ color }))}
+                  </div>
+                </fieldset>
+                <fieldset className="min-w-0 rounded-md border p-3">
+                  <legend className="sr-only">Background</legend>
+                  <div aria-hidden="true" className="mb-2 text-xs font-medium">Background</div>
+                  <div className="space-y-2.5">
+                    <DrawingSettingSwitch label="Background Fill" checked={style.textBackground?.enabled !== false}
+                      onCheckedChange={enabled => change({ textBackground: { ...style.textBackground, enabled } })} />
+                    {style.textBackground?.enabled !== false && textColorField('text-style-fill', t('section2d.annotationStyles.color'),
+                      style.textBackground?.color ?? '#ffffff', color => change({ textBackground: { ...style.textBackground, enabled: true, color } }))}
+                  </div>
+                </fieldset>
+                <fieldset className="min-w-0 rounded-md border p-3">
+                  <legend className="sr-only">Border</legend>
+                  <div aria-hidden="true" className="mb-2 text-xs font-medium">Border</div>
+                  <div className="grid grid-cols-2 items-start gap-2.5">
+                    <div className="col-span-full">
+                      <DrawingSettingSwitch label="Show Border" checked={style.textBorder?.enabled !== false}
+                        onCheckedChange={enabled => change({ textBorder: { ...style.textBorder, enabled } })} />
+                    </div>
+                    {style.textBorder?.enabled !== false && <>
+                      <div className="min-w-0 space-y-1.5">
+                        <Label className="text-xs" htmlFor="text-style-border-pattern">{t('drawingUnderlay.materials.lineType')}</Label>
+                        <Select value={style.textBorder?.pattern ?? 'solid'} onValueChange={value =>
+                          change({ textBorder: { ...style.textBorder, enabled: true, pattern: AREA_BOUNDARY_PATTERNS.find(pattern => pattern === value) } })}>
+                          <SelectTrigger id="text-style-border-pattern" className="h-8"><SelectValue /></SelectTrigger>
+                          <SelectContent>{AREA_BOUNDARY_PATTERNS.map(pattern =>
+                            <SelectItem key={pattern} value={pattern}>{t(`drawingUnderlay.materials.lineType.${pattern}`)}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <Label className="text-xs" htmlFor="text-style-border-weight">{t('section2d.markerStyles.lineWeight')}</Label>
+                        <Select value={style.textBorder?.weight ?? 'default'} onValueChange={value =>
+                          change({ textBorder: { ...style.textBorder, enabled: true, weight: LINEWEIGHT_PRESETS.find(weight => weight === value) } })}>
+                          <SelectTrigger id="text-style-border-weight" className="h-8"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>
+                            {LINEWEIGHT_PRESETS.map(weight => <SelectItem key={weight} value={weight}>{t(`drawingUnderlay.lineweights.preset.${weight}`)}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {textColorField('text-style-border-color', t('section2d.markerStyles.lineColor'), style.textBorder?.color ?? '#333333',
+                        color => change({ textBorder: { ...style.textBorder, enabled: true, color } }))}
+                    </>}
+                  </div>
+                </fieldset>
+                <fieldset className="min-w-0 rounded-md border p-3">
+                  <legend className="sr-only">Leader</legend>
+                  <div aria-hidden="true" className="mb-2 text-xs font-medium">Leader</div>
+                  <div className="grid grid-cols-2 items-start gap-2.5">
+                    <div className="col-span-full"><DrawingSettingSwitch label="Show on new text" checked={style.textLeader?.enabled === true}
+                      onCheckedChange={enabled => change({ textLeader: { ...style.textLeader, enabled } })} /></div>
+                    <div className="col-span-full min-w-0 space-y-1.5">
+                      <Label className="text-xs" htmlFor="text-style-arrow">Arrowhead</Label>
+                      <Select value={style.textLeader?.arrowSymbolId === '' ? '__none__' : style.textLeader?.arrowSymbolId ?? '__default__'}
+                        onValueChange={id => change({ textLeader: { ...style.textLeader, enabled: style.textLeader?.enabled ?? false, arrowSymbolId: id === '__default__' ? undefined : id === '__none__' ? '' : id } })}>
+                        <SelectTrigger id="text-style-arrow" className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__default__">Filled arrow</SelectItem><SelectItem value="__none__">None</SelectItem>
+                          {style.textLeader?.arrowSymbolId && !arrowSymbols.some(symbol => symbol.id === style.textLeader?.arrowSymbolId)
+                            && <SelectItem value={style.textLeader.arrowSymbolId} disabled>Missing symbol</SelectItem>}
+                          {arrowSymbols.map(symbol => <SelectItem key={symbol.id} value={symbol.id}>{symbol.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">Custom SVG: use a free symbol pointing up, with tag-anchor at its tip.</p>
+                    </div>
+                    <div className="min-w-0 space-y-1.5">
+                      <Label className="text-xs" htmlFor="text-style-leader-pattern">{t('drawingUnderlay.materials.lineType')}</Label>
+                      <Select value={style.textLeader?.pattern ?? 'solid'} onValueChange={value => change({ textLeader: { ...style.textLeader, enabled: style.textLeader?.enabled ?? false,
+                        pattern: AREA_BOUNDARY_PATTERNS.find(pattern => pattern === value) } })}>
+                        <SelectTrigger id="text-style-leader-pattern" className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>{AREA_BOUNDARY_PATTERNS.map(pattern => <SelectItem key={pattern} value={pattern}>{t(`drawingUnderlay.materials.lineType.${pattern}`)}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="min-w-0 space-y-1.5">
+                      <Label className="text-xs" htmlFor="text-style-leader-weight">{t('section2d.markerStyles.lineWeight')}</Label>
+                      <Select value={style.textLeader?.weight ?? 'default'} onValueChange={value => change({ textLeader: { ...style.textLeader, enabled: style.textLeader?.enabled ?? false,
+                        weight: LINEWEIGHT_PRESETS.find(weight => weight === value) } })}>
+                        <SelectTrigger id="text-style-leader-weight" className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="default">{t('section2d.markerStyles.default')}</SelectItem>
+                          {LINEWEIGHT_PRESETS.map(weight => <SelectItem key={weight} value={weight}>{t(`drawingUnderlay.lineweights.preset.${weight}`)}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {textColorField('text-style-leader-color', t('section2d.markerStyles.lineColor'), leaderPen.color,
+                      color => change({ textLeader: { ...style.textLeader, enabled: style.textLeader?.enabled ?? false, color } }))}
+                  </div>
+                </fieldset>
+              </div>
+            </div>}
             {hasUnits && <>
               <div className="grid gap-1 text-sm">
                 <label htmlFor="annotation-type-unit">{t('section2d.annotationStyles.unit')}</label>
@@ -216,7 +351,7 @@ export function DrawingAnnotationStyles() {
                 </Select>
               </div>
             </>}
-            {(kind === 'grid' || kind === 'text' || kind === 'cloud') &&
+            {(kind === 'grid' || kind === 'cloud') &&
               <label className="grid gap-1 text-sm">{t('section2d.annotationStyles.color')}
                 <Input type="color" className="w-16" value={style.color ?? (kind === 'cloud' ? '#e53935' : '#000000')}
                   onChange={event => change({ color: event.target.value })} />
@@ -224,7 +359,7 @@ export function DrawingAnnotationStyles() {
           </form>
           {failed && <p className="text-xs text-destructive" role="alert">{t('section2d.annotationStyles.saveError')}</p>}
         </DialogBody>
-        <DialogFooter>
+        <DialogFooter className={kind === 'text' ? "shrink-0 gap-2 border-t pt-3 sm:space-x-0" : undefined}>
           <Button type="button" variant="outline" onClick={() => setKind(undefined)}>{t('section2d.create.cancel')}</Button>
           <Button type="submit" form="drawing-annotation-type">{t('section2d.views.save')}</Button>
         </DialogFooter>

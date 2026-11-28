@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import type { Drawing2D, Point2D } from '@ifc-lite/drawing-2d';
 import { isPlacedSymbol, symbolFitsView, symbolUse } from '@/lib/drawing/drawing-tag-library';
 import { createDrawingModelIndex } from '@/lib/drawing/drawing-model-pick';
-import { renderTagSvg } from '@/lib/drawing/drawing-tag-svg';
+import { renderTagSvg, tagLeaderEnd, tagSvgFields } from '@/lib/drawing/drawing-tag-svg';
 import { gridFromPlan, projectGrid } from '@/lib/drawing/project-grids';
 import { ANNOTATION_STYLE_KINDS, type AnnotationStyleKind } from '@/lib/drawing/annotation-types';
 import type { LineweightRow } from '@/lib/drawing/lineweight-table';
@@ -16,7 +16,7 @@ import { saveProjectGrid, saveGridViewExtents, promoteProjectGrid, drawingAnnota
 import type { Annotation2DTool } from '@/store/slices/drawing2DSlice';
 import { pickRoomInterior, type DrawingIfcSpaceRoom } from '@/lib/drawing/ifc-space-rooms';
 import { collectTagTargets, drawingHeight, findTagTarget, measureDrawingSymbol, measurementLabel, pickTagTarget, readDrawingTags, resolveDrawingTag, resolveFreeSymbol, tagFields,
-  type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
+  rehostDrawingTag, unresolvedDrawingTag, type DrawingElementTag } from '@/lib/drawing/drawing-element-tags';
 
 type Transform = { x: number; y: number; scale: number };
 type Draft = { viewId: string; tag: DrawingElementTag; mode: 'new' | 'edit' | 'move' };
@@ -54,6 +54,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
 }) {
   const active = tool === 'tag';
   const [selectedTagId, setSelectedTagId] = useState<{ viewId: string; id: string } | null>(null);
+  const [showHost, setShowHost] = useState(false);
+  const [rehostSession, setRehostSession] = useState<{ viewId: string; projectId: string | null | undefined; id: string } | null>(null);
+  const [rehostHoverId, setRehostHoverId] = useState<number>();
   const [session, setSession] = useState<Draft | null>(null);
   const [cursor, setCursor] = useState<{ point: Point2D; reference: Point2D | null } | null>(null);
   const [failed, setFailed] = useState(false);
@@ -74,9 +77,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const use = template && symbolUse(template);
   const draftTemplate = draft && templates.find(item => item.id === draft.tag.templateId);
   const draftUse = draftTemplate && symbolUse(draftTemplate);
-  const freeTemplate = active && !!view && !!drawing && !draft && template && use && isPlacedSymbol(use) && symbolFitsView(use, axis)
+  const freeTemplate = active && !rehostSession && !!view && !!drawing && !draft && template && use && isPlacedSymbol(use) && symbolFitsView(use, axis)
     ? template : undefined;
-  const ifcPicking = active && !!view && !!drawing && !draft && use === 'ifc';
+  const ifcPicking = active && !rehostSession && !!view && !!drawing && !draft && use === 'ifc';
   const plane = drawing?.config.plane;
   const cursorPoint = cursor?.point;
   const measurementKind = draft ? draftUse : freeTemplate && use;
@@ -116,10 +119,11 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     return resolveSymbol(tag);
   }, [freeTemplate, cursorPoint, plane, symbolValue, firstPoint, label, defaultAnnotationStyles, resolveSymbol]);
   // Angle constraints also apply when adjusting an existing grid's visible ends.
-  const { resolve: resolveDirection } = useDrawingDirection(
+  const { resolve: resolveDirection, resetDirection } = useDrawingDirection(
     (placing && (draft.tag.leader || draft.tag.gridStart) ? draft : null)
     ?? (draft?.mode === 'edit' && draftUse === 'grid' ? `${draft.viewId}:${draft.tag.id}:grid-ends` : null)
-    ?? (use === 'grid' ? firstPoint : null), angularSnap);
+    ?? (use === 'grid' ? firstPoint : null)
+    ?? (selectedTagId?.viewId === view?.id ? selectedTagId?.id ?? null : null), angularSnap);
   const stored = useMemo(() => [
     ...readDrawingTags(view?.elementTags).filter(tag => !grids.some(grid => grid.id === tag.id)),
     ...(drawing ? grids.flatMap(grid => {
@@ -151,19 +155,75 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   const pickIndex = useMemo(() => drawing ? createDrawingModelIndex(drawing, showHidden) : undefined, [drawing, showHidden]);
   // One picker for preview and placement, so the highlighted room is the
   // same target that receives the IFC Tag on click.
-  function pickIfcTarget(p: Point2D) {
-    if (!template || symbolUse(template) !== 'ifc' || !(transform.scale > 0)) return undefined;
-    const eligible = targets.filter(item => template.classes.includes(item.ifcClass));
+  function pickEligibleTarget(eligible: readonly (typeof targets)[number][], p: Point2D, roomOnly: boolean) {
+    if (!(transform.scale > 0) || !eligible.length) return undefined;
     const ids = pickIndex?.pick(p, 9 / transform.scale) ?? [];
-    const roomOnly = template.classes.length > 0 && template.classes.every(type => type === 'IfcSpace');
     const indexed = ids.map(id => eligible.find(item => item.id === id)).find(item => !!item);
     return (roomOnly ? pickRoomInterior(eligible, p) : indexed)
       ?? pickTagTarget(eligible, p, 9 / transform.scale);
+  }
+  function pickIfcTarget(p: Point2D) {
+    if (!template || symbolUse(template) !== 'ifc') return undefined;
+    return pickEligibleTarget(targets.filter(item => template.classes.includes(item.ifcClass)), p,
+      template.classes.length > 0 && template.classes.every(type => type === 'IfcSpace'));
   }
   useEffect(() => {
     setRoomHoverId(undefined);
   }, [active, view?.id, projectId, template?.id, drawing, transform.x, transform.y, transform.scale]);
   const selectedTarget = selected && !selected.free ? findTagTarget(targets, selected) : undefined;
+  const rehosting = active && !!rehostSession && rehostSession.viewId === view?.id
+    && rehostSession.projectId === projectId && rehostSession.id === selected?.id;
+  const selectedHostLabel = useMemo(() => {
+    if (!selectedTarget) return undefined;
+    const fields = tagFields(selectedTarget);
+    const name = fields.find(item => item.key === 'name')?.value ?? fields.find(item => item.key === 'long-name')?.value;
+    return name ? `${selectedTarget.ifcClass} · ${name}` : selectedTarget.ifcClass;
+  }, [selectedTarget, mutationVersion]);
+  const hostCandidates = useMemo(() => {
+    if (!rehosting || !selected || selected.free) return [];
+    // Existing templates define which IFC classes can use the symbol.
+    if (selectedTemplate && symbolUse(selectedTemplate) === 'ifc') {
+      return targets.filter(item => selectedTemplate.classes.includes(item.ifcClass));
+    }
+    // Legacy tags have no class list. Keep the known original class if possible.
+    return selectedTarget ? targets.filter(item => item.ifcClass === selectedTarget.ifcClass) : targets;
+  }, [rehosting, selected, selectedTemplate, selectedTarget, targets]);
+  function pickHost(p: Point2D) {
+    if (!rehosting || !selected) return undefined;
+    const hit = pickEligibleTarget(hostCandidates, p, hostCandidates.every(item => item.ifcClass === 'IfcSpace'));
+    if (!hit) return undefined;
+    // Plain-text tags must retain an available field. Templates already have
+    // their own class validation and established missing-value fallback.
+    if (!selectedTemplate && !selected.svg && !tagFields(hit).some(field => field.key === selected.field)) return undefined;
+    if (!selectedTemplate && selected.svg && !selectedTarget) {
+      try {
+        const values = new Map<string, string>();
+        tagFields(hit, values);
+        if (!tagSvgFields(selected.svg).some(field => values.has(field))) return undefined;
+      } catch { return undefined; }
+    }
+    const next = rehostDrawingTag(selected, hit, p);
+    return next && findTagTarget(targets, next)?.id === hit.id ? hit : undefined;
+  }
+  useEffect(() => { setShowHost(false); }, [selected?.id, view?.id, projectId, tool]);
+  useEffect(() => {
+    if (rehostSession && !rehosting) {
+      setRehostSession(null); setRehostHoverId(undefined);
+      if (active) setTool('none');
+    }
+  }, [rehostSession, rehosting, active, setTool]);
+  useEffect(() => {
+    if (!rehosting) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault(); event.stopPropagation();
+      setRehostSession(null); setRehostHoverId(undefined); setTool('none');
+    };
+    window.addEventListener('keydown', cancel, true);
+    return () => window.removeEventListener('keydown', cancel, true);
+  }, [rehosting, setTool]);
+  const hostHighlight = rehosting ? hostCandidates.find(item => item.id === rehostHoverId)
+    : showHost && tool === 'none' ? selectedTarget : undefined;
   const selectedIfcTemplates = selectedTarget ? templates.filter(item =>
     symbolUse(item) === 'ifc' && item.classes.includes(selectedTarget.ifcClass)) : [];
   const items = useMemo(() => stored.flatMap(tag => {
@@ -174,10 +234,10 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       return item ? [item] : [];
     }
     const target = findTagTarget(targets, tag);
-    return target ? [resolveDrawingTag(tag, target, undefined, templates)] : [];
+    return target ? [resolveDrawingTag(tag, target, undefined, templates)] : drawing ? [unresolvedDrawingTag(tag)] : [];
   }), [stored, targets, templates, drawing, resolveSymbol]);
   const target = draft ? findTagTarget(targets, draft.tag) : undefined;
-  const roomHighlight = active && view && drawing && axis === 'down'
+  const roomHighlight = active && !rehostSession && view && drawing && axis === 'down'
     ? (draft ? (draft.mode === 'new' ? target : undefined)
       : template && symbolUse(template) === 'ifc' && template.classes.includes('IfcSpace')
         ? targets.find(item => item.id === roomHoverId) : undefined)
@@ -212,11 +272,14 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     return target ? resolveDrawingTag(draft.tag, target, fields, templates) : null;
   }, [draft, target, fields, templates, previewFree, previewIfc, placing, cursorPoint, draftUse, plane, mode, measuredPoint, label, overrideText, resolveSymbol]);
   const [dragPreviewTag, setDragPreviewTag] = useState<DrawingElementTag | null>(null);
+  const [leaderBasePreview, setLeaderBasePreview] = useState<{
+    viewId: string; projectId: typeof projectId; id: string; offset: Point2D;
+  } | null>(null);
   const draggedTarget = dragPreviewTag && !dragPreviewTag.free
     ? findTagTarget(targets, dragPreviewTag) : undefined;
   const dragPreview = dragPreviewTag
     ? dragPreviewTag.free ? resolveSymbol(dragPreviewTag)
-      : draggedTarget ? resolveDrawingTag(dragPreviewTag, draggedTarget, undefined, templates) : null
+      : draggedTarget ? resolveDrawingTag(dragPreviewTag, draggedTarget, undefined, templates) : unresolvedDrawingTag(dragPreviewTag)
     : null;
   const followsCursor = placing || !!freeTemplate || ifcPicking;
   const preview = dragPreview ?? (followsCursor
@@ -233,7 +296,9 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     setOverride(null);
     setDragPreviewTag(null);
     dragRef.current = null;
-  }, [active, view?.id]);
+    leaderBaseRef.current = null;
+    setLeaderBasePreview(null);
+  }, [active, view?.id, projectId]);
 
   const screenX = axis === 'side' ? -transform.scale : transform.scale;
   const screenY = axis === 'down' ? transform.scale : -transform.scale;
@@ -252,7 +317,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     if (!view) return false;
     const state = useSavedSectionCuts.getState();
     const latest = state.cuts.find(item => item.id === view.id);
-    if (!latest || state.activeCutId !== view.id) return false;
+    if (!latest || state.activeCutId !== view.id || state.projectId !== projectId) return false;
     try {
       updateViewSettings(view.id, { elementTags: update(readDrawingTags(latest.elementTags)) });
       setFailed(false);
@@ -267,7 +332,40 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   function close() {
     setSession(null);
     setCursor(null);
+    setRehostSession(null);
+    setRehostHoverId(undefined);
     setTool('none');
+  }
+
+  function beginChangeHost() {
+    if (tool !== 'none' || !view || !drawing || !selected || selected.free || selected.gridStart) return;
+    setShowHost(false);
+    setSession(null); setCursor(null); setMiss(false); setFailed(false);
+    setRehostHoverId(undefined);
+    setRehostSession({ viewId: view.id, projectId, id: selected.id });
+    setTool('tag');
+  }
+
+  function commitHost(p: Point2D) {
+    if (!rehosting || !selected || !view) return;
+    const hit = pickHost(p);
+    if (!hit) { setMiss(true); return; }
+    const original = selected;
+    if (save(list => {
+      let found = false;
+      const next = list.map(item => {
+        if (item.id !== original.id) return item;
+        if (found || item.free || item.globalId !== original.globalId || item.projectId !== original.projectId
+          || item.fingerprint !== original.fingerprint || item.templateId !== original.templateId
+          || item.field !== original.field || item.svg !== original.svg) throw new Error('Tag changed during host selection');
+        const changed = rehostDrawingTag(item, hit, p);
+        if (!changed || findTagTarget(targets, changed)?.id !== hit.id) throw new Error('Invalid or ambiguous host');
+        found = true;
+        return changed;
+      });
+      if (!found) throw new Error('Tag no longer exists');
+      return next;
+    })) close();
   }
 
   function setMeasurement(tag: DrawingElementTag, kind: 'spotElevation' | 'slope') {
@@ -326,6 +424,12 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
 
   function click(e: MouseEvent): boolean {
     if (!active || e.button !== 0) return false;
+    if (rehostSession) {
+      // Do not turn a toolbar click into a geometry pick.
+      const p = point(e);
+      if (rehosting && p && (e.target as Element).tagName === 'CANVAS') commitHost(p);
+      return true;
+    }
     const p = placementPoint(e)?.point;
     if (!view || !drawing || !p) return true;
     if (placing) { commit(p); return true; }
@@ -379,7 +483,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   }
 
   function editSelected(tag: DrawingElementTag | undefined = selected) {
-    if (!view || !tag) return;
+    if (!view || !tag || (!tag.free && !findTagTarget(targets, tag))) return;
     setSelectedTagId({ viewId: view.id, id: tag.id });
     useViewerStore.getState().setSelectedAnnotation2D(null);
     setSession({ viewId: view.id, tag, mode: 'edit' });
@@ -406,35 +510,90 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
 
   const dragRef = useRef<{ from: Point2D; clientX: number; clientY: number; tag: DrawingElementTag } | null>(null);
   const resizingRef = useRef<{ tag: DrawingElementTag; endpoint: 'start' | 'end'; clientX: number; clientY: number } | null>(null);
-  const leaderBaseRef = useRef<{ tag: DrawingElementTag } | null>(null);
+  const leaderBaseRef = useRef<{
+    tag: DrawingElementTag; viewId: string; projectId: typeof projectId; editing: boolean;
+    from: Point2D; tip: Point2D; connection: Point2D;
+  } | null>(null);
 
-  function beginLeaderBaseDrag() {
-    if (draft?.mode !== 'edit' || draft.tag.free || !draft.tag.leader || draft.tag.gridStart || !target) return false;
-    leaderBaseRef.current = { tag: structuredClone(draft.tag) };
+  // Selected IFC tags and their Edit drafts use exactly the same tip gesture.
+  const leaderControl = draft?.mode === 'edit' ? resolvedDraft
+    : tool === 'none' ? items.find(item => item.tag.id === selected?.id) : undefined;
+  function beginLeaderBaseDrag(clientX: number, clientY: number) {
+    const item = leaderControl;
+    const from = clientPoint(clientX, clientY);
+    if (!view || !from || !item || item.tag.free || !item.tag.leader || item.tag.gridStart) return false;
+    const host = findTagTarget(targets, item.tag);
+    if (!host) return false;
+    const end = tagLeaderEnd(item.graphic, screen(item.tag.position), screen(item.anchor), transform.scale * (scale || 100) / 1000);
+    const connection = { x: (end.x - transform.x) / screenX, y: (end.y - transform.y) / screenY };
+    resetDirection();
+    leaderBaseRef.current = { tag: item.tag, viewId: view.id, projectId, editing: draft?.mode === 'edit',
+      from, tip: item.anchor, connection };
     setCursor(null);
     return true;
   }
 
-  function dragLeaderBase(clientX: number, clientY: number, finish = false) {
+  function dragLeaderBase(clientX: number, clientY: number, finish = false, shiftKey = false) {
     const initial = leaderBaseRef.current;
-    const raw = clientPoint(clientX, clientY);
-    if (!initial || !raw || draft?.mode !== 'edit' || draft.tag.id !== initial.tag.id || !target) return;
-    const reference = findSnapPoint(raw);
+    const to = clientPoint(clientX, clientY);
+    if (!initial) return;
+    const tag = initial.editing && draft?.mode === 'edit' ? draft.tag : tool === 'none' ? selected : undefined;
+    const host = tag && findTagTarget(targets, tag);
+    if (!to || initial.viewId !== view?.id || initial.projectId !== projectId || !tag || tag.id !== initial.tag.id
+      || !tag.leader || !host || tag.globalId !== initial.tag.globalId || tag.projectId !== initial.tag.projectId
+      || tag.fingerprint !== initial.tag.fingerprint) { cancelLeaderBaseDrag(); return; }
+    const dx = to.x - initial.from.x, dy = to.y - initial.from.y;
+    const raw = { x: initial.tip.x + dx, y: initial.tip.y + dy };
+    const snapped = dx || dy ? findSnapPoint(raw) : null;
+    const reference = dx || dy ? resolveDirection(initial.connection, raw, snapped, shiftKey) ?? snapped : null;
     const at = reference ?? raw;
-    const anchorOffset = { x: at.x - target.center.x, y: at.y - target.center.y };
-    setSession(current => current?.tag.id === initial.tag.id && current.mode === 'edit'
-      ? { ...current, tag: { ...current.tag, anchorOffset } } : current);
+    const anchorOffset = dx || dy ? { x: at.x - host.center.x, y: at.y - host.center.y } : initial.tag.anchorOffset;
+    if (initial.editing) {
+      setSession(current => current?.viewId === initial.viewId && current.tag.id === initial.tag.id && current.mode === 'edit'
+        ? { ...current, tag: { ...current.tag, anchorOffset } } : current);
+    } else if (finish) {
+      // Only write the tip on release; never overwrite host or other tag properties.
+      if (anchorOffset.x !== initial.tag.anchorOffset.x || anchorOffset.y !== initial.tag.anchorOffset.y) {
+        save(list => list.map(item => item.id === tag.id && item.globalId === tag.globalId && item.projectId === tag.projectId
+          && item.fingerprint === tag.fingerprint && item.leader ? { ...item, anchorOffset } : item));
+      }
+    } else {
+      setLeaderBasePreview({ viewId: initial.viewId, projectId: initial.projectId, id: tag.id, offset: anchorOffset });
+    }
     setCursor({ point: at, reference });
-    if (finish) { leaderBaseRef.current = null; setCursor(null); }
+    if (finish) {
+      leaderBaseRef.current = null; resetDirection(); setLeaderBasePreview(null); setCursor(null);
+    }
   }
 
   function cancelLeaderBaseDrag() {
     const initial = leaderBaseRef.current;
     if (!initial) return;
     leaderBaseRef.current = null;
-    setCursor(null);
-    setSession(current => current?.tag.id === initial.tag.id
-      ? { ...current, tag: { ...current.tag, anchorOffset: initial.tag.anchorOffset } } : current);
+    resetDirection(); setLeaderBasePreview(null); setCursor(null);
+    if (initial.editing && initial.viewId === view?.id && initial.projectId === projectId) {
+      setSession(current => current?.viewId === initial.viewId && current.tag.id === initial.tag.id && current.mode === 'edit'
+        ? { ...current, tag: { ...current.tag, anchorOffset: initial.tag.anchorOffset } } : current);
+    }
+  }
+
+  function nudgeLeaderBase(dx: number, dy: number) {
+    const item = leaderControl;
+    if (!item || item.tag.free || !item.tag.leader || item.tag.gridStart || !(transform.scale > 0)) return;
+    const tag = item.tag;
+    const anchorOffset = { x: tag.anchorOffset.x + dx / screenX, y: tag.anchorOffset.y + dy / screenY };
+    if (!Number.isFinite(anchorOffset.x) || !Number.isFinite(anchorOffset.y)) return;
+    if (draft?.mode === 'edit' && draft.tag.id === tag.id) {
+      setSession(current => current?.tag.id === tag.id && current.mode === 'edit'
+        ? { ...current, tag: { ...current.tag, anchorOffset } } : current);
+    } else if (tool === 'none' && selected?.id === tag.id) {
+      save(list => list.map(item => item.id === tag.id ? { ...item, anchorOffset } : item));
+    }
+  }
+  function toggleSelectedLeader() {
+    if (tool !== 'none' || !selected || selected.free || selected.gridStart) return;
+    const id = selected.id;
+    save(list => list.map(item => item.id === id ? { ...item, leader: !item.leader } : item));
   }
 
   function saveMovedTag(tag: DrawingElementTag) {
@@ -467,34 +626,35 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
   }
 
   const dragFrame = useRef<number | null>(null);
-  const pendingDrag = useRef<{ x: number; y: number } | null>(null);
+  const pendingDrag = useRef<{ x: number; y: number; shiftKey: boolean } | null>(null);
 
   function beginEditDrag(clientX: number, clientY: number) {
     const from = clientPoint(clientX, clientY);
     if (tool !== 'none' || !selected || !from) return false;
+    resetDirection();
     dragRef.current = { from, clientX, clientY, tag: selected };
     return true;
   }
 
-  function dragEditedSymbol(clientX: number, clientY: number, finish = false) {
+  function dragEditedSymbol(clientX: number, clientY: number, finish = false, shiftKey = false) {
     if (!dragRef.current) return;
     if (!finish) {
-      pendingDrag.current = { x: clientX, y: clientY };
+      pendingDrag.current = { x: clientX, y: clientY, shiftKey };
       if (dragFrame.current === null) dragFrame.current = requestAnimationFrame(() => {
         dragFrame.current = null;
         const pending = pendingDrag.current;
         pendingDrag.current = null;
-        if (pending) computeEditedSymbolDrag(pending.x, pending.y, false);
+        if (pending) computeEditedSymbolDrag(pending.x, pending.y, false, pending.shiftKey);
       });
       return;
     }
     if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
     dragFrame.current = null;
     pendingDrag.current = null;
-    computeEditedSymbolDrag(clientX, clientY, true);
+    computeEditedSymbolDrag(clientX, clientY, true, shiftKey);
   }
 
-  function computeEditedSymbolDrag(clientX: number, clientY: number, finish: boolean) {
+  function computeEditedSymbolDrag(clientX: number, clientY: number, finish: boolean, shiftKey: boolean) {
     const drag = dragRef.current;
     const to = clientPoint(clientX, clientY);
     if (!drag || !to || tool !== 'none' || selected?.id !== drag.tag.id) return;
@@ -506,21 +666,23 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     const candidate = { x: drag.tag.position.x + delta.x, y: drag.tag.position.y + delta.y };
     const reference = findSnapPoint(candidate);
     const anchor = drag.tag.position;
-    const directed = resolveDirection(anchor, candidate, reference, false);
+    const directed = resolveDirection(anchor, candidate, reference, shiftKey);
     const final = directed ?? reference ?? candidate;
     delta = { x: final.x - anchor.x, y: final.y - anchor.y };
     if (drag.tag.gridStart && plane?.axis !== 'y') delta.y = 0;
     const translate = (p: Point2D) => ({ x: p.x + delta.x, y: p.y + delta.y });
+    // Direct drag repositions the label, not its referenced IFC point.
+    // Explicit Move (and grids) retain their existing whole-object semantics.
     const next = { ...drag.tag, position: translate(drag.tag.position),
-      ...(drag.tag.gridStart && { gridStart: translate(drag.tag.gridStart) }),
-      ...(!drag.tag.free && { anchorOffset: translate(drag.tag.anchorOffset) }) };
+      ...(drag.tag.gridStart && { gridStart: translate(drag.tag.gridStart) }) };
     if (!finish) {
-      const accepted = reference && Math.hypot(reference.x - next.position.x, reference.y - next.position.y) < 1e-8;
-      setCursor({ point: next.position, reference: accepted ? reference
-        : directed && angularSnap !== 'off' ? next.position : null });
+      const indicated = directed ?? reference;
+      const accepted = indicated && Math.hypot(indicated.x - next.position.x, indicated.y - next.position.y) < 1e-8;
+      setCursor({ point: next.position, reference: accepted ? indicated : null });
       setDragPreviewTag(next);
     } else {
       saveMovedTag(next);
+      resetDirection();
       dragRef.current = null;
       setDragPreviewTag(null);
       setCursor(null);
@@ -532,6 +694,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     dragFrame.current = null;
     pendingDrag.current = null;
     dragRef.current = null;
+    resetDirection();
     setCursor(null);
     setDragPreviewTag(null);
   }
@@ -637,9 +800,11 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     gridStyleLocked: !!viewTypeIds?.grid,
     gridStyleId: viewTypeIds?.grid,
     canResizeGrid: draft?.mode === 'edit' && draftUse === 'grid' && !!draft.tag.gridStart,
-    beginLeaderBaseDrag, dragLeaderBase, cancelLeaderBaseDrag,
+    beginLeaderBaseDrag, dragLeaderBase, cancelLeaderBaseDrag, nudgeLeaderBase, toggleSelectedLeader,
     resizeGridEndpoint, beginGridResize, cancelGridResize, beginEditDrag, dragEditedSymbol, cancelEditDrag,
     selected, selectedUse, selectedKind, selectedStyles, selectedStyleLocked, selectedIfcTemplates, replaceSelectedIfcTemplate,
+    selectedHostLabel, showHost, rehosting, hostHighlight, beginChangeHost,
+    toggleHostHighlight() { if (tool === 'none' && selectedTarget) setShowHost(value => !value); },
     draggingSelectedTag: dragPreviewTag?.id ?? null,
     selectedStyleId: (selectedKind && viewTypeIds?.[selectedKind]) ?? selected?.appearanceId ?? 'original',
     editSelected, setSelectedStyle, clearSelection() { setSelectedTagId(null); },
@@ -663,6 +828,13 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       const styleKind = ANNOTATION_STYLE_KINDS.find(value => value === kind);
       const id = (styleKind && viewTypeIds?.[styleKind]) ?? tag.appearanceId ?? tag.templateId;
       return drawingAnnotationVisible(view, `symbol:${kind}`, id);
+    }).map(item => {
+      const pending = leaderBasePreview;
+      if (!pending || tool !== 'none' || pending.viewId !== view?.id || pending.projectId !== projectId
+        || pending.id !== selected?.id || pending.id !== item.tag.id) return item;
+      const offset = pending.offset, original = item.tag.anchorOffset;
+      return { ...item, tag: { ...item.tag, anchorOffset: offset },
+        anchor: { x: item.anchor.x + offset.x - original.x, y: item.anchor.y + offset.y - original.y } };
     }), preview, tool, choose, screen, draft, placing, fields, change, failed, miss, close,
     removeGrid(tag: DrawingElementTag) {
       const grid = grids.find(item => item.id === tag.id);
@@ -676,6 +848,13 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
     click,
     move(e: MouseEvent) {
       if (!active) return false;
+      if (rehostSession) {
+        const p = rehosting && e.buttons === 0 && (e.target as Element).tagName === 'CANVAS' ? point(e) : null;
+        const hit = p && pickHost(p);
+        setRehostHoverId(hit ? hit.id : undefined);
+        if (hit && miss) setMiss(false);
+        return true;
+      }
       if (followsCursor) {
         // Toolbars/inputs are not drawing surfaces. Never place a ghost over them.
         const next = e.buttons === 0 && (e.target as Element).tagName === 'CANVAS' ? placementPoint(e) : null;
@@ -686,6 +865,7 @@ export function useDrawingTags({ view, drawing, transform, axis, container, tool
       return true;
     },
     leave() {
+      setRehostHoverId(undefined);
       setRoomHoverId(undefined);
       if (followsCursor) setCursor(null);
       else if (cursor?.reference) setCursor({ ...cursor, reference: null });

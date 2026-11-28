@@ -4,19 +4,24 @@
 
 import type { Point2D } from '@ifc-lite/drawing-2d';
 import { repositionCurvedDimension } from '@/lib/drawing/dimension-line';
+import { tagLeaderEnd } from '@/lib/drawing/drawing-tag-svg';
 import { DrawingSnapGlyph } from './DrawingSnapGlyph';
+import { textAnnotationLayout, textBoxStyle, textLeaderGeometry, textLeaderStyle, textLeaderTip } from '@/lib/drawing/annotation-types';
+import type { resolveTextLeaderArrow } from '@/lib/drawing/drawing-tag-library';
+import { TextLeaderGraphic } from './TextLeaderGraphic';
 import type { DrawingViewModel } from './useDrawingViewModel';
 
 /** Non-interactive ghost of the selected authored element, in drawing coordinates. */
-export function DrawingMovePreview({ vm }: { vm: DrawingViewModel }) {
+type ArrowMap = ReadonlyMap<string, NonNullable<ReturnType<typeof resolveTextLeaderArrow>>>;
+export function DrawingMovePreview({ vm, arrows }: { vm: DrawingViewModel; arrows?: ArrowMap }) {
   const preview = vm.movePreview;
   if (!preview) return null;
-  if (!preview.batch) return <MoveGhost vm={vm} preview={preview} />;
+  if (!preview.batch) return <MoveGhost vm={vm} preview={preview} arrows={arrows} />;
   return <>
     {preview.batch.map((item, index) => {
       let delta = preview.delta;
       if (item.tag?.gridStart && vm.drawing?.config.plane.axis !== 'y') delta = { ...delta, y: 0 };
-      return <MoveGhost key={index} vm={vm} preview={{ ...item, delta, reference: index === 0 ? preview.reference : null }} />;
+      return <MoveGhost key={index} vm={vm} arrows={arrows} preview={{ ...item, delta, reference: index === 0 ? preview.reference : null }} />;
     })}
   </>;
 }
@@ -25,7 +30,7 @@ type MoveGhostData = Omit<NonNullable<DrawingViewModel['movePreview']>, 'batch'>
   annotation?: DrawingViewModel['selectedAnnotation2D'];
 };
 
-function MoveGhost({ vm, preview }: { vm: DrawingViewModel; preview: MoveGhostData }) {
+function MoveGhost({ vm, preview, arrows }: { vm: DrawingViewModel; preview: MoveGhostData; arrows?: ArrowMap }) {
   const payload = preview.payload;
   const transform = vm.markupTransform;
   const sx = vm.drawnPlane.axis === 'side' ? -transform.scale : transform.scale;
@@ -52,7 +57,11 @@ function MoveGhost({ vm, preview }: { vm: DrawingViewModel; preview: MoveGhostDa
       {markerStart && markerEnd && <path
         transform={`translate(${(markerStart.x + markerEnd.x) / 2} ${(markerStart.y + markerEnd.y) / 2}) rotate(${markerAngle})`}
         d="M0 0H19m-6-4 6 4-6 4" />}
-      {tag && anchor && line(anchor, tag.position, 'tag-leader')}
+      {tag && anchor && p && (tag.leader || tag.gridStart) && (() => {
+        const start = translate(anchor);
+        const end = tag.gridStart ? p : tagLeaderEnd(tagGraphics?.graphic, p, start, vm.tags.paperUnit);
+        return <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
+      })()}
       {payload?.kind === 'dimensions' && (() => {
         // Match the existing Move action: a chain moves normal to its axis;
         // curved dimensions reposition relative to their measured geometry.
@@ -104,8 +113,29 @@ function MoveGhost({ vm, preview }: { vm: DrawingViewModel; preview: MoveGhostDa
           width={rect.width} height={rect.height} />
       </g>;
     })()}
-    {payload?.kind === 'text' && <text {...translate(payload.item.position)}
-      fontSize={14} fill="currentColor" opacity="0.75" stroke="none">{payload.item.text}</text>}
+    {payload?.kind === 'text' && (() => {
+      const note = vm.styledNotes.find(item => item.id === payload.item.id) ?? payload.item;
+      const unit = vm.sheetEnabled && vm.activeSheet ? vm.viewTransform.scale : transform.scale * (vm.publicationScale || 100) / 1000;
+      const p = translate(note.position);
+      const ctx = vm.containerRef.current?.ownerDocument.createElement('canvas').getContext('2d');
+      const layout = textAnnotationLayout(note, unit, (text, font) => {
+        if (!ctx) return undefined; ctx.font = font; return ctx.measureText(text).width;
+      });
+      const box = textBoxStyle(note, vm.lineweights), pen = textLeaderStyle(note.appearance, vm.lineweights);
+      const tip = textLeaderTip(note);
+      const leader = tip && textLeaderGeometry({ ...p, width: layout.bgW, height: layout.bgH }, translate(tip), unit);
+      const align = note.align ?? note.appearance?.align ?? 'left';
+      const textX = align === 'center' ? p.x + layout.bgW / 2 : align === 'right' ? p.x + layout.bgW - layout.padding : p.x + layout.padding;
+      return <g opacity="0.75">
+        {leader && <TextLeaderGraphic geometry={leader} pen={pen} unit={unit} arrow={arrows?.get(pen.arrowSymbolId ?? '')} />}
+        <rect x={p.x} y={p.y} width={layout.bgW} height={layout.bgH} fill={box.background ?? 'none'}
+          stroke={box.border?.color ?? 'none'} strokeWidth={(box.border?.weight ?? 0) * unit} strokeDasharray={box.border?.dash.map(value => value * unit).join(' ') || undefined} />
+        <text x={textX} y={p.y + layout.padding} dominantBaseline="text-before-edge" textAnchor={align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start'}
+          style={{ font: layout.font }} fill={note.appearance?.color ?? note.color}>
+          {layout.lines.map((line, i) => <tspan key={i} x={textX} y={p.y + layout.padding + i * layout.lineHeight}>{line}</tspan>)}
+        </text>
+      </g>;
+    })()}
     {tagGraphics?.startGraphic && anchor && (() => {
       const at = translate(anchor), graphic = tagGraphics.startGraphic;
       return <image href={graphic.href}
